@@ -1,0 +1,100 @@
+/* גופן Inter — זהה ל-Chatwoot. נטען מ-@fontsource (משקלים סטנדרטיים).
+   המשקלים המותאמים (420/440/460/520/620) ב-tailwind.config מתרנדרים דרך
+   font-variation אם זמין, אחרת מתעגלים למשקל הסטטי הקרוב. */
+@import '@fontsource/inter/300.css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+
+/* CSS variables של Chatwoot (light + dark) */
+@import './chatwoot-tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* רקע ה-shell זהה ל-Chatwoot (גם html — מונע הבזק לבן לפני שהנושא נכנס) */
+  html,
+  body {
+    background: rgb(var(--background-color));
+  }
+
+  body {
+    margin: 0;
+    color: rgb(var(--slate-12));
+    font-feature-settings: 'liga' 1, 'calt' 1;
+  }
+
+  /* טבעת פוקוס נגישה ועקבית בכל הרכיבים האינטראקטיביים */
+  :focus-visible {
+    outline: 2px solid rgb(var(--blue-9));
+    outline-offset: 1px;
+  }
+}
+
+/* אנימציית כניסה למגירה (Drawer). RTL: נכנסת משמאל. */
+@keyframes slideIn {
+  from {
+    transform: translateX(-100%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* כניסת מודאל ממורכז — fade + zoom עדין (זהה לתחושת ה-Dialog של Chatwoot) */
+@keyframes modalIn {
+  from {
+    transform: scale(0.96) translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+/* הופעת רקע ה-overlay */
+@keyframes overlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* כניסת toast — מלמטה למעלה */
+@keyframes toastIn {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* קו-יעד בגרירה — הבהוב עדין שמסמן לאן השלב ייפול */
+@keyframes dropPulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+/* כיבוד העדפת תנועה מופחתת — נגישות (תקן ישראלי TI-5568) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

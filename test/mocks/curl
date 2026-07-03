@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# test/mocks/curl — deterministic stand-in for curl, used only by install.sh's verify
+# step (a health-check GET). Always prints an HTTP status code (default 200) the way
+# `curl -s -o /dev/null -w '%{http_code}' <url>` would, and exits 0 (matching real curl's
+# behavior for a non-2xx response when --fail isn't used).
+printf '%s' "${MOCK_CURL_HTTP_CODE:-200}"
+exit "${MOCK_CURL_EXIT:-0}"

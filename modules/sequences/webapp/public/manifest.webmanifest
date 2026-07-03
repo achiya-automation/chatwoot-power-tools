@@ -1,0 +1,18 @@
+{
+  "name": "רצפי WhatsApp",
+  "short_name": "רצפים",
+  "description": "ניהול רצפי הודעות תבנית אוטומטיים ב-WhatsApp",
+  "lang": "he",
+  "dir": "rtl",
+  "start_url": "/?account_id=1",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#1b7ce8",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

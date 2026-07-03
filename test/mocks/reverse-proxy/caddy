@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# test/mocks/reverse-proxy/caddy — deterministic stand-in for the caddy binary, used only
+# by test/proxy.bats (kept out of test/mocks/ so detect.bats' "no host caddy" branches
+# stay deterministic regardless of what's on the machine running these tests).
+sub="${1:-}"
+
+case "$sub" in
+  validate)
+    exit "${MOCK_CADDY_VALIDATE_EXIT:-0}"
+    ;;
+  reload)
+    exit "${MOCK_CADDY_RELOAD_EXIT:-0}"
+    ;;
+  *)
+    exit 0
+    ;;
+esac

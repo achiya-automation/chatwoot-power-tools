@@ -1,0 +1,11 @@
+node_modules/
+# dist/ is intentionally NOT ignored: install.sh's Dockerfile (modules/sequences/engine/
+# Dockerfile) does `COPY webapp/dist` at image build time, and the build context shipped
+# to end users (via `git clone` / release tarball, no local docker to prove a multi-stage
+# build) has no build step of its own — so this pre-built bundle (already merged with
+# modules/smart-import's output under dist/smart-import/, see install.sh's header comment)
+# must be committed. Rebuild with `npm run build` after any src/ change; smart-import's
+# bundle must be re-merged too (see the merge step documented in install.sh).
+*.local
+preview*.png
+.DS_Store

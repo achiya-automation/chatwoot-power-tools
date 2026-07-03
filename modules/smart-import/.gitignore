@@ -1,0 +1,7 @@
+node_modules/
+# dist/ stays ignored here (unlike modules/sequences/webapp/dist/, which IS committed):
+# this dist/ is only an intermediate build output — its one file (import-tool.js) is
+# merged, together with vendor/xlsx.mini.min.js, into the committed
+# modules/sequences/webapp/dist/smart-import/ (see install.sh's header comment), which is
+# what actually ships. Rebuild with `npm run build` and re-merge after any change here.
+dist/
