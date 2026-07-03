@@ -1,0 +1,11 @@
+-- 009_send_backoff.sql — retry/backoff bookkeeping for failed sends.
+--
+-- A send that THROWS (e.g. a template that was deleted/un-approved, a transient
+-- network error, a bad media URL) used to leave the enrollment 'active' with the
+-- same next_send_at, so the reconciler retried it EVERY tick (once a minute)
+-- forever — flooding the Chatwoot/Meta API and never surfacing the problem.
+--
+-- We now count send_attempts; reconcile backs off next_send_at on each failure and,
+-- after a few tries, flags the enrollment 'failed' so the client sees a stuck lead
+-- instead of an invisible infinite loop. A successful send resets the counter.
+ALTER TABLE drip.enrollments ADD COLUMN IF NOT EXISTS send_attempts int NOT NULL DEFAULT 0;

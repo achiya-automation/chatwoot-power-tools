@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# test/mocks/reverse-proxy/nginx — deterministic stand-in for the nginx binary, used only
+# by test/proxy.bats.
+all="$*"
+
+case "$all" in
+  "-t "*)
+    exit "${MOCK_NGINX_TEST_EXIT:-0}"
+    ;;
+  "-s reload"*)
+    exit "${MOCK_NGINX_RELOAD_EXIT:-0}"
+    ;;
+  *)
+    exit 0
+    ;;
+esac

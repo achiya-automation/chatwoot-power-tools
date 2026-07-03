@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ניהול רצפי WhatsApp</title>
+    <meta name="description" content="ניהול רצפי הודעות תבנית אוטומטיים ב-WhatsApp" />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#1b7ce8" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="רצפים" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // אין רישום Service Worker: הדשבורד מוטמע ב-iframe של Chatwoot ב-scope '/',
+      // ורישום '/sw.js' רשם בטעות את ה-SW של Chatwoot עצמו (push) מתוך הקשר ה-drip.
+      // ה-PWA מיותר לפאנל מוטמע. מבטלים SW רשום ישן (פעם אחת) כדי לנקות מצב תקול.
+      if ('serviceWorker' in navigator && location.pathname.indexOf('/drip') === 0) {
+        navigator.serviceWorker.getRegistrations().then(function (rs) {
+          rs.forEach(function (r) {
+            if (r.scope && r.scope.indexOf('/drip') !== -1) r.unregister();
+          });
+        }).catch(function () {});
+      }
+    </script>
+  </body>
+</html>

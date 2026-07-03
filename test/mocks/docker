@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# test/mocks/docker — deterministic stand-in for the Docker CLI used by bats tests
+# (lib/detect.sh, lib/db.sh, lib/inject.sh, install.sh). Never touches a real daemon or
+# network. Behaviour is controlled entirely through environment variables set by each
+# test, so one mock file serves every suite.
+#
+# Recognized invocations (see lib/*.sh for the exact calls that produce these):
+#   compose ls --all --format json                      -> MOCK_COMPOSE_LS_JSON or a
+#                                                            single-project default built
+#                                                            from MOCK_COMPOSE_DIR
+#   compose --project-directory <dir> ps -q <service>    -> MOCK_CID_<SERVICE> (empty when
+#                                                            MOCK_COMPOSE_PS_EMPTY=1)
+#   inspect --format {{.Name}} <id>                      -> /MOCK_RAILS_CONTAINER or
+#                                                            /MOCK_POSTGRES_CONTAINER
+#   ps --format {{.Names}}                               -> MOCK_DOCKER_PS_NAMES (newline
+#                                                            list) or a small default
+#   ps --format {{.Image}}                               -> MOCK_DOCKER_PS_IMAGES (newline
+#                                                            list, empty by default)
+#   exec -i <container> psql ...                         -> simulates psql; see below
+#   exec <container> ... rails runner ..."&.value"...    -> _cwpt_fetch_dashboard_scripts's
+#                                                            READ: prints
+#                                                            MOCK_EXISTING_DASHBOARD_SCRIPTS
+#                                                            (empty by default), NOT echoed
+#                                                            with the MOCK_EXEC prefix below
+#                                                            (must be matched BEFORE the
+#                                                            general "rails runner" case)
+#   exec <container> bundle exec rails runner ...         -> echoes the invocation back
+#                                                            (WRITE calls: save/destroy)
+#   exec <container> rm -f ...                            -> no-op success
+#   cp <src> <container>:<dest>                           -> no-op success
+#   compose ... up -d --build cwpt-engine                -> echoes MOCK_COMPOSE_UP + args
+#   compose ... rm -sf cwpt-engine                       -> no-op success
+#
+# Failure-injection knobs (all default to success/0, used to verify install.sh's `set -e
+# -o pipefail` never turns a lib function's graceful fallback into a hard process abort):
+#   MOCK_COMPOSE_PS_EXIT, MOCK_DOCKER_PS_IMAGE_EXIT, MOCK_PSQL_ROLES_QUERY_EXIT,
+#   MOCK_PSQL_VERIFY_EXIT, MOCK_COMPOSE_UP_EXIT, MOCK_COMPOSE_RM_EXIT, MOCK_FETCH_DASHBOARD_EXIT
+
+all="$*"
+
+case "$all" in
+  "compose ls"*)
+    if [ -n "${MOCK_COMPOSE_LS_JSON:-}" ]; then
+      printf '%s\n' "$MOCK_COMPOSE_LS_JSON"
+    else
+      dir="${MOCK_COMPOSE_DIR:-/opt/chatwoot}"
+      printf '[{"Name":"chatwoot","Status":"running(2)","ConfigFiles":"%s/docker-compose.yml"}]\n' "$dir"
+    fi
+    exit 0
+    ;;
+  "compose --project-directory "*" ps -q "*)
+    if [ "${MOCK_COMPOSE_PS_EXIT:-0}" != "0" ]; then
+      exit "${MOCK_COMPOSE_PS_EXIT}"
+    fi
+    if [ "${MOCK_COMPOSE_PS_EMPTY:-0}" = "1" ]; then
+      exit 0
+    fi
+    service="${all##* }"
+    case "$service" in
+      rails) echo "${MOCK_CID_RAILS:-cid_rails_1}" ;;
+      postgres) echo "${MOCK_CID_POSTGRES:-cid_postgres_1}" ;;
+      *) echo "cid_${service}_1" ;;
+    esac
+    exit 0
+    ;;
+  "inspect --format "*)
+    id="${all##* }"
+    if [ "$id" = "${MOCK_CID_RAILS:-cid_rails_1}" ]; then
+      echo "/${MOCK_RAILS_CONTAINER:-chatwoot-rails-1}"
+    elif [ "$id" = "${MOCK_CID_POSTGRES:-cid_postgres_1}" ]; then
+      echo "/${MOCK_POSTGRES_CONTAINER:-chatwoot-postgres-1}"
+    else
+      echo "/unknown_${id}"
+    fi
+    exit 0
+    ;;
+  "ps --format {{.Names}}"*)
+    if [ -n "${MOCK_DOCKER_PS_NAMES:-}" ]; then
+      printf '%s\n' "$MOCK_DOCKER_PS_NAMES"
+    else
+      printf '%s\n' "${MOCK_RAILS_CONTAINER:-chatwoot-rails-1}" "${MOCK_POSTGRES_CONTAINER:-chatwoot-postgres-1}"
+    fi
+    exit 0
+    ;;
+  "ps --format {{.Image}}"*)
+    if [ -n "${MOCK_DOCKER_PS_IMAGES:-}" ]; then
+      printf '%s\n' "$MOCK_DOCKER_PS_IMAGES"
+    fi
+    exit "${MOCK_DOCKER_PS_IMAGE_EXIT:-0}"
+    ;;
+  "exec -i "*"psql"*)
+    if echo "$all" | grep -q "SELECT 1 FROM pg_roles"; then
+      [ "${MOCK_ROLE_EXISTS:-0}" = "1" ] && echo "1"
+      cat >/dev/null 2>&1 || true
+      exit "${MOCK_PSQL_ROLES_QUERY_EXIT:-0}"
+    fi
+    if echo "$all" | grep -q "SELECT 'role='"; then
+      echo "role=drip_engine"
+      cat >/dev/null 2>&1 || true
+      exit "${MOCK_PSQL_VERIFY_EXIT:-0}"
+    fi
+    if echo "$all" | grep -q "SELECT 'schema='"; then
+      echo "schema=drip owner=drip_engine"
+      cat >/dev/null 2>&1 || true
+      exit "${MOCK_PSQL_VERIFY_EXIT:-0}"
+    fi
+    # DDL/grants piped on stdin — consume silently, simulate a successful psql run.
+    cat >/dev/null 2>&1 || true
+    exit "${MOCK_PSQL_EXIT:-0}"
+    ;;
+  "exec "*"rails runner"*"&.value"*)
+    # _cwpt_fetch_dashboard_scripts's READ call — matched BEFORE the general "rails
+    # runner" case below (case statements match top-down; this pattern is a strict
+    # superset of that one). Prints the simulated "current DB value" directly, with no
+    # MOCK_EXEC prefix, so a test capturing this via `existing="$(...)"` sees exactly
+    # what a real `print InstallationConfig...&.value` would have printed.
+    if [ "${MOCK_FETCH_DASHBOARD_EXIT:-0}" != "0" ]; then
+      exit "${MOCK_FETCH_DASHBOARD_EXIT}"
+    fi
+    printf '%s' "${MOCK_EXISTING_DASHBOARD_SCRIPTS:-}"
+    exit 0
+    ;;
+  "exec "*"rails runner"*)
+    echo "MOCK_EXEC ${all}"
+    exit "${MOCK_RAILS_RUNNER_EXIT:-0}"
+    ;;
+  "exec "*"rm -f"*)
+    exit 0
+    ;;
+  "cp "*)
+    # $2 is <src> in `docker cp <src> <container>:<dest>` — optionally captured so a test
+    # can inspect exactly what would have been copied into the container.
+    if [ -n "${MOCK_DOCKER_CP_CAPTURE:-}" ] && [ -f "$2" ]; then
+      cp "$2" "${MOCK_DOCKER_CP_CAPTURE}" 2>/dev/null || true
+    fi
+    exit "${MOCK_DOCKER_CP_EXIT:-0}"
+    ;;
+  *" up -d --build cwpt-engine")
+    echo "MOCK_COMPOSE_UP ${all}"
+    exit "${MOCK_COMPOSE_UP_EXIT:-0}"
+    ;;
+  *" rm -sf cwpt-engine")
+    echo "MOCK_COMPOSE_RM ${all}"
+    exit "${MOCK_COMPOSE_RM_EXIT:-0}"
+    ;;
+  "compose version"*)
+    echo "Docker Compose version v2.99.9 (mock)"
+    exit 0
+    ;;
+  "ps")
+    exit "${MOCK_DOCKER_PS_EXIT:-0}"
+    ;;
+  *)
+    echo "mock docker: unhandled invocation: $all" >&2
+    exit 9
+    ;;
+esac

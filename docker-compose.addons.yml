@@ -1,0 +1,46 @@
+# chatwoot-power-tools — sequences engine sidecar.
+# Loaded ALONGSIDE Chatwoot's own compose:
+#   docker compose -f docker-compose.yml -f docker-compose.addons.yml up -d
+# (a separate -f file, NOT docker-compose.override.yml, so it never clobbers a
+#  user's existing override). All values come from the Chatwoot .env via CWPT_*
+# keys that install.sh writes — nothing private is hardcoded here.
+services:
+  cwpt-engine:
+    build:
+      # docker compose resolves a RELATIVE build context against the project directory
+      # (Chatwoot's compose dir), NOT against this -f file's location. install.sh copies
+      # us under <compose_dir>/chatwoot-power-tools/, so it writes an absolute
+      # CWPT_BUILD_CONTEXT into the Chatwoot .env pointing at the copied modules/sequences.
+      # The ./modules/sequences default is for running from the repo root (dev/CI).
+      context: ${CWPT_BUILD_CONTEXT:-./modules/sequences}
+      dockerfile: engine/Dockerfile
+    container_name: cwpt-engine
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      # Least-privilege DB role connection string (install.sh -> lib/db.sh writes it).
+      DATABASE_URL: ${CWPT_DATABASE_URL}
+      # Chatwoot rails service, reachable on the compose default network.
+      # Overridable when the detected rails service name differs.
+      CHATWOOT_BASE_URL: ${CWPT_CHATWOOT_BASE_URL:-http://rails:3000}
+      # Public origin for WhatsApp template media URLs — MUST be absolute, else
+      # Meta cannot fetch media. install.sh derives it from FRONTEND_URL.
+      PUBLIC_BASE_URL: ${CWPT_PUBLIC_BASE_URL}
+      PORT: "3100"
+      RECONCILE_INTERVAL: "60000"
+      MEDIA_DIR: /app/media
+    volumes:
+      - cwpt_media:/app/media
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks:
+      - default
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 192M
+
+volumes:
+  cwpt_media:

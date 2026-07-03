@@ -1,0 +1,15 @@
+<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>import fixture</title></head>
+<body>
+  <div id="app"><a href="#">איש קשר חדש</a></div>
+  <script src="./mock-api.js"></script>
+  <script src="../dist/import-tool.js"></script>
+  <script>
+    // Mimic the dashboard-script button + open path.
+    var btn = document.createElement('button');
+    btn.textContent = '📥 ייבוא חכם';
+    btn.onclick = function () {
+      window.__cwImport.openWizard({ accountId: '1', authHeaders: { 'access-token': 'TEST' }, assetBase: '/chatwoot-addons' });
+    };
+    document.getElementById('app').appendChild(btn);
+  </script>
+</body></html>

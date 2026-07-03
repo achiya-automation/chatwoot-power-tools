@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    name: sequences engine (node --test)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: drip_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # The engine's migrations/queries JOIN against Chatwoot's own tables (it never
+      # creates copies of them — see modules/sequences/db/ and
+      # modules/sequences/engine/migrations/002_role_grants.sql). A bare Postgres needs
+      # stand-ins for those tables to run the test suite; this mirrors the same scaffold
+      # the project's local test runner has always used.
+      - name: Scaffold Chatwoot stand-in tables
+        env:
+          PGPASSWORD: test
+        run: |
+          psql -h localhost -U postgres -d drip_test <<'SQL'
+          CREATE TABLE IF NOT EXISTS public.conversations (
+            id int PRIMARY KEY, display_id int, account_id int, contact_id int,
+            custom_attributes jsonb DEFAULT '{}'::jsonb, cached_label_list text);
+          CREATE TABLE IF NOT EXISTS public.contacts (
+            id int PRIMARY KEY, account_id int, name text, phone_number text, email text,
+            custom_attributes jsonb DEFAULT '{}'::jsonb);
+          CREATE TABLE IF NOT EXISTS public.messages (
+            id int, conversation_id int, message_type int, content text, status int,
+            content_attributes json, created_at timestamp);
+          CREATE TABLE IF NOT EXISTS public.inboxes (
+            id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int);
+          CREATE TABLE IF NOT EXISTS public.contact_inboxes (
+            id int PRIMARY KEY, contact_id int, inbox_id int, source_id text);
+          CREATE TABLE IF NOT EXISTS public.channel_whatsapp (
+            id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb);
+          CREATE TABLE IF NOT EXISTS public.accounts (id int PRIMARY KEY, name text);
+          SQL
+
+      - name: Install dependencies
+        working-directory: modules/sequences/engine
+        run: npm ci
+
+      - name: Run tests
+        working-directory: modules/sequences/engine
+        env:
+          DATABASE_URL_TEST: postgres://postgres:test@localhost:5432/drip_test
+        run: npm test
+
+  webapp:
+    name: sequences webapp (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: modules/sequences/webapp
+        run: npm ci
+      - name: Run tests
+        working-directory: modules/sequences/webapp
+        run: npm test
+
+  smart-import:
+    name: smart-import (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: modules/smart-import
+        run: npm ci
+      - name: Run tests
+        working-directory: modules/smart-import
+        run: npm test
+
+  shell-tests:
+    name: install.sh + lib/ (bats)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Bats
+        uses: bats-core/bats-action@4.0.0
+      - name: Run bats suite
+        run: bats test/*.bats
