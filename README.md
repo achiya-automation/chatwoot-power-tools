@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/social-preview.png" alt="chatwoot-power-tools — supercharge your self-hosted Chatwoot with smart contact import, WhatsApp drip sequences, dashboard upgrades and more" width="880">
+
 # ⚡ chatwoot-power-tools
 
 **The power-ups your self-hosted Chatwoot has been missing.**
@@ -15,8 +17,6 @@
 **3 modules** · **one `curl \| bash`** · **same-origin (zero CORS)** · **least-privilege DB role** · **no telemetry**
 
 [Quick Start](#quick-start) · [Modules](#modules) · [Why](#-without-chatwoot-power-tools) · [Security](#-security) · [Architecture](docs/ARCHITECTURE.md) · [FAQ](#faq)
-
-<img src="docs/screenshots/overview-en.png" alt="chatwoot-power-tools — WhatsApp drip sequences dashboard inside Chatwoot" width="860">
 
 </div>
 
