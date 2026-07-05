@@ -48,13 +48,27 @@ EOF
   ! [[ "$output" =~ [0-9a-f]{48} ]]
 }
 
-@test "provision_db is idempotent when the role already exists (no duplicate .env write)" {
+@test "provision_db self-heals .env when the role exists but CWPT_DATABASE_URL is missing" {
+  # Interrupted first run (or hand-edited .env): role exists, but .env has no URL. A plain
+  # re-run must repair it (reset the unrecoverable password + rewrite the URL), not leave a
+  # crash-looping engine. This is the idempotency guarantee for the role-exists path.
   export MOCK_ROLE_EXISTS=1
   run provision_db "$COMPOSE_DIR"
   [ "$status" -eq 0 ]
   [[ "$output" == *"role_already_exists"* ]]
   [[ "$output" != *"role_created"* ]]
-  ! grep -q '^CWPT_DATABASE_URL=' "$COMPOSE_DIR/.env"
+  [[ "$output" == *"env_self_healed"* ]]
+  grep -q '^CWPT_DATABASE_URL=postgres://drip_engine:' "$COMPOSE_DIR/.env"
+}
+
+@test "provision_db does not self-heal or duplicate when role exists AND url already present" {
+  export MOCK_ROLE_EXISTS=1
+  echo "CWPT_DATABASE_URL=postgres://drip_engine:existingpw@postgres:5432/chatwoot" >> "$COMPOSE_DIR/.env"
+  run provision_db "$COMPOSE_DIR"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role_already_exists"* ]]
+  [[ "$output" != *"env_self_healed"* ]]
+  [ "$(grep -c '^CWPT_DATABASE_URL=' "$COMPOSE_DIR/.env")" -eq 1 ]
 }
 
 @test "provision_db always (re)applies grants even when the role already exists" {

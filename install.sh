@@ -74,6 +74,9 @@ Options:
                       script). The provisioned database role/schema is left in place —
                       a manual DROP is printed, never run automatically.
   --modules=LIST     Comma-separated: all | import,sequences,dashboard (default: all).
+                     The FULL desired set, re-applied idempotently — NOT additive. To update
+                     an existing install (or add a newly-shipped module), just re-run with no
+                     --modules (defaults to all); passing a subset shrinks the injected UI.
   --yes              Do not prompt for confirmation.
   -h, --help         Show this help.
 
@@ -321,12 +324,19 @@ _cwpt_remove_route() {
 #   container itself booted correctly). A non-200 is reported, never fatal on its own:
 #   the install already completed; this is a diagnostic, not a rollback trigger.
 _cwpt_verify() {
-  local code="000"
-  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${ENGINE_PORT}/drip-api/health" 2>/dev/null)" || code="000"
+  local code="000" i
+  # Retry ~10×/2s: the engine was just built and started; it needs a moment to boot and run
+  # its migrations before it answers 200. A single immediate curl races on a perfectly
+  # healthy install (false negative) AND never catches a genuine crash-loop.
+  for i in $(seq 1 10); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${ENGINE_PORT}/drip-api/health" 2>/dev/null)" || code="000"
+    [ "$code" = "200" ] && break
+    sleep 2
+  done
   if [ "$code" = "200" ]; then
     echo "  engine health check: OK (200)"
   else
-    echo "  engine health check: got HTTP ${code} (expected 200) — check 'docker logs cwpt-engine'" >&2
+    echo "  engine health check: got HTTP ${code} after ~20s (expected 200) — check 'docker logs cwpt-engine'" >&2
   fi
 }
 
@@ -439,6 +449,12 @@ _cwpt_do_install() {
   echo "==> Copying modules into the compose directory"
   local target="${compose_dir}/chatwoot-power-tools"
   mkdir -p "$target"
+  # Clear the previously-copied modules + compose file first, so anything DELETED or renamed
+  # between versions doesn't linger (tar-extract overwrites existing files but never removes
+  # gone ones). Critical for migrations — a stale .sql left behind would still be run by
+  # migrate.js. Scoped to these two paths only: dashboard_scripts.prev.bak (the uninstall
+  # backup) also lives under $target and must survive an update.
+  rm -rf "${target}/modules" "${target}/docker-compose.addons.yml"
   # tar (not cp -R): excludes node_modules (the Dockerfile runs its own `npm install`
   # inside the build, so the host's node_modules — possibly built for a different
   # platform — is both unnecessary and slow to copy) while still copying both the

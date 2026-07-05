@@ -47,7 +47,7 @@ add_route_caddy() {
   # would abort the whole installer before the very next line's own (clearer) failure
   # check ever runs.
   awk -v upstream="$upstream" '
-    /^[ \t]*reverse_proxy[ \t]+[0-9.]+:[0-9]+/ && !done {
+    /^[ \t]*reverse_proxy[ \t]+[^ \t{]+:[0-9]+/ && !done {
       print "    handle_path /chatwoot-addons/* {"
       print "        reverse_proxy " upstream
       print "    }"
