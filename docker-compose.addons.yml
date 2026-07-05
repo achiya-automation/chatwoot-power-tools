@@ -16,8 +16,12 @@ services:
       dockerfile: engine/Dockerfile
     container_name: cwpt-engine
     restart: unless-stopped
-    depends_on:
-      - postgres
+    # No `depends_on: postgres`: install.sh always adds the engine to an ALREADY-RUNNING
+    # Chatwoot (postgres is up before this runs), so start-ordering is moot — while a
+    # hardcoded service name "postgres" would break stacks whose DB service is named
+    # differently or is external/managed. restart: unless-stopped handles the (in-practice
+    # nonexistent) cold-start race: if the DB isn't reachable yet the engine exits and is
+    # restarted until it is.
     environment:
       # Least-privilege DB role connection string (install.sh -> lib/db.sh writes it).
       DATABASE_URL: ${CWPT_DATABASE_URL}

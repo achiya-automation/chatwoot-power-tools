@@ -66,6 +66,24 @@ provision_db() {
 
   if [ "$exists" = "1" ]; then
     echo "role_already_exists"
+    # Self-heal: the role exists but .env may be missing CWPT_DATABASE_URL — e.g. a first
+    # run interrupted between CREATE ROLE and the .env append, or a hand-edited .env. The
+    # old password is unrecoverable (openssl rand, never stored), so reset it and rewrite
+    # the URL. Without this, re-running install.sh could never repair a role-exists /
+    # url-missing state, and the engine would crash-loop on "DATABASE_URL required".
+    local heal_env_file="${compose_dir}/.env"
+    if ! grep -q '^CWPT_DATABASE_URL=' "$heal_env_file" 2>/dev/null; then
+      local heal_pw heal_url
+      heal_pw="$(openssl rand -hex 24)"
+      if "${psql[@]}" -v ON_ERROR_STOP=1 -c "ALTER ROLE drip_engine PASSWORD '${heal_pw}'" >/dev/null 2>&1; then
+        heal_url="postgres://drip_engine:${heal_pw}@${pg_host}:${pg_port}/${pg_db}"
+        printf 'CWPT_DATABASE_URL=%s\n' "$heal_url" >> "$heal_env_file"
+        echo "env_self_healed (role existed but .env lacked CWPT_DATABASE_URL — reset password + rewrote)"
+      else
+        echo "provision_db: could not reset drip_engine password to self-heal .env" >&2
+        return 1
+      fi
+    fi
   else
     local pw url env_file
     pw="$(openssl rand -hex 24)"

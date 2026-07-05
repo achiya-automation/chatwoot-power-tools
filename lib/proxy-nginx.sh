@@ -73,7 +73,11 @@ add_route_nginx() {
   fi
   rm -f "$tmp"
 
-  if ! nginx -t -c "$conf" >/dev/null 2>&1; then
+  # `nginx -t` (NOT `-t -c "$conf"`): $conf is a server-block include (conf.d/*.conf or
+  # sites-enabled/*), not a standalone config — `-c` on it fails with "server directive is
+  # not allowed here" and would make auto-edit fall back to manual on every run. `nginx -t`
+  # validates the real running config, which already `include`s our edited file.
+  if ! nginx -t >/dev/null 2>&1; then
     echo "add_route_nginx: nginx -t failed — restoring backup" >&2
     cp "$backup" "$conf" || echo "add_route_nginx: RESTORE ALSO FAILED — manually run: cp ${backup} ${conf}" >&2
     return 1

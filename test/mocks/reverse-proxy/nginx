@@ -4,7 +4,9 @@
 all="$*"
 
 case "$all" in
-  "-t "*)
+  "-t"|"-t "*)
+    # `nginx -t` (validate the running config, current behaviour) OR the legacy
+    # `nginx -t -c <file>` — either form triggers the injected test result.
     exit "${MOCK_NGINX_TEST_EXIT:-0}"
     ;;
   "-s reload"*)

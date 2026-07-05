@@ -38,6 +38,16 @@ setup() {
   [ "$output" -eq 1 ]
 }
 
+@test "add_route_caddy anchors on a hostname reverse_proxy (localhost), not only numeric IP" {
+  # regression for the [0-9.]+ -> [^ \t{]+ anchor fix: Caddyfiles fronting Chatwoot with
+  # `reverse_proxy localhost:3000` (or rails:3000) must still receive the addons block.
+  sed -i '' 's/reverse_proxy 127\.0\.0\.1:3000/reverse_proxy localhost:3000/' "$CF" 2>/dev/null \
+    || sed -i 's/reverse_proxy 127\.0\.0\.1:3000/reverse_proxy localhost:3000/' "$CF"
+  run add_route_caddy "$CF" "127.0.0.1:3100"
+  [ "$status" -eq 0 ]
+  grep -q "handle_path /chatwoot-addons/\*" "$CF"
+}
+
 @test "add_route_caddy backs up the original file before editing" {
   add_route_caddy "$CF" "127.0.0.1:3100"
   run bash -c "ls '$BATS_TEST_TMPDIR'/Caddyfile.bak.cwpt.* 2>/dev/null | wc -l"
