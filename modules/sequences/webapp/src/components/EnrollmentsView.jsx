@@ -8,6 +8,80 @@ import { Table, THead, TBody, TR, TH, TD } from './ui/Table.jsx';
 import { listEnrollments, listSequences } from '../api/sequencesApi.js';
 import { deliveryErrorLabel } from '../lib/deliveryError.js';
 import AssignSequenceModal from './AssignSequenceModal.jsx';
+import useT from '../useT.js';
+import { translate } from '../i18n.js';
+
+// מילון co-located (he/en) — כל הטקסטים הגלויים של תצוגת אנשי הקשר.
+const M = {
+  he: {
+    stActive: 'פעיל',
+    stCompleted: 'הושלם',
+    stStopped: 'נעצר',
+    stFailed: 'נתקע',
+    sumActive: 'פעילים',
+    sumFailed: 'נתקעו',
+    sumCompleted: 'הושלמו',
+    sumStopped: 'נעצרו',
+    sumTotal: 'סה״כ',
+    errLoad: 'שגיאה בטעינת אנשי הקשר',
+    emptyTitle: 'אין עדיין לידים בסדרות',
+    emptyBody: 'הוסיפו ליד ושייכו אותו לסדרה — אפשר לבחור איש קשר קיים מהחשבון.',
+    addLeadToSequence: 'הוסף ליד לסדרה',
+    stuckOne: 'ליד נתקע',
+    stuckMany: 'לידים נתקעו',
+    stuckTail: ' — ההודעה לא נמסרה. לחצו לצפייה.',
+    searchPlaceholder: 'חיפוש לפי טלפון או רצף…',
+    searchAria: 'חיפוש אנשי קשר',
+    ofTotal: 'מתוך {total}',
+    addLead: 'הוסף ליד',
+    refresh: 'רענון',
+    noFilterResults: 'אין תוצאות לסינון',
+    noMatch: 'לא נמצאו אנשי קשר התואמים לחיפוש.',
+    colContact: 'איש קשר',
+    colSequence: 'רצף',
+    colProgress: 'התקדמות',
+    colStatus: 'סטטוס',
+    colNextSend: 'שליחה הבאה',
+    colActions: 'פעולות',
+    stepPrefix: 'שלב {n}: ',
+    manage: 'נהל',
+    step: 'שלב',
+  },
+  en: {
+    stActive: 'Active',
+    stCompleted: 'Completed',
+    stStopped: 'Stopped',
+    stFailed: 'Stuck',
+    sumActive: 'Active',
+    sumFailed: 'Stuck',
+    sumCompleted: 'Completed',
+    sumStopped: 'Stopped',
+    sumTotal: 'Total',
+    errLoad: 'Failed to load contacts',
+    emptyTitle: 'No leads in sequences yet',
+    emptyBody: 'Add a lead and assign it to a sequence — you can pick an existing contact from the account.',
+    addLeadToSequence: 'Add lead to sequence',
+    stuckOne: 'lead is stuck',
+    stuckMany: 'leads are stuck',
+    stuckTail: " — the message wasn't delivered. Click to view.",
+    searchPlaceholder: 'Search by phone or sequence…',
+    searchAria: 'Search contacts',
+    ofTotal: 'of {total}',
+    addLead: 'Add lead',
+    refresh: 'Refresh',
+    noFilterResults: 'No results for this filter',
+    noMatch: 'No contacts match your search.',
+    colContact: 'Contact',
+    colSequence: 'Sequence',
+    colProgress: 'Progress',
+    colStatus: 'Status',
+    colNextSend: 'Next send',
+    colActions: 'Actions',
+    stepPrefix: 'Step {n}: ',
+    manage: 'Manage',
+    step: 'Step',
+  },
+};
 
 /*
  * EnrollmentsView — לוח מצב "איפה כל ליד עומד ומי נתקע".
@@ -18,26 +92,27 @@ import AssignSequenceModal from './AssignSequenceModal.jsx';
  */
 
 const STATUS = {
-  active: { label: 'פעיל', color: 'teal' },
-  completed: { label: 'הושלם', color: 'blue' },
-  stopped: { label: 'נעצר', color: 'slate' },
-  failed: { label: 'נתקע', color: 'ruby' },
+  active: { label: 'stActive', color: 'teal' },
+  completed: { label: 'stCompleted', color: 'blue' },
+  stopped: { label: 'stStopped', color: 'slate' },
+  failed: { label: 'stFailed', color: 'ruby' },
 };
 
 // כרטיסי הסיכום — סדר התצוגה והצבע לכל מצב (כולל "סה״כ" שמנקה סינון).
 // "נתקעו" שני וב-ruby כדי שייבלוט — זה מה שצריך לטפל בו.
 const SUMMARY_CARDS = [
-  { key: 'active', label: 'פעילים', text: 'text-n-teal-11' },
-  { key: 'failed', label: 'נתקעו', text: 'text-n-ruby-11' },
-  { key: 'completed', label: 'הושלמו', text: 'text-n-blue-11' },
-  { key: 'stopped', label: 'נעצרו', text: 'text-n-slate-12' },
-  { key: 'total', label: 'סה״כ', text: 'text-n-blue-11' },
+  { key: 'active', label: 'sumActive', text: 'text-n-teal-11' },
+  { key: 'failed', label: 'sumFailed', text: 'text-n-ruby-11' },
+  { key: 'completed', label: 'sumCompleted', text: 'text-n-blue-11' },
+  { key: 'stopped', label: 'sumStopped', text: 'text-n-slate-12' },
+  { key: 'total', label: 'sumTotal', text: 'text-n-blue-11' },
 ];
 
 // סדר מיון לפי "דחיפות": נתקעים ראשונים, אז פעילים, אז השאר.
 const STATUS_RANK = { failed: 0, active: 1, completed: 2, stopped: 3 };
 
 export default function EnrollmentsView({ accountId }) {
+  const t = useT(M);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -55,7 +130,7 @@ export default function EnrollmentsView({ accountId }) {
     setError('');
     listEnrollments(accountId)
       .then(setRows)
-      .catch((e) => setError(e.message || 'שגיאה בטעינת אנשי הקשר'))
+      .catch((e) => setError(e.message || translate(M, 'errLoad')))
       .finally(() => setLoading(false));
   }, [accountId]);
 
@@ -157,13 +232,13 @@ export default function EnrollmentsView({ accountId }) {
             <Users size={24} aria-hidden="true" />
           </span>
           <div>
-            <p className="text-base font-medium text-n-slate-12">אין עדיין לידים בסדרות</p>
+            <p className="text-base font-medium text-n-slate-12">{t('emptyTitle')}</p>
             <p className="mt-1 text-sm text-n-slate-11">
-              הוסיפו ליד ושייכו אותו לסדרה — אפשר לבחור איש קשר קיים מהחשבון.
+              {t('emptyBody')}
             </p>
           </div>
           <Button color="brand" icon={UserPlus} onClick={() => setAssignTarget({})}>
-            הוסף ליד לסדרה
+            {t('addLeadToSequence')}
           </Button>
         </div>
         {assignModal}
@@ -191,7 +266,7 @@ export default function EnrollmentsView({ accountId }) {
               <span className={`text-2xl font-semibold leading-none ${card.text}`}>
                 {counts[card.key]}
               </span>
-              <span className="mt-1 text-xs text-n-slate-11">{card.label}</span>
+              <span className="mt-1 text-xs text-n-slate-11">{t(card.label)}</span>
             </button>
           );
         })}
@@ -207,7 +282,7 @@ export default function EnrollmentsView({ accountId }) {
           <AlertTriangle size={16} className="shrink-0" aria-hidden="true" />
           <span>
             <span className="font-semibold">{counts.failed}</span>{' '}
-            {counts.failed === 1 ? 'ליד נתקע' : 'לידים נתקעו'} — ההודעה לא נמסרה. לחצו לצפייה.
+            {counts.failed === 1 ? t('stuckOne') : t('stuckMany')}{t('stuckTail')}
           </span>
         </button>
       ) : null}
@@ -223,38 +298,38 @@ export default function EnrollmentsView({ accountId }) {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="חיפוש לפי טלפון או רצף…"
-            aria-label="חיפוש אנשי קשר"
+            placeholder={t('searchPlaceholder')}
+            aria-label={t('searchAria')}
             className="ps-9"
           />
         </div>
         <div className="flex items-center gap-3">
           <p className="text-sm text-n-slate-11">
             <span className="font-medium text-n-slate-12">{filtered.length}</span>{' '}
-            מתוך {rows.length}
+            {t('ofTotal', { total: rows.length })}
           </p>
           <Button color="brand" size="sm" icon={UserPlus} onClick={() => setAssignTarget({})}>
-            הוסף ליד
+            {t('addLead')}
           </Button>
           <Button variant="ghost" color="slate" size="sm" icon={RefreshCw} onClick={load}>
-            רענון
+            {t('refresh')}
           </Button>
         </div>
       </div>
       {filtered.length === 0 ? (
         <div className="rounded-xl border border-dashed border-n-strong bg-n-solid-2 py-12 text-center text-sm text-n-slate-11">
-          {statusFilter ? 'אין תוצאות לסינון' : 'לא נמצאו אנשי קשר התואמים לחיפוש.'}
+          {statusFilter ? t('noFilterResults') : t('noMatch')}
         </div>
       ) : (
         <Table>
           <THead>
             <TR className="hover:bg-transparent">
-              <TH>איש קשר</TH>
-              <TH>רצף</TH>
-              <TH>התקדמות</TH>
-              <TH>סטטוס</TH>
-              <TH>שליחה הבאה</TH>
-              <TH><span className="sr-only">פעולות</span></TH>
+              <TH>{t('colContact')}</TH>
+              <TH>{t('colSequence')}</TH>
+              <TH>{t('colProgress')}</TH>
+              <TH>{t('colStatus')}</TH>
+              <TH>{t('colNextSend')}</TH>
+              <TH><span className="sr-only">{t('colActions')}</span></TH>
             </TR>
           </THead>
           <TBody>
@@ -283,13 +358,13 @@ export default function EnrollmentsView({ accountId }) {
                   />
                 </TD>
                 <TD>
-                  <Badge color={st.color}>{st.label}</Badge>
+                  <Badge color={st.color}>{t(st.label)}</Badge>
                   {r.status === 'failed' ? (
                     <span
                       className="mt-1 block max-w-[16rem] text-xs leading-snug text-n-ruby-11"
                       title={r.last_error || ''}
                     >
-                      {r.failed_step ? `שלב ${r.failed_step}: ` : ''}
+                      {r.failed_step ? t('stepPrefix', { n: r.failed_step }) : ''}
                       {deliveryErrorLabel(r.last_error_code, r.last_error)}
                     </span>
                   ) : null}
@@ -307,7 +382,7 @@ export default function EnrollmentsView({ accountId }) {
                     icon={Settings2}
                     onClick={() => setAssignTarget(r)}
                   >
-                    נהל
+                    {t('manage')}
                   </Button>
                 </TD>
                 </TR>
@@ -326,13 +401,14 @@ export default function EnrollmentsView({ accountId }) {
  * track ב-bg-n-alpha-3, מילוי ב-bg-n-brand לפי היחס current/total.
  */
 function StepProgress({ current, total }) {
+  const t = useT(M);
   const cur = Number(current) || 0;
   const tot = Number(total) || 0;
   const pct = tot > 0 ? Math.min(100, Math.max(0, (cur / tot) * 100)) : 0;
   return (
     <div className="w-20">
       <span className="block text-xs text-n-slate-11">
-        שלב {cur}/{tot}
+        {t('step')} {cur}/{tot}
       </span>
       <div className="mt-1 h-1.5 w-full rounded-full bg-n-alpha-3" aria-hidden="true">
         <div

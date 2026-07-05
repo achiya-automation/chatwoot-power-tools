@@ -8,6 +8,25 @@
   if (window.__dripCampaignEnhance) return;
   window.__dripCampaignEnhance = true;
 
+  // ── i18n: Hebrew for RTL (he) users, English for everyone else. Chatwoot doesn't put the
+  // locale on the DOM, but it sets #app[dir]=rtl only for Hebrew — the same signal the import
+  // wizard already relies on. he→Hebrew, ltr→English (also the sane fallback for fr/es/…). ──
+  var DRIP_LOCALE = (function () {
+    var a = document.querySelector('#app[dir]');
+    return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
+  })();
+  var I18N = {
+    he: { firstName: 'שם פרטי', fullName: 'שם מלא', phone: 'טלפון', email: 'אימייל',
+          remove: 'הסר', addField: 'הוסף שדה:',
+          lang_he: 'עברית', lang_en: 'אנגלית', lang_ar: 'ערבית',
+          cat_MARKETING: 'שיווקי', cat_UTILITY: 'שירותי', cat_AUTHENTICATION: 'אימות' },
+    en: { firstName: 'First name', fullName: 'Full name', phone: 'Phone', email: 'Email',
+          remove: 'Remove', addField: 'Add field:',
+          lang_he: 'Hebrew', lang_en: 'English', lang_ar: 'Arabic',
+          cat_MARKETING: 'Marketing', cat_UTILITY: 'Utility', cat_AUTHENTICATION: 'Authentication' },
+  };
+  function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
+
   (function () {
     var st = document.createElement('style');
     st.id = 'drip-campaign-style';
@@ -36,10 +55,10 @@
   })();
 
   var BASE_FIELDS = [
-    { label: 'שם פרטי', liquid: '{{contact.first_name}}' },
-    { label: 'שם מלא',  liquid: '{{contact.name}}' },
-    { label: 'טלפון',   liquid: '{{contact.phone_number}}' },
-    { label: 'אימייל',  liquid: '{{contact.email}}' },
+    { label: t('firstName'), liquid: '{{contact.first_name}}' },
+    { label: t('fullName'),  liquid: '{{contact.name}}' },
+    { label: t('phone'),     liquid: '{{contact.phone_number}}' },
+    { label: t('email'),     liquid: '{{contact.email}}' },
   ];
   var CUSTOM_FIELDS = [];          // loaded dynamically from the API
   var liquidToLabel = {};          // reverse map Liquid→label (for token display)
@@ -107,7 +126,7 @@
       if (!pill) {
         pill = document.createElement('div');
         pill.className = 'drip-token';
-        pill.innerHTML = '<span class="drip-token-pill"><span class="lbl"></span><span class="x" title="הסר">✕</span></span>';
+        pill.innerHTML = '<span class="drip-token-pill"><span class="lbl"></span><span class="x" title="' + t('remove') + '">✕</span></span>';
         pill.querySelector('.x').addEventListener('click', function (e) {
           e.preventDefault(); e.stopPropagation();
           setNativeValue(inp, ''); syncToken(wrap, inp); inp.focus();
@@ -126,7 +145,7 @@
     var lab = document.createElement('span');
     lab.className = 'text-xs text-n-slate-11';
     lab.style.cssText = 'font-size:12px;color:var(--n-slate-11,#64748b)';
-    lab.textContent = 'הוסף שדה:';
+    lab.textContent = t('addField');
     holder.appendChild(lab);
     allFields().forEach(function (f) {
       var b = document.createElement('button');
@@ -168,7 +187,10 @@
   }
 
   function enhanceCampaign() {
-    var inputs = document.querySelectorAll('input[placeholder^="הזן ערך"]');
+    // Match Chatwoot's own variable-input placeholder in BOTH locales — "הזן ערך עבור {…}"
+    // (he) and "Enter value for {…}" (en). Anchoring on only the Hebrew text silently broke
+    // the whole feature for English users (the inputs were never found).
+    var inputs = document.querySelectorAll('input[placeholder^="הזן ערך"], input[placeholder^="Enter value"]');
     for (var i = 0; i < inputs.length; i++) {
       if (inputs[i].getAttribute('data-drip-var')) continue;
       inputs[i].setAttribute('data-drip-var', '1');
@@ -177,9 +199,9 @@
   }
 
   // ── prettify the template preview card ──
-  var LANG_NAMES = { he: 'עברית', en: 'אנגלית', en_us: 'אנגלית', ar: 'ערבית' };
+  var LANG_NAMES = { he: t('lang_he'), en: t('lang_en'), en_us: t('lang_en'), ar: t('lang_ar') };
   var LANG_FLAGS = { he: '🇮🇱', en: '🇺🇸', en_us: '🇺🇸', ar: '🇸🇦' };
-  var CAT_NAMES  = { MARKETING: 'שיווקי', UTILITY: 'שירותי', AUTHENTICATION: 'אימות' };
+  var CAT_NAMES  = { MARKETING: t('cat_MARKETING'), UTILITY: t('cat_UTILITY'), AUTHENTICATION: t('cat_AUTHENTICATION') };
   function prettifyName(raw) {
     return (raw || '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
       .replace(/\b\w/g, function (c) { return c.toUpperCase(); });

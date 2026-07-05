@@ -134,6 +134,33 @@
   if (typeof VideoEncoder === 'undefined') return; // no WebCodecs → don't show the button
   var ADDONS_BASE = window.__CW_ADDONS_BASE || '/chatwoot-addons';
 
+  // ── i18n: Hebrew for RTL (he) users, English for everyone else. Chatwoot doesn't put the
+  // locale on the DOM, but it sets #app[dir]=rtl only for Hebrew — the same signal the import
+  // wizard already relies on. he→Hebrew, ltr→English (also the sane fallback for fr/es/…). ──
+  var DRIP_LOCALE = (function () {
+    var a = document.querySelector('#app[dir]');
+    return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
+  })();
+  var I18N = {
+    he: { videoCompressed: 'הסרטון כווץ', close: 'סגור',
+          downloadCompressed: 'הורד את הסרטון המכווץ',
+          afterDownloadAttach: 'לאחר ההורדה — צרף את הקובץ דרך הסיכה',
+          notAVideo: 'זה לא קובץ וידאו', checkingVideo: 'בודק את הסרטון…',
+          compressingVideo: 'מכווץ סרטון…', videoAlreadyOk: 'הסרטון כבר תקין',
+          attachDirectly: 'צרף אותו ישירות דרך הסיכה',
+          compressionFailed: 'הדחיסה נכשלה — נסה סרטון קצר יותר',
+          compressBtnTitle: 'כווץ סרטון גדול (>16MB) לשליחה בווצאפ — נדחס בדפדפן ויורד, ואז צרף דרך הסיכה' },
+    en: { videoCompressed: 'Video compressed', close: 'Close',
+          downloadCompressed: 'Download compressed video',
+          afterDownloadAttach: 'After downloading, attach the file via the paperclip',
+          notAVideo: 'This is not a video file', checkingVideo: 'Checking the video…',
+          compressingVideo: 'Compressing video…', videoAlreadyOk: 'The video is already fine',
+          attachDirectly: 'attach it directly via the paperclip',
+          compressionFailed: 'Compression failed — try a shorter video',
+          compressBtnTitle: 'Compress a large video (>16MB) for WhatsApp — compressed in your browser and downloaded, then attach it via the paperclip' },
+  };
+  function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
+
   var CB = '?v=' + Date.now();
   var compPromise = null;
   function getCompressor() {
@@ -151,9 +178,9 @@
   function ensureCard() {
     if (!card) {
       card = document.createElement('div');
-      card.dir = 'rtl';
+      card.dir = DRIP_LOCALE === 'he' ? 'rtl' : 'ltr';
       card.className = 'bg-n-solid-1 border border-n-weak rounded-xl shadow-lg px-4 py-3'; // Chatwoot's card style (adapts to light/dark)
-      card.style.cssText = 'position:fixed;bottom:88px;left:50%;transform:translateX(-50%);z-index:99999;min-width:250px;max-width:90vw;direction:rtl;';
+      card.style.cssText = 'position:fixed;bottom:88px;left:50%;transform:translateX(-50%);z-index:99999;min-width:250px;max-width:90vw;direction:' + (DRIP_LOCALE === 'he' ? 'rtl' : 'ltr') + ';';
       document.body.appendChild(card);
     }
     clearTimeout(toastTimer);
@@ -178,13 +205,13 @@
     card.innerHTML = '';
     var head = el('div', 'flex items-center justify-between gap-3 mb-2');
     var title = el('span', 'flex items-center gap-1.5 text-sm font-medium text-n-slate-12');
-    title.innerHTML = '<span class="i-ph-video-camera flex-shrink-0"></span>הסרטון כווץ';
+    title.innerHTML = '<span class="i-ph-video-camera flex-shrink-0"></span>' + t('videoCompressed');
     var close = el('button', 'inline-flex items-center justify-center h-6 w-6 rounded-lg text-n-slate-11 hover:bg-n-alpha-2');
-    close.type = 'button'; close.title = 'סגור'; close.innerHTML = '<span class="i-ph-x flex-shrink-0"></span>';
+    close.type = 'button'; close.title = t('close'); close.innerHTML = '<span class="i-ph-x flex-shrink-0"></span>';
     close.addEventListener('click', clearToast);
     head.appendChild(title); head.appendChild(close);
     var sizes = el('p', 'text-xs text-n-slate-11 mb-2.5'); sizes.textContent = mb(before) + ' ← ' + mb(after);
-    var dl = el('button', SEND_BTN); dl.type = 'button'; dl.textContent = 'הורד את הסרטון המכווץ';
+    var dl = el('button', SEND_BTN); dl.type = 'button'; dl.textContent = t('downloadCompressed');
     dl.addEventListener('click', function () {
       var u = URL.createObjectURL(file);
       var a = document.createElement('a'); a.href = u; a.download = file.name || 'video.mp4';
@@ -192,25 +219,25 @@
       setTimeout(function () { URL.revokeObjectURL(u); }, 25000);
       toastTimer = setTimeout(clearToast, 2500);
     });
-    var hint = el('p', 'text-xs text-n-slate-11 mt-2'); hint.textContent = 'לאחר ההורדה — צרף את הקובץ דרך הסיכה 📎';
+    var hint = el('p', 'text-xs text-n-slate-11 mt-2'); hint.textContent = t('afterDownloadAttach') + ' 📎';
     card.appendChild(head); card.appendChild(sizes); card.appendChild(dl); card.appendChild(hint);
   }
 
   async function process(file) {
     if (!file) return;
-    if (!/^video\//i.test(file.type || '')) { setToast('זה לא קובץ וידאו', 3500); return; }
+    if (!/^video\//i.test(file.type || '')) { setToast(t('notAVideo'), 3500); return; }
     try {
-      setToast('🎬 בודק את הסרטון…');
+      setToast('🎬 ' + t('checkingVideo'));
       var mod = await getCompressor();
       var res = await mod.maybeCompressForWhatsApp(file, {
-        onProgress: function (p) { setToast('🎬 מכווץ סרטון… ' + Math.round((p || 0) * 100) + '%'); },
-        onStage: function (s) { if (s === 'probe') setToast('🎬 בודק את הסרטון…'); }
+        onProgress: function (p) { setToast('🎬 ' + t('compressingVideo') + ' ' + Math.round((p || 0) * 100) + '%'); },
+        onStage: function (s) { if (s === 'probe') setToast('🎬 ' + t('checkingVideo')); }
       });
       if (res.error) { setToast('⚠️ ' + res.error, 6000); return; }
-      if (!res.compressed) { setToast('✓ הסרטון כבר תקין (' + mb(file.size) + ') — צרף אותו ישירות דרך הסיכה 📎', 9000); return; }
+      if (!res.compressed) { setToast('✓ ' + t('videoAlreadyOk') + ' (' + mb(file.size) + ') — ' + t('attachDirectly') + ' 📎', 9000); return; }
       showDownload(res.file, res.before, res.after);
     } catch (e) {
-      setToast('⚠️ הדחיסה נכשלה — נסה סרטון קצר יותר (' + ((e && e.message) || e) + ')', 7000);
+      setToast('⚠️ ' + t('compressionFailed') + ' (' + ((e && e.message) || e) + ')', 7000);
     }
   }
 
@@ -233,7 +260,7 @@
     var btn = document.createElement('button');
     btn.id = 'drip-compress-btn';
     btn.type = 'button';
-    btn.title = 'כווץ סרטון גדול (>16MB) לשליחה בווצאפ — נדחס בדפדפן ויורד, ואז צרף דרך הסיכה';
+    btn.title = t('compressBtnTitle');
     if (paperclip) btn.className = paperclip.className; // exact same style as the paperclip
     btn.style.cssText = 'margin-inline-start:2px;';
     btn.innerHTML = ICON;
@@ -241,8 +268,8 @@
     fu.parentElement.insertBefore(btn, fu.nextSibling);
   }
 
-  var t;
-  new MutationObserver(function () { clearTimeout(t); t = setTimeout(inject, 200); })
+  var injectTimer;
+  new MutationObserver(function () { clearTimeout(injectTimer); injectTimer = setTimeout(inject, 200); })
     .observe(document.documentElement, { childList: true, subtree: true });
   setTimeout(inject, 600);
 })();

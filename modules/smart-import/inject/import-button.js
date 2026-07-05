@@ -8,6 +8,18 @@
   var ADDONS_BASE = window.__CW_ADDONS_BASE || '/chatwoot-addons';
   var ASSET_VER = '__CWI_VER__'; // replaced by deploy with the bundle content hash (cache-bust)
 
+  // i18n: Hebrew for RTL (he) users, English otherwise — same #app[dir] signal the
+  // campaign-modal enhancement and the import wizard use. he→Hebrew, ltr→English.
+  var DRIP_LOCALE = (function () {
+    var a = document.querySelector('#app[dir]');
+    return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
+  })();
+  var I18N = {
+    he: { smartImport: 'ייבוא חכם', authError: 'שגיאת הזדהות — רענן את העמוד ונסה שוב', loadFailed: 'טעינת הכלי נכשלה: ' },
+    en: { smartImport: 'Smart import', authError: 'Authentication error — refresh the page and try again', loadFailed: 'Failed to load the tool: ' },
+  };
+  function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
+
   function accountId() { var m = location.pathname.match(/\/accounts\/(\d+)/); return m ? m[1] : ''; }
 
   // Same auth pattern as the campaign-modal enhancement: devise-token-auth headers from the
@@ -40,12 +52,12 @@
 
   function openImport() {
     var headers = authHeaders();
-    if (!headers) { alert('שגיאת הזדהות — רענן את העמוד ונסה שוב'); return; }
+    if (!headers) { alert(t('authError')); return; }
     loadBundle().then(function (mod) {
       // assetBase is the raw addons base; the wizard derives its own vendor asset path from
       // it (see cw-import-tool/lib/basepath.js).
       mod.openWizard({ accountId: accountId(), authHeaders: headers, assetBase: ADDONS_BASE });
-    }).catch(function (e) { alert('טעינת הכלי נכשלה: ' + e.message); });
+    }).catch(function (e) { alert(t('loadFailed') + e.message); });
   }
 
   // Inject "Smart import" into the stable Chatwoot contacts header action row. Idempotent +
@@ -58,7 +70,7 @@
       if (!host) return; // MutationObserver will retry — no floating fallback
       var btn = document.createElement('button');
       btn.id = 'cwi-open-btn';
-      btn.innerHTML = '<span class="i-lucide-upload"></span><span>ייבוא חכם</span>';
+      btn.innerHTML = '<span class="i-lucide-upload"></span><span>' + t('smartImport') + '</span>';
       btn.className = 'cwi-open inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-n-brand text-white text-sm font-medium hover:brightness-110 outline outline-1 outline-transparent';
       btn.addEventListener('click', function (e) { e.preventDefault(); openImport(); });
       host.insertBefore(btn, host.firstChild); // first child = sits with the native header actions

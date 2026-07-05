@@ -1,6 +1,7 @@
 import { AlertTriangle, ShieldAlert, Send } from 'lucide-react';
 import Modal from './Modal.jsx';
 import Button from './Button.jsx';
+import useT from '../../useT.js';
 
 /*
  * ConfirmDialog — מנגנון בטיחות לפני פעולה קריטית (התחלת סדרה, החלפה,
@@ -12,6 +13,12 @@ import Button from './Button.jsx';
  * props: open, onClose, onConfirm, title, description, confirmLabel, cancelLabel,
  *        tone, loading, children
  */
+
+// מילון co-located (he/en)
+const M = {
+  he: { confirm: 'אישור', cancel: 'ביטול' },
+  en: { confirm: 'Confirm', cancel: 'Cancel' },
+};
 
 const TONES = {
   info: { color: 'blue', Icon: Send, badge: 'bg-n-brand/10 text-n-blue-11' },
@@ -25,23 +32,26 @@ export default function ConfirmDialog({
   onConfirm,
   title,
   description,
-  confirmLabel = 'אישור',
-  cancelLabel = 'ביטול',
+  confirmLabel = null,
+  cancelLabel = null,
   tone = 'warning',
   loading = false,
   icon: IconOverride = null,
   children,
 }) {
-  const t = TONES[tone] || TONES.warning;
-  const Icon = IconOverride || t.Icon;
+  const t = useT(M);
+  const _confirm = confirmLabel ?? t('confirm');
+  const _cancel = cancelLabel ?? t('cancel');
+  const toneCfg = TONES[tone] || TONES.warning;
+  const Icon = IconOverride || toneCfg.Icon;
 
   const footer = (
     <>
       <Button variant="ghost" color="slate" onClick={onClose} disabled={loading}>
-        {cancelLabel}
+        {_cancel}
       </Button>
-      <Button variant="solid" color={t.color} onClick={onConfirm} loading={loading}>
-        {confirmLabel}
+      <Button variant="solid" color={toneCfg.color} onClick={onConfirm} loading={loading}>
+        {_confirm}
       </Button>
     </>
   );
@@ -50,7 +60,7 @@ export default function ConfirmDialog({
     <Modal open={open} onClose={onClose} variant="center" size="sm" footer={footer} closeOnOverlay={!loading}>
       <div className="flex gap-3.5">
         <span
-          className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${t.badge}`}
+          className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${toneCfg.badge}`}
           aria-hidden="true"
         >
           <Icon size={22} strokeWidth={2} />

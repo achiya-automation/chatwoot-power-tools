@@ -1,4 +1,21 @@
 import { API_BASE } from '../config.js';
+import { translate, getLocale } from '../i18n.js';
+
+// הודעות שגיאה שמגיעות ל-UI (נזרקות כ-Error ומוצגות ב-App/SequenceEditor). דו-לשוני.
+const M = {
+  he: {
+    missingAccount: 'חסר account_id',
+    apiFailed: 'API {action} נכשל',
+    apiFailedStatus: 'API {action} נכשל ({status})',
+    uploadFailed: 'העלאה נכשלה ({status})',
+  },
+  en: {
+    missingAccount: 'Missing account_id',
+    apiFailed: 'API {action} failed',
+    apiFailedStatus: 'API {action} failed ({status})',
+    uploadFailed: 'Upload failed ({status})',
+  },
+};
 
 /*
  * שכבת API לרצפים — מדברת עם ה-engine (drip-engine sidecar) ב-same-origin,
@@ -19,16 +36,17 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function call(action, payload, accountId) {
-  if (accountId == null) throw new Error('חסר account_id');
+  if (accountId == null) throw new Error(translate(M, 'missingAccount'));
   const url = `${API_BASE}?account_id=${encodeURIComponent(accountId)}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, payload: payload || {} }),
   });
-  if (!res.ok) throw new Error(`API ${action} נכשל (${res.status})`);
+  if (!res.ok) throw new Error(translate(M, 'apiFailedStatus', { action, status: res.status }));
   const json = await res.json();
-  if (json && json.ok === false) throw new Error(json.error || `API ${action} נכשל`);
+  // json.error מגיע מה-engine (כבר דו-לשוני לפי ?locale=); נופלים למחרוזת מקומית אם אין.
+  if (json && json.ok === false) throw new Error(json.error || translate(M, 'apiFailed', { action }));
   return json ? json.data : null;
 }
 
@@ -179,8 +197,9 @@ export async function getProjectedSchedule(conversationId, accountId) {
 // upload_media — מעלה קובץ (drag-drop) ומקבל קישור ציבורי. נשלח כ-raw body; השרת
 // מאמת מול מגבלות WhatsApp ושומר ב-volume. מחזיר { url, byteSize, mime }.
 export async function uploadMedia(file, format, accountId) {
-  if (accountId == null) throw new Error('חסר account_id');
-  const url = `${API_BASE}/media?account_id=${encodeURIComponent(accountId)}&format=${encodeURIComponent(format || '')}`;
+  if (accountId == null) throw new Error(translate(M, 'missingAccount'));
+  // &locale= → ה-engine מחזיר שגיאות ולידציית מדיה בשפת המשתמש (media.js).
+  const url = `${API_BASE}/media?account_id=${encodeURIComponent(accountId)}&format=${encodeURIComponent(format || '')}&locale=${getLocale()}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -190,7 +209,7 @@ export async function uploadMedia(file, format, accountId) {
     body: file,
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok || json.ok === false) throw new Error(json.error || `העלאה נכשלה (${res.status})`);
+  if (!res.ok || json.ok === false) throw new Error(json.error || translate(M, 'uploadFailed', { status: res.status }));
   return json.data; // { url, file, byteSize, mime }
 }
 

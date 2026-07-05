@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
+import useT from '../../useT.js';
 
 /*
  * Dropdown — בורר מותאם (לא <select> מקורי): נפתח כפאנל בזרימה רגילה מתחת לכפתור
@@ -11,16 +12,25 @@ import { ChevronDown, Check } from 'lucide-react';
  *   value, onChange(value)
  *   placeholder, disabled, ariaLabel, id, className
  */
+
+// מילון co-located (he/en)
+const M = {
+  he: { placeholder: 'בחר…', noOptions: 'אין אפשרויות' },
+  en: { placeholder: 'Select…', noOptions: 'No options' },
+};
+
 export default function Dropdown({
   options = [],
   value,
   onChange,
-  placeholder = 'בחר…',
+  placeholder = null,
   disabled = false,
   ariaLabel,
   id,
   className = '',
 }) {
+  const t = useT(M);
+  const _placeholder = placeholder ?? t('placeholder');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1); // אפשרות בפוקוס-מקלדת
   const rootRef = useRef(null);
@@ -84,7 +94,7 @@ export default function Dropdown({
         className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-n-weak bg-n-alpha-1 px-3 text-start text-sm outline-none transition-colors duration-150 focus:border-n-brand focus:ring-1 focus:ring-n-brand/40 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className={`truncate ${selected ? 'text-n-slate-12' : 'text-n-slate-10'}`}>
-          {selected ? selected.label : placeholder}
+          {selected ? selected.label : _placeholder}
         </span>
         <ChevronDown
           size={16}
@@ -101,7 +111,7 @@ export default function Dropdown({
           className="mt-1 max-h-64 overflow-auto rounded-lg border border-n-weak bg-n-surface-1 py-1 shadow-lg shadow-black/10"
         >
           {options.length === 0 ? (
-            <li className="px-3 py-3 text-center text-xs text-n-slate-11">אין אפשרויות</li>
+            <li className="px-3 py-3 text-center text-xs text-n-slate-11">{t('noOptions')}</li>
           ) : (
             options.map((opt, i) => {
               const sel = opt.value === value;

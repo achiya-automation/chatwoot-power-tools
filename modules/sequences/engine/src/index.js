@@ -10,8 +10,24 @@ import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
 const config = loadConfig();
 const pool = getPool(config);
 
-// ── Run migrations on startup ─────────────────────────────────────────────
-await runMigrations(pool);
+// ── Run migrations on startup (with DB-ready retry) ───────────────────────
+// The engine can start before Postgres is accepting connections — e.g. a full-stack reboot,
+// now that docker-compose.addons.yml intentionally carries no `depends_on: postgres` (that
+// hardcoded name broke non-standard DB service names). Retry the first DB contact so a cold
+// start settles on its own instead of crash-looping the container into the same race.
+// runMigrations is idempotent (CREATE ... IF NOT EXISTS + tracked versions), so re-entry is
+// safe. restart: unless-stopped remains the backstop if the DB never comes up.
+async function withDbRetry(fn, tries = 30, delayMs = 2000) {
+  for (let i = 1; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (i >= tries) throw e;
+      console.warn(`[drip] DB not ready (${i}/${tries}): ${e.message} — retrying in ${delayMs}ms`);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+}
+await withDbRetry(() => runMigrations(pool));
 
 // ── Shabbat/yom-tov calendar (self-refreshing from Hebcal, Jerusalem) ─────
 // Held in memory; refreshed at most once/day. A failed refresh keeps the

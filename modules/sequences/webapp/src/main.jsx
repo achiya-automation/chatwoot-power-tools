@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import { ToastProvider } from './components/ui/Toast.jsx';
+import { applyDocumentDir, setLocale } from './i18n.js';
 import './index.css';
 
 /*
@@ -47,6 +48,10 @@ function resolveTheme() {
 // החלה סינכרונית לפני render — אין הבזק (flash) של נושא שגוי.
 applyTheme(resolveTheme());
 
+// שפה (he/en) — נגזרת מ-?locale= (מוזרק ע"י ה-injector). מחיל <html lang/dir>
+// סינכרונית לפני render כדי שהכיוון (rtl/ltr) יהיה נכון כבר בפריים הראשון.
+applyDocumentDir();
+
 // מעקב חי אחרי שינוי נושא בעמוד-האב (כשהמשתמש מחליף כהה/בהיר ב-Chatwoot)
 try {
   if (window.parent !== window) {
@@ -64,12 +69,15 @@ try {
   });
 } catch { /* ignore */ }
 
-// החלפת נושא חיה ששודרה מ-Chatwoot (תאימות-לאחור עם ה-injector)
+// החלפת נושא/שפה חיה ששודרה מ-Chatwoot (postMessage מה-injector)
 window.addEventListener('message', (event) => {
   if (event.origin !== window.location.origin) return; // same-origin embed בלבד
   const data = event?.data;
-  if (data && typeof data === 'object' && data.type === 'drip-theme' && data.theme) {
+  if (!data || typeof data !== 'object') return;
+  if (data.type === 'drip-theme' && data.theme) {
     applyTheme(data.theme);
+  } else if (data.type === 'drip-locale' && data.locale) {
+    setLocale(data.locale); // מעדכן <html dir/lang> + מודיע ל-React (re-render)
   }
 });
 

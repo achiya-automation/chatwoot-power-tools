@@ -7,6 +7,8 @@ import {
   useState,
 } from 'react';
 import { X, Undo2, CheckCircle2, AlertCircle } from 'lucide-react';
+import useT, { useLocale } from '../../useT.js';
+import { dirFor, translate } from '../../i18n.js';
 
 /*
  * Toast — הודעות קצרות בתחתית המסך, בסגנון Chatwoot (n-tokens, כרטיס מרחף).
@@ -19,6 +21,12 @@ import { X, Undo2, CheckCircle2, AlertCircle } from 'lucide-react';
  *
  * ה-Provider עוטף את האפליקציה (main.jsx). ה-viewport מרונדר בתוך ה-iframe.
  */
+
+// מילון co-located (he/en)
+const M = {
+  he: { notifications: 'התראות', closeNotification: 'סגירת ההתראה' },
+  en: { notifications: 'Notifications', closeNotification: 'Close notification' },
+};
 
 const ToastContext = createContext(null);
 
@@ -80,14 +88,16 @@ const VARIANT = {
 };
 
 function ToastViewport({ toasts, dismiss }) {
+  const t = useT(M);
+  const locale = useLocale();
   if (!toasts.length) return null;
   return (
     <div
       className="pointer-events-none fixed inset-x-0 bottom-4 z-[60] flex flex-col items-center gap-2 px-4"
-      dir="rtl"
+      dir={dirFor(locale)}
       role="region"
       aria-live="polite"
-      aria-label="התראות"
+      aria-label={t('notifications')}
     >
       {toasts.map((t) => (
         <ToastItem key={t.id} t={t} onDismiss={() => dismiss(t.id)} />
@@ -121,7 +131,7 @@ function ToastItem({ t, onDismiss }) {
       <button
         type="button"
         onClick={onDismiss}
-        aria-label="סגירת ההתראה"
+        aria-label={translate(M, 'closeNotification')}
         className="shrink-0 rounded-md p-1 text-n-slate-10 transition-colors hover:bg-n-alpha-2 hover:text-n-slate-12"
       >
         <X size={14} aria-hidden="true" />

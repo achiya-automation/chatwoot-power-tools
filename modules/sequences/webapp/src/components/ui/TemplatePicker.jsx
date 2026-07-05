@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search } from 'lucide-react';
+import useT from '../../useT.js';
 
 /*
  * TemplatePicker — בורר תבניות מותאם שמציג גם את *תוכן* התבנית, לא רק את השם.
@@ -15,13 +16,31 @@ import { ChevronDown, Search } from 'lucide-react';
  *   placeholder — טקסט כשאין בחירה
  */
 
+// מילון co-located (he/en)
+const M = {
+  he: {
+    selectTemplate: 'בחר תבנית…',
+    searchTemplate: 'חיפוש תבנית…',
+    searchTemplateAria: 'חיפוש תבנית',
+    noTemplatesFound: 'לא נמצאו תבניות',
+  },
+  en: {
+    selectTemplate: 'Select template…',
+    searchTemplate: 'Search template…',
+    searchTemplateAria: 'Search template',
+    noTemplatesFound: 'No templates found',
+  },
+};
+
 export default function TemplatePicker({
   templates = [],
   value = '',
   onChange,
-  placeholder = 'בחר תבנית…',
+  placeholder = null,
   id,
 }) {
+  const t = useT(M);
+  const _placeholder = placeholder ?? t('selectTemplate');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const searchRef = useRef(null);
@@ -73,7 +92,7 @@ export default function TemplatePicker({
         className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-n-weak bg-n-alpha-1 px-3 text-start text-sm text-n-slate-12 outline-none transition-colors duration-150 focus:border-n-brand focus:ring-1 focus:ring-n-brand/40"
       >
         <span className={value ? 'truncate text-n-slate-12' : 'truncate text-n-slate-10'}>
-          {value || placeholder}
+          {value || _placeholder}
         </span>
         <ChevronDown
           size={16}
@@ -98,8 +117,8 @@ export default function TemplatePicker({
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="חיפוש תבנית…"
-                aria-label="חיפוש תבנית"
+                placeholder={t('searchTemplate')}
+                aria-label={t('searchTemplateAria')}
                 className="h-9 w-full rounded-lg border border-n-weak bg-n-alpha-2 ps-8 pe-3 text-sm text-n-slate-12 placeholder:text-n-slate-10 outline-none focus:border-n-brand focus:ring-1 focus:ring-n-brand/40"
               />
             </div>
@@ -109,7 +128,7 @@ export default function TemplatePicker({
           <ul role="listbox" className="py-1">
             {filtered.length === 0 ? (
               <li className="px-3 py-3 text-center text-xs text-n-slate-11">
-                לא נמצאו תבניות
+                {t('noTemplatesFound')}
               </li>
             ) : (
               filtered.map((t) => {
