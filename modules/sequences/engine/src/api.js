@@ -67,6 +67,7 @@ export function createApp(config) {
     '/drip-api/media',
     express.raw({ type: () => true, limit: 110 * 1024 * 1024 }),
     async (req, res) => {
+      const locale = req.query.locale === 'en' ? 'en' : 'he'; // שפת שגיאות ל-UI (מחוץ ל-try כדי שה-catch יראה)
       try {
         const accountId = parseInt(req.query.account_id || '0', 10);
         if (!accountId) return res.status(400).json({ ok: false, error: 'account_id required' });
@@ -77,7 +78,7 @@ export function createApp(config) {
         const buf = Buffer.isBuffer(req.body) ? req.body : null;
         const byteSize = buf ? buf.length : 0;
 
-        const v = validateWhatsAppMedia({ format, mime, byteSize });
+        const v = validateWhatsAppMedia({ format, mime, byteSize }, locale);
         if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
 
         const id = randomUUID();
@@ -92,7 +93,7 @@ export function createApp(config) {
         return res.json({ ok: true, data: { url: `${config.publicBase}/media/${file}`, file, byteSize, mime } });
       } catch (err) {
         console.error('[drip-api] media upload error:', err.message);
-        return res.status(500).json({ ok: false, error: 'העלאה נכשלה' });
+        return res.status(500).json({ ok: false, error: locale === 'en' ? 'Upload failed' : 'העלאה נכשלה' });
       }
     }
   );

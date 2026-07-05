@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import useT, { useLocale } from '../../useT.js';
+import { translate } from '../../i18n.js';
 
 /*
  * MessageBubble — בועת הודעה נכנסת בסגנון WhatsApp. מציגה את גוף התבנית
@@ -6,11 +8,40 @@ import { useMemo } from 'react';
  * משותף לעורך (StepCard) ולתצוגת הרצף המלאה (SequencePreview).
  */
 
-const SYSTEM_FIELD_PREVIEW = {
-  '@first_name': '[שם פרטי]',
-  '@name': '[שם הלקוח]',
-  '@phone': '[טלפון]',
-  '@email': '[אימייל]',
+// מילון co-located (he/en)
+const M = {
+  he: {
+    field_first_name: '[שם פרטי]',
+    field_name: '[שם הלקוח]',
+    field_phone: '[טלפון]',
+    field_email: '[אימייל]',
+    variableN: 'משתנה {n}',
+    mediaImage: 'תמונה',
+    mediaVideo: 'וידאו',
+    mediaDocument: 'מסמך',
+    inHeader: 'בכותרת',
+    linkWillBeSet: '(קישור יוגדר בשלב)',
+  },
+  en: {
+    field_first_name: '[First name]',
+    field_name: '[Customer name]',
+    field_phone: '[Phone]',
+    field_email: '[Email]',
+    variableN: 'Variable {n}',
+    mediaImage: 'Image',
+    mediaVideo: 'Video',
+    mediaDocument: 'Document',
+    inHeader: 'in header',
+    linkWillBeSet: '(link will be set in the step)',
+  },
+};
+
+// מיפוי שדה-מערכת → מפתח תרגום (התצוגה עוברת דרך M)
+const SYSTEM_FIELD_KEY = {
+  '@first_name': 'field_first_name',
+  '@name': 'field_name',
+  '@phone': 'field_phone',
+  '@email': 'field_email',
 };
 
 function isSystemField(v) {
@@ -28,14 +59,14 @@ function buildSegments(body, params, examples) {
     const idx = Number(m[1]) - 1;
     const filled = params[idx];
     if (isSystemField(filled)) {
-      out.push({ type: 'chip', value: SYSTEM_FIELD_PREVIEW[filled] });
+      out.push({ type: 'chip', value: translate(M, SYSTEM_FIELD_KEY[filled]) });
     } else if (filled != null && String(filled).trim() !== '') {
       out.push({ type: 'text', value: String(filled) });
     } else {
       const ex = examples[idx];
       out.push({
         type: 'chip',
-        value: ex != null && String(ex) !== '' ? String(ex) : `משתנה ${idx + 1}`,
+        value: ex != null && String(ex) !== '' ? String(ex) : translate(M, 'variableN', { n: idx + 1 }),
       });
     }
     last = m.index + m[0].length;
@@ -44,7 +75,7 @@ function buildSegments(body, params, examples) {
   return out;
 }
 
-const MEDIA_HDR = { IMAGE: 'תמונה', VIDEO: 'וידאו', DOCUMENT: 'מסמך' };
+const MEDIA_HDR = { IMAGE: 'mediaImage', VIDEO: 'mediaVideo', DOCUMENT: 'mediaDocument' };
 const MEDIA_ICON = { IMAGE: '📷', VIDEO: '🎬', DOCUMENT: '📄' };
 function headerMediaFmt(template) {
   const f = String(template?.header_format || '').toUpperCase();
@@ -52,13 +83,15 @@ function headerMediaFmt(template) {
 }
 
 export default function MessageBubble({ template, params = [], mediaUrl = '', className = '' }) {
+  const t = useT(M);
+  const locale = useLocale(); // תלות ל-useMemo → תרגום הסגמנטים מתעדכן בהחלפת שפה
   const body = String(template?.body || '');
   const examples = Array.isArray(template?.examples) ? template.examples : [];
   const buttons = Array.isArray(template?.buttons) ? template.buttons : [];
 
   const segments = useMemo(
     () => buildSegments(body, params, examples),
-    [body, params, examples]
+    [body, params, examples, locale]
   );
 
   return (
@@ -77,8 +110,8 @@ export default function MessageBubble({ template, params = [], mediaUrl = '', cl
         ) : (
           <div className="mb-2 flex items-center gap-1.5 rounded-md bg-n-alpha-2 px-2 py-3 text-xs text-n-slate-11">
             <span aria-hidden="true">{MEDIA_ICON[headerMediaFmt(template)]}</span>
-            {MEDIA_HDR[headerMediaFmt(template)]} בכותרת
-            {mediaUrl ? '' : ' (קישור יוגדר בשלב)'}
+            {t(MEDIA_HDR[headerMediaFmt(template)])} {t('inHeader')}
+            {mediaUrl ? '' : ` ${t('linkWillBeSet')}`}
           </div>
         )
       ) : null}

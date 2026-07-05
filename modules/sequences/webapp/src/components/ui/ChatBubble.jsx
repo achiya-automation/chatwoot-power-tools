@@ -1,4 +1,5 @@
 import { Check, CheckCheck, Clock, AlertCircle } from 'lucide-react';
+import useT from '../../useT.js';
 
 /*
  * ChatBubble — בועת הודעת WhatsApp יוצאת, תואמת 1:1 למראה של Chatwoot.
@@ -16,7 +17,27 @@ import { Check, CheckCheck, Clock, AlertCircle } from 'lucide-react';
  *   meta      — { time, status } — status: delivered|failed|pending|scheduled
  */
 
-const MEDIA_HDR = { IMAGE: 'תמונה', VIDEO: 'וידאו', DOCUMENT: 'מסמך' };
+// מילון co-located (he/en)
+const M = {
+  he: {
+    mediaImage: 'תמונה',
+    mediaVideo: 'וידאו',
+    mediaDocument: 'מסמך',
+    inHeader: 'בכותרת',
+    linkWillBeSet: '(קישור יוגדר בשלב)',
+    notDelivered: 'לא נמסר',
+  },
+  en: {
+    mediaImage: 'Image',
+    mediaVideo: 'Video',
+    mediaDocument: 'Document',
+    inHeader: 'in header',
+    linkWillBeSet: '(link will be set in the step)',
+    notDelivered: 'Not delivered',
+  },
+};
+
+const MEDIA_HDR = { IMAGE: 'mediaImage', VIDEO: 'mediaVideo', DOCUMENT: 'mediaDocument' };
 const MEDIA_ICON = { IMAGE: '📷', VIDEO: '🎬', DOCUMENT: '📄' };
 
 function mediaFormat(template) {
@@ -26,11 +47,12 @@ function mediaFormat(template) {
 
 // meta תחתון בסגנון WhatsApp: זמן + חיווי מסירה (טיקים)
 function MetaRow({ time, status, ltr = true }) {
+  const t = useT(M);
   if (!time && !status) return null;
   const map = {
     delivered: { Icon: CheckCheck, cls: 'text-n-teal-11', label: '' },
     pending: { Icon: Check, cls: 'text-n-slate-10', label: '' },
-    failed: { Icon: AlertCircle, cls: 'text-n-ruby-11', label: 'לא נמסר' },
+    failed: { Icon: AlertCircle, cls: 'text-n-ruby-11', label: t('notDelivered') },
     scheduled: { Icon: Clock, cls: 'text-n-slate-9', label: '' },
   };
   const m = map[status] || map.pending;
@@ -44,6 +66,7 @@ function MetaRow({ time, status, ltr = true }) {
 }
 
 export default function ChatBubble({ text = '', template = null, mediaUrl = '', meta = null, className = '' }) {
+  const t = useT(M);
   const fmt = mediaFormat(template);
   const buttons = Array.isArray(template?.buttons) ? template.buttons : [];
 
@@ -63,7 +86,7 @@ export default function ChatBubble({ text = '', template = null, mediaUrl = '', 
         ) : (
           <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-n-alpha-2 px-2.5 py-3 text-xs text-n-slate-11">
             <span aria-hidden="true">{MEDIA_ICON[fmt]}</span>
-            {MEDIA_HDR[fmt]} בכותרת{mediaUrl ? '' : ' (קישור יוגדר בשלב)'}
+            {t(MEDIA_HDR[fmt])} {t('inHeader')}{mediaUrl ? '' : ` ${t('linkWillBeSet')}`}
           </div>
         )
       ) : null}

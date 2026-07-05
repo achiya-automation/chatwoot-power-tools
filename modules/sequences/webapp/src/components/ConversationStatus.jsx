@@ -16,6 +16,8 @@ import {
   listTemplates,
   setSequence as apiSetSequence,
 } from '../api/sequencesApi.js';
+import useT from '../useT.js';
+import { translate } from '../i18n.js';
 
 /*
  * ConversationStatus — הפאנל המובנה של איש הקשר (Dashboard App בתוך שיחה).
@@ -36,11 +38,128 @@ import {
  * props: conversationId, accountId
  */
 
+// מילון co-located (he/en) — משותף ל-ConversationStatus ו-StepTimeline בקובץ.
+const M = {
+  he: {
+    status_active: 'פעיל',
+    status_completed: 'הושלם',
+    status_stopped: 'נעצר',
+    status_failed: 'נתקע',
+    pending: 'ממתין',
+    pvFirstName: '[שם פרטי]',
+    pvName: '[שם]',
+    pvPhone: '[טלפון]',
+    pvEmail: '[אימייל]',
+    errLoadStatus: 'שגיאה בטעינת מצב הליד',
+    errAction: 'הפעולה נכשלה',
+    theLead: 'הליד',
+    removeTitle: 'להסיר את הליד מהסדרה?',
+    removeDesc: '{who} יוסר מהסדרה «{name}» ולא יקבל ממנה הודעות נוספות.',
+    confirmRemoveLabel: 'הסר מהסדרה',
+    replaceTitle: 'להחליף סדרה?',
+    replaceDesc: 'הליד נמצא כעת בשלב {cur} מתוך {tot} בסדרה «{current}». החלפה תעצור אותה ותתחיל את «{target}» מההתחלה.',
+    replaceConfirm: 'החלף סדרה',
+    startTitle: 'להתחיל את הסדרה?',
+    startDesc: '{who} יתחיל לקבל את הודעות הסדרה «{name}».',
+    startDescDisabled: ' הסדרה כבויה כרגע — השליחה תתחיל כשתופעל.',
+    startConfirm: 'התחל סדרה',
+    restartTitle: 'להתחיל את הסדרה מחדש?',
+    restartDescCompleted: 'הליד כבר השלים את «{name}». הפעלה מחדש תשלח לו שוב את כל ההודעות מהשלב הראשון.',
+    restartDescActive: 'הליד נמצא בשלב {cur} מתוך {tot}. התחלה מחדש תאפס אותו לשלב הראשון ותשלח שוב את כל ההודעות — כולל אלה שכבר נשלחו.',
+    restart: 'הפעל מחדש',
+    startOver: 'התחל מחדש',
+    startOverFromFirst: 'התחל מחדש מהשלב הראשון',
+    noSequence: '— ללא סדרה —',
+    offWillStart: 'כבוי — יתחיל כשתופעל',
+    seqLabel: 'סדרת הודעות',
+    saving: 'שומר…',
+    selectAria: 'בחירת סדרת הודעות לליד',
+    notAssigned: 'הליד לא משויך — בחרו סדרה כדי להתחיל.',
+    stuckTitle: 'הרצף נתקע — ההודעה לא נמסרה',
+    stuckStep: ' (שלב {n})',
+    messageJourney: 'מסע ההודעות',
+    stepXofY: 'שלב {cur} מתוך {tot}',
+    phone: 'טלפון',
+    disabledPre: 'הסדרה משויכת אך ',
+    disabledWord: 'כבויה',
+    disabledPost: ' — הפעילו אותה בלשונית "רצפים" וההודעות יתחילו להישלח אוטומטית.',
+    processingAssign: 'השיוך יעובד תוך כדקה…',
+    removeFromSequenceBtn: 'הסר מהרצף',
+    firstMsgInSeq: 'ההודעה הראשונה בסדרה:',
+    collapseAll: 'כווץ הכול',
+    expandAll: 'הרחב הכול',
+    pillFailed: 'נכשל',
+    pillSent: 'נשלח',
+    pillNow: 'עכשיו',
+    messageN: 'הודעה {n}',
+    soon: 'בקרוב',
+    templateNamed: 'תבנית {name}',
+    templateNotFound: 'תבנית "{name}" לא נמצאה',
+  },
+  en: {
+    status_active: 'Active',
+    status_completed: 'Completed',
+    status_stopped: 'Stopped',
+    status_failed: 'Stuck',
+    pending: 'Pending',
+    pvFirstName: '[First name]',
+    pvName: '[Name]',
+    pvPhone: '[Phone]',
+    pvEmail: '[Email]',
+    errLoadStatus: 'Failed to load lead status',
+    errAction: 'Action failed',
+    theLead: 'The lead',
+    removeTitle: 'Remove the lead from the sequence?',
+    removeDesc: '{who} will be removed from the sequence «{name}» and will no longer receive messages from it.',
+    confirmRemoveLabel: 'Remove from sequence',
+    replaceTitle: 'Replace sequence?',
+    replaceDesc: 'The lead is currently at step {cur} of {tot} in the sequence «{current}». Replacing will stop it and start «{target}» from the beginning.',
+    replaceConfirm: 'Replace sequence',
+    startTitle: 'Start the sequence?',
+    startDesc: '{who} will start receiving messages from the sequence «{name}».',
+    startDescDisabled: ' The sequence is currently off — sending will begin when it is turned on.',
+    startConfirm: 'Start sequence',
+    restartTitle: 'Restart the sequence?',
+    restartDescCompleted: 'The lead has already completed «{name}». Restarting will send them all the messages again from the first step.',
+    restartDescActive: 'The lead is at step {cur} of {tot}. Restarting will reset them to the first step and send all the messages again — including those already sent.',
+    restart: 'Restart',
+    startOver: 'Start over',
+    startOverFromFirst: 'Start over from the first step',
+    noSequence: '— No sequence —',
+    offWillStart: 'Off — will start when turned on',
+    seqLabel: 'Message sequence',
+    saving: 'Saving…',
+    selectAria: 'Select a message sequence for the lead',
+    notAssigned: 'The lead is not assigned — choose a sequence to start.',
+    stuckTitle: 'The sequence is stuck — the message was not delivered',
+    stuckStep: ' (Step {n})',
+    messageJourney: 'Message journey',
+    stepXofY: 'Step {cur} of {tot}',
+    phone: 'Phone',
+    disabledPre: 'The sequence is assigned but ',
+    disabledWord: 'off',
+    disabledPost: ' — turn it on in the "Sequences" tab and messages will start sending automatically.',
+    processingAssign: 'The assignment will be processed within a minute…',
+    removeFromSequenceBtn: 'Remove from sequence',
+    firstMsgInSeq: 'The first message in the sequence:',
+    collapseAll: 'Collapse all',
+    expandAll: 'Expand all',
+    pillFailed: 'Failed',
+    pillSent: 'Sent',
+    pillNow: 'Now',
+    messageN: 'Message {n}',
+    soon: 'Soon',
+    templateNamed: 'Template {name}',
+    templateNotFound: 'Template "{name}" not found',
+  },
+};
+
+// מיפוי סטטוס-כניסה → צבע התג (התווית מתורגמת ב-render דרך t('status_…'))
 const STATUS = {
-  active: { label: 'פעיל', color: 'teal' },
-  completed: { label: 'הושלם', color: 'blue' },
-  stopped: { label: 'נעצר', color: 'slate' },
-  failed: { label: 'נתקע', color: 'ruby' },
+  active: 'teal',
+  completed: 'blue',
+  stopped: 'slate',
+  failed: 'ruby',
 };
 
 // "2026-06-21 14:30" → "21/06 · 14:30" (תצוגה קומפקטית)
@@ -64,10 +183,10 @@ function firstName(name) {
 // תרגום טוקן-פרמטר לערך תצוגה-מקדימה (משקף את paramsResolve של המנוע)
 function previewParam(p, name) {
   const clean = String(name || '').trim();
-  if (p === '@first_name') return firstName(clean) || '[שם פרטי]';
-  if (p === '@name') return clean || '[שם]';
-  if (p === '@phone') return '[טלפון]';
-  if (p === '@email') return '[אימייל]';
+  if (p === '@first_name') return firstName(clean) || translate(M, 'pvFirstName');
+  if (p === '@name') return clean || translate(M, 'pvName');
+  if (p === '@phone') return translate(M, 'pvPhone');
+  if (p === '@email') return translate(M, 'pvEmail');
   return p || '';
 }
 
@@ -80,6 +199,7 @@ function renderPreview(body, params, name) {
 }
 
 export default function ConversationStatus({ conversationId, accountId }) {
+  const t = useT(M);
   const [sequences, setSequences] = useState([]);
   const [status, setStatus] = useState(null);
   const [history, setHistory] = useState([]);
@@ -126,7 +246,7 @@ export default function ConversationStatus({ conversationId, accountId }) {
         setTemplates(Array.isArray(tmpls) ? tmpls : []);
         setProjected(scheduleMap(proj));
       })
-      .catch((e) => !cancelled && setError(e.message || 'שגיאה בטעינת מצב הליד'))
+      .catch((e) => !cancelled && setError(e.message || translate(M, 'errLoadStatus')))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
   }, [conversationId, accountId]);
@@ -154,7 +274,7 @@ export default function ConversationStatus({ conversationId, accountId }) {
       await loadStatus().catch(() => {});
       setTimeout(() => { loadStatus().catch(() => {}); }, 4000);
     } catch (e) {
-      setError(e.message || 'הפעולה נכשלה');
+      setError(e.message || translate(M, 'errAction'));
     } finally {
       setSaving(false);
       setConfirm(null);
@@ -175,15 +295,15 @@ export default function ConversationStatus({ conversationId, accountId }) {
   const requestAssign = (key) => {
     if (key === selected) return;
     const targetSeq = sequences.find((s) => s.key === key);
-    const who = name ? firstName(name) : 'הליד';
+    const who = name ? firstName(name) : translate(M, 'theLead');
 
     // הסרה מהסדרה
     if (!key) {
       setConfirm({
         tone: 'danger',
-        title: 'להסיר את הליד מהסדרה?',
-        description: `${who} יוסר מהסדרה «${selectedSeq?.name || status?.sequence_name || selected}» ולא יקבל ממנה הודעות נוספות.`,
-        confirmLabel: 'הסר מהסדרה',
+        title: translate(M, 'removeTitle'),
+        description: translate(M, 'removeDesc', { who, name: selectedSeq?.name || status?.sequence_name || selected }),
+        confirmLabel: translate(M, 'confirmRemoveLabel'),
         onConfirm: () => doSetSequence(''),
       });
       return;
@@ -196,9 +316,9 @@ export default function ConversationStatus({ conversationId, accountId }) {
     if (isActive && selected) {
       setConfirm({
         tone: 'warning',
-        title: 'להחליף סדרה?',
-        description: `הליד נמצא כעת בשלב ${cur} מתוך ${tot} בסדרה «${selectedSeq?.name || selected}». החלפה תעצור אותה ותתחיל את «${targetSeq?.name || key}» מההתחלה.`,
-        confirmLabel: 'החלף סדרה',
+        title: translate(M, 'replaceTitle'),
+        description: translate(M, 'replaceDesc', { cur, tot, current: selectedSeq?.name || selected, target: targetSeq?.name || key }),
+        confirmLabel: translate(M, 'replaceConfirm'),
         preview,
         onConfirm: () => doSetSequence(key),
       });
@@ -209,9 +329,9 @@ export default function ConversationStatus({ conversationId, accountId }) {
     const disabled = targetSeq && targetSeq.enabled === false;
     setConfirm({
       tone: 'info',
-      title: 'להתחיל את הסדרה?',
-      description: `${who} יתחיל לקבל את הודעות הסדרה «${targetSeq?.name || key}».${disabled ? ' הסדרה כבויה כרגע — השליחה תתחיל כשתופעל.' : ''}`,
-      confirmLabel: 'התחל סדרה',
+      title: translate(M, 'startTitle'),
+      description: translate(M, 'startDesc', { who, name: targetSeq?.name || key }) + (disabled ? translate(M, 'startDescDisabled') : ''),
+      confirmLabel: translate(M, 'startConfirm'),
       preview,
       onConfirm: () => doSetSequence(key),
     });
@@ -222,11 +342,11 @@ export default function ConversationStatus({ conversationId, accountId }) {
     const completed = status?.status === 'completed';
     setConfirm({
       tone: 'warning',
-      title: 'להתחיל את הסדרה מחדש?',
+      title: translate(M, 'restartTitle'),
       description: completed
-        ? `הליד כבר השלים את «${selectedSeq?.name || selected}». הפעלה מחדש תשלח לו שוב את כל ההודעות מהשלב הראשון.`
-        : `הליד נמצא בשלב ${cur} מתוך ${tot}. התחלה מחדש תאפס אותו לשלב הראשון ותשלח שוב את כל ההודעות — כולל אלה שכבר נשלחו.`,
-      confirmLabel: completed ? 'הפעל מחדש' : 'התחל מחדש',
+        ? translate(M, 'restartDescCompleted', { name: selectedSeq?.name || selected })
+        : translate(M, 'restartDescActive', { cur, tot }),
+      confirmLabel: completed ? translate(M, 'restart') : translate(M, 'startOver'),
       preview: firstStepPreview(selected),
       onConfirm: () => doSetSequence(selected),
     });
@@ -246,11 +366,11 @@ export default function ConversationStatus({ conversationId, accountId }) {
   }
 
   const options = [
-    { value: '', label: '— ללא סדרה —' },
+    { value: '', label: t('noSequence') },
     ...sequences.map((s) => ({
       value: s.key,
       label: s.name || s.key,
-      description: s.enabled ? undefined : 'כבוי — יתחיל כשתופעל',
+      description: s.enabled ? undefined : t('offWillStart'),
     })),
   ];
   // הסדרה שנבחרה אך עדיין אינה ברשימה — נוסיף כדי שלא "תיעלם"
@@ -261,9 +381,11 @@ export default function ConversationStatus({ conversationId, accountId }) {
   const assigned = !!selected;
   const selectedDisabled = assigned && selectedSeq && !selectedSeq.enabled;
   const st = isPending
-    ? { label: 'ממתין', color: 'amber' }
+    ? { label: t('pending'), color: 'amber' }
     : statusMatchesSelection
-    ? STATUS[status.status] || { label: status.status || '—', color: 'slate' }
+    ? (STATUS[status.status]
+        ? { label: t(`status_${status.status}`), color: STATUS[status.status] }
+        : { label: status.status || '—', color: 'slate' })
     : null;
   const pct = tot > 0 ? Math.min(100, Math.max(0, (cur / tot) * 100)) : 0;
 
@@ -278,10 +400,10 @@ export default function ConversationStatus({ conversationId, accountId }) {
 
       {/* ── מקטע: בחירת סדרה — המקום להחליט ── */}
       <div className="flex items-center justify-between">
-        <label className="text-sm font-medium text-n-slate-12">סדרת הודעות</label>
+        <label className="text-sm font-medium text-n-slate-12">{t('seqLabel')}</label>
         {saving ? (
           <span className="inline-flex items-center gap-1 text-xs text-n-slate-10">
-            <Loader2 size={12} className="animate-spin" aria-hidden="true" /> שומר…
+            <Loader2 size={12} className="animate-spin" aria-hidden="true" /> {t('saving')}
           </span>
         ) : st ? (
           <Badge color={st.color}>{st.label}</Badge>
@@ -293,14 +415,14 @@ export default function ConversationStatus({ conversationId, accountId }) {
         onChange={requestAssign}
         disabled={saving}
         options={options}
-        placeholder="— ללא סדרה —"
-        ariaLabel="בחירת סדרת הודעות לליד"
+        placeholder={t('noSequence')}
+        ariaLabel={t('selectAria')}
       />
 
       {!assigned ? (
         <p className="mt-3 flex items-center gap-1.5 text-xs text-n-slate-11">
           <Layers size={13} className="text-n-blue-11" aria-hidden="true" />
-          הליד לא משויך — בחרו סדרה כדי להתחיל.
+          {t('notAssigned')}
         </p>
       ) : statusMatchesSelection ? (
         <>
@@ -310,7 +432,7 @@ export default function ConversationStatus({ conversationId, accountId }) {
               <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
               <div className="min-w-0">
                 <p className="font-medium">
-                  הרצף נתקע — ההודעה לא נמסרה{status.failed_step ? ` (שלב ${status.failed_step})` : ''}.
+                  {t('stuckTitle')}{status.failed_step ? t('stuckStep', { n: status.failed_step }) : ''}.
                 </p>
                 <p className="mt-0.5">{deliveryErrorLabel(status.last_error_code, status.last_error)}</p>
                 <p className="mt-1 font-medium opacity-90">{deliveryErrorAction(status.last_error_code)}</p>
@@ -321,8 +443,8 @@ export default function ConversationStatus({ conversationId, accountId }) {
           {/* ── מקטע: מסע ההודעות — מה נשלח, איפה הוא עומד, ומה צפוי, עם תוכן מלא ── */}
           <div className="mt-4">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-n-slate-12">מסע ההודעות</span>
-              <span className="text-xs text-n-slate-11">שלב {cur} מתוך {tot}</span>
+              <span className="text-sm font-medium text-n-slate-12">{t('messageJourney')}</span>
+              <span className="text-xs text-n-slate-11">{t('stepXofY', { cur, tot })}</span>
             </div>
             <StepTimeline
               steps={selectedSeq?.steps}
@@ -340,7 +462,7 @@ export default function ConversationStatus({ conversationId, accountId }) {
 
           {status.phone ? (
             <div className="mt-3 flex items-center justify-between border-t border-n-weak pt-3">
-              <span className="text-xs text-n-slate-11">טלפון</span>
+              <span className="text-xs text-n-slate-11">{t('phone')}</span>
               <span dir="ltr" className="font-mono text-xs text-n-slate-12">{status.phone}</span>
             </div>
           ) : null}
@@ -348,12 +470,12 @@ export default function ConversationStatus({ conversationId, accountId }) {
       ) : selectedDisabled ? (
         <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-n-amber-7 bg-n-amber-3 px-3 py-2 text-xs text-n-amber-11">
           <AlertCircle size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
-          הסדרה משויכת אך <strong>כבויה</strong> — הפעילו אותה בלשונית "רצפים" וההודעות יתחילו להישלח אוטומטית.
+          {t('disabledPre')}<strong>{t('disabledWord')}</strong>{t('disabledPost')}
         </p>
       ) : (
         <p className="mt-3 flex items-center gap-1.5 text-xs text-n-slate-11">
           <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-          השיוך יעובד תוך כדקה…
+          {t('processingAssign')}
         </p>
       )}
 
@@ -368,7 +490,7 @@ export default function ConversationStatus({ conversationId, accountId }) {
           disabled={saving}
           onClick={requestRestart}
         >
-          {status.status === 'completed' ? 'הפעל מחדש' : 'התחל מחדש מהשלב הראשון'}
+          {status.status === 'completed' ? t('restart') : t('startOverFromFirst')}
         </Button>
       ) : null}
 
@@ -382,7 +504,7 @@ export default function ConversationStatus({ conversationId, accountId }) {
           disabled={saving}
           onClick={() => requestAssign('')}
         >
-          הסר מהרצף
+          {t('removeFromSequenceBtn')}
         </Button>
       ) : null}
 
@@ -399,7 +521,7 @@ export default function ConversationStatus({ conversationId, accountId }) {
       >
         {confirm?.preview ? (
           <>
-            <p className="mb-1.5 text-xs font-medium text-n-slate-11">ההודעה הראשונה בסדרה:</p>
+            <p className="mb-1.5 text-xs font-medium text-n-slate-11">{t('firstMsgInSeq')}</p>
             <ChatBubble
               text={confirm.preview.text}
               template={confirm.preview.template}
@@ -421,6 +543,7 @@ export default function ConversationStatus({ conversationId, accountId }) {
  * מחבר את השלבים; השלב הנוכחי נגלל אוטומטית לתצוגה.
  */
 function StepTimeline({ steps, history, templates, contactName, currentStep, status, nextSendAt, projected, enrollmentId, pct }) {
+  const t = useT(M);
   const cur = Number(currentStep) || 0;
   const tmplByName = new Map((templates || []).map((t) => [t.name, t]));
   // ברירת מחדל: הכול סגור — רשימה קומפקטית; לוחצים על שלב כדי לפתוח את ההודעה המלאה.
@@ -460,7 +583,7 @@ function StepTimeline({ steps, history, templates, contactName, currentStep, sta
           onClick={toggleAll}
           className="rounded px-1.5 py-0.5 text-xs font-medium text-n-blue-11 transition-colors hover:bg-n-alpha-1"
         >
-          {allOpen ? 'כווץ הכול' : 'הרחב הכול'}
+          {allOpen ? t('collapseAll') : t('expandAll')}
         </button>
       </div>
       <ol className="space-y-0.5">
@@ -487,10 +610,10 @@ function StepTimeline({ steps, history, templates, contactName, currentStep, sta
         else marker = <Circle size={17} className="text-n-slate-8" aria-hidden="true" />;
 
         // תווית-מצב קטנה ליד מספר ההודעה
-        const pill = failed ? { t: 'נכשל', c: 'bg-n-ruby-3 text-n-ruby-11' }
-          : wasSent ? { t: 'נשלח', c: 'bg-n-teal-3 text-n-teal-11' }
-          : isCurrent ? { t: 'עכשיו', c: 'bg-n-brand/10 text-n-blue-11' }
-          : { t: 'ממתין', c: 'bg-n-alpha-2 text-n-slate-10' };
+        const pill = failed ? { t: t('pillFailed'), c: 'bg-n-ruby-3 text-n-ruby-11' }
+          : wasSent ? { t: t('pillSent'), c: 'bg-n-teal-3 text-n-teal-11' }
+          : isCurrent ? { t: t('pillNow'), c: 'bg-n-brand/10 text-n-blue-11' }
+          : { t: t('pending'), c: 'bg-n-alpha-2 text-n-slate-10' };
 
         // תוכן הבועה: נשלח → הטקסט שנשלח בפועל; אחרת → תצוגה מקדימה עם השם
         const tmpl = tmplByName.get(s.template) || null;
@@ -503,7 +626,7 @@ function StepTimeline({ steps, history, templates, contactName, currentStep, sta
         const meta = failed ? { time: fmtSent(sent?.sent_at), status: 'failed', ltr: true }
           : wasSent ? { time: fmtSent(sent?.sent_at), status: sent?.delivery_status === 'delivered' ? 'delivered' : 'pending', ltr: true }
           : projectedAt ? { time: formatWhen(projectedAt), status: 'scheduled', ltr: false }
-          : isCurrent ? { time: 'בקרוב', status: 'scheduled', ltr: false }
+          : isCurrent ? { time: t('soon'), status: 'scheduled', ltr: false }
           : { time: gap, status: 'scheduled', ltr: false };
 
         return (
@@ -526,7 +649,7 @@ function StepTimeline({ steps, history, templates, contactName, currentStep, sta
                 <span className="min-w-0 grow">
                   <span className="flex items-center gap-2">
                     <span className={`text-sm ${isCurrent || wasSent ? 'font-medium text-n-slate-12' : 'text-n-slate-11'}`}>
-                      הודעה {n}
+                      {t('messageN', { n })}
                     </span>
                     <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${pill.c}`}>{pill.t}</span>
                   </span>
@@ -534,7 +657,7 @@ function StepTimeline({ steps, history, templates, contactName, currentStep, sta
                     <span className="mt-1 block truncate text-xs text-n-slate-10">
                       {!wasSent && meta.status === 'scheduled' && meta.time
                         ? `🕐 ${meta.time}`
-                        : `${mediaIcon}${bodyText || `תבנית ${s.template}`}`}
+                        : `${mediaIcon}${bodyText || t('templateNamed', { name: s.template })}`}
                     </span>
                   ) : null}
                 </span>
@@ -550,7 +673,7 @@ function StepTimeline({ steps, history, templates, contactName, currentStep, sta
                   {bodyText || tmpl ? (
                     <ChatBubble text={bodyText} template={tmpl} mediaUrl={s.mediaUrl} meta={meta} />
                   ) : (
-                    <p className="text-xs italic text-n-slate-10">תבנית "{s.template}" לא נמצאה</p>
+                    <p className="text-xs italic text-n-slate-10">{t('templateNotFound', { name: s.template })}</p>
                   )}
                   {failed ? (
                     <p className="mt-1.5 text-[11px] text-n-ruby-11">

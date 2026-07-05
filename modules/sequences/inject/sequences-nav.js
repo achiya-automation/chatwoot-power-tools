@@ -26,12 +26,19 @@
     (document.head || document.documentElement).appendChild(st);
   })();
   var APP = ADDONS_BASE; // same-origin (single route /chatwoot-addons/*) — zero CORS/CSP
-  var LABEL = 'רצפי WhatsApp';
-  var TABS = [
-    { key: 'overview',  label: 'סקירה' },
-    { key: 'sequences', label: 'רצפים' },
-    { key: 'contacts',  label: 'אנשי קשר' },
-  ];
+
+  // ── i18n: עברית ל-RTL (he), אנגלית לכל השאר — בדיוק כמו campaign-modal. Chatwoot לא
+  // שם locale על ה-DOM, אבל מגדיר #app[dir]=rtl רק לעברית (אותו אות שה-theme משתמש בו). ──
+  function dripLocale() {
+    var a = document.querySelector('#app[dir]');
+    return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
+  }
+  var NAV_I18N = {
+    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר' },
+    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts' },
+  };
+  function navLabels() { return NAV_I18N[dripLocale()] || NAV_I18N.en; }
+  var TAB_KEYS = ['overview', 'sequences', 'contacts'];
   // exact classes lifted from Chatwoot's own DOM (components-next sidebar)
   var UL_CLASS = 'grid m-0 list-none sidebar-group-children min-w-0';
   var LI_CLASS = 'py-0.5 ltr:pl-2 rtl:pr-2 rtl:mr-3 ltr:ml-3 relative text-n-slate-11 child-item before:bg-n-slate-4 after:bg-transparent after:border-n-slate-4 before:left-0 rtl:before:right-0 min-w-0';
@@ -99,7 +106,7 @@
     holder.id = 'drip-inline';
     holder.style.cssText = 'position:fixed;z-index:40;display:none;background:rgb(var(--n-background));';
     frame = document.createElement('iframe');
-    frame.title = LABEL;
+    frame.title = navLabels().title;
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
     holder.appendChild(frame);
     document.body.appendChild(holder);
@@ -128,7 +135,8 @@
     if (!holder) build();
     if (!loaded) {
       var src = APP + '/?embed=1&nav=side&account_id=' + encodeURIComponent(accountId()) +
-                '&tab=' + tab + '&theme=' + (isDark() ? 'dark' : 'light');
+                '&tab=' + tab + '&theme=' + (isDark() ? 'dark' : 'light') +
+                '&locale=' + dripLocale();
       frame.setAttribute('src', src);
       loaded = true;
     } else {
@@ -189,7 +197,7 @@
 
     // header — label + icon + visible chevron; no navigation
     var hdr = clone.querySelector('[role="button"]') || clone.firstElementChild;
-    if (hdr) { hdr.setAttribute('title', LABEL); hdr.removeAttribute('name'); hdr.removeAttribute('href'); hdr.style.cursor = 'pointer'; hdr.setAttribute('data-drip-hdr', ''); }
+    if (hdr) { hdr.setAttribute('title', navLabels().title); hdr.removeAttribute('name'); hdr.removeAttribute('href'); hdr.style.cursor = 'pointer'; hdr.setAttribute('data-drip-hdr', ''); }
     var icon = clone.querySelector('span[class*="megaphone"]') || clone.querySelector('span[class*="i-lucide-"]:not([class*="chevron"])');
     if (icon) {
       var s = document.createElement('span');
@@ -198,7 +206,7 @@
       s.innerHTML = LAYERS;
       icon.replaceWith(s);
     }
-    var lbl = clone.querySelector('.flex-grow'); if (lbl) lbl.textContent = LABEL;
+    var lbl = clone.querySelector('.flex-grow'); if (lbl) lbl.textContent = navLabels().title;
     var chev = clone.querySelector('span[class*="chevron"]');
     if (chev) { chev.style.display = 'inline-flex'; chev.style.transition = 'transform .15s'; chev.setAttribute('data-drip-chev', ''); }
 
@@ -206,17 +214,18 @@
     var ul = document.createElement('ul');
     ul.className = UL_CLASS;
     ul.setAttribute('data-drip-ul', '');
-    TABS.forEach(function (t) {
+    TAB_KEYS.forEach(function (key) {
+      var label = navLabels()[key];
       var li = document.createElement('li');
       li.className = LI_CLASS;
-      li.setAttribute('data-drip-tab', t.key);
+      li.setAttribute('data-drip-tab', key);
       var a = document.createElement('a');
       a.className = A_CLASS;
       a.style.cursor = 'pointer';
-      a.setAttribute('title', t.label);
+      a.setAttribute('title', label);
       var d = document.createElement('div');
       d.className = LBL_CLASS;
-      d.textContent = t.label;
+      d.textContent = label;
       a.appendChild(d);
       li.appendChild(a);
       ul.appendChild(li);
@@ -276,6 +285,14 @@
       try { frame.contentWindow.postMessage({ type: 'drip-theme', theme: isDark() ? 'dark' : 'light' }, '*'); } catch (e) {}
     }
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+  // live locale sync to the iframe (מקביל ל-theme). Chatwoot מחליף dir רק בהחלפת שפה
+  // (אירוע נדיר, ברמת reload), אבל שומרים parity כך שהחלפה תתפשט בלי לרענן.
+  new MutationObserver(function () {
+    if (shown && frame && frame.contentWindow) {
+      try { frame.contentWindow.postMessage({ type: 'drip-locale', locale: dripLocale() }, '*'); } catch (e) {}
+    }
+  }).observe(document.querySelector('#app') || document.documentElement, { attributes: true, attributeFilter: ['dir'] });
 
   // bootstrap: (re-)inject the nav item as Chatwoot's own Vue app re-renders the sidebar
   var navTimer;

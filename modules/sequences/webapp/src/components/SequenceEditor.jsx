@@ -41,6 +41,8 @@ import {
   formatDuration,
   estimateFinishDate,
 } from '../lib/timeline.js';
+import useT, { useLocale } from '../useT.js';
+import { translate } from '../i18n.js';
 
 /*
  * SequenceEditor — עורך רצף כמודאל ממורכז בסגנון Chatwoot v4 (Dialog).
@@ -58,18 +60,142 @@ import {
 
 const VAR_RE = /\{\{\s*\d+\s*\}\}/g;
 
+// מילון co-located (he/en) — משותף לכל רכיבי המשנה בקובץ.
+const M = {
+  he: {
+    // בורר שדות מערכת (VariableRow)
+    sysFirstName: 'שם פרטי', sysFullName: 'שם מלא', sysPhone: 'טלפון', sysEmail: 'אימייל', sysCustom: 'ערך מותאם אישית',
+    // מרווחים מוכנים (StepCard)
+    presetNow: 'מיד', presetHour: 'שעה', preset4h: '4 שעות', presetDay: 'יום', preset3d: '3 ימים', presetWeek: 'שבוע',
+    // חזרה (TimingExtras)
+    repeatDay: 'כל יום', repeatWeek: 'כל שבוע', repeatMonth: 'כל חודש',
+    // מדיה
+    mediaImage: 'תמונה', mediaVideo: 'וידאו', mediaDocument: 'מסמך', mediaGeneric: 'מדיה',
+    // footer + modal
+    tipSave: 'טיפ: ⌘S לשמירה מהירה', cancel: 'ביטול', save: 'שמירה',
+    editTitle: 'עריכת רצף — {name}', newTitle: 'רצף חדש',
+    // פרטי הרצף
+    nameLabel: 'שם הרצף', namePlaceholder: 'למשל: רצף קבלת פנים',
+    stopTitle: 'עצירה כשהנמען מגיב', stopDesc: 'הרצף ייעצר אוטומטית אם הנמען שולח הודעה',
+    shabbatTitle: 'אל תשלח בשבת ובחגים', shabbatDesc: 'ההודעות יושהו אוטומטית בשבתות ובימי חג (שעון ישראל)',
+    quietHours: 'שעות שקט (לא נשלחות הודעות)', quietStart: 'מתחילות', quietEnd: 'מסתיימות',
+    // שלבים
+    stepsHeading: 'שלבי הרצף ({count})', expandAll: 'הרחב הכול', collapseAll: 'כווץ הכול',
+    fullPreview: 'תצוגה מלאה', addStep: 'הוסף שלב',
+    durationPrefix: 'משך הרצף:', durationSuffix: 'מההרשמה ועד ההודעה האחרונה',
+    finishHint: '· אם יתחיל היום, יסתיים בערך ב-{date}',
+    noSteps: 'אין שלבים עדיין. הוסיפו שלב ראשון כדי להתחיל.',
+    saveFailed: 'השמירה נכשלה', stepDeleted: 'השלב נמחק',
+    // StepCard
+    immediate: 'מיד',
+    dragReorder: 'גרור לשינוי סדר', stepN: 'שלב {n}', noTemplate: 'ללא תבנית',
+    dupStep: 'שכפול שלב', moveUp: 'הזז למעלה', moveDown: 'הזז למטה', delStep: 'מחיקת שלב',
+    expandStep: 'הרחבת השלב', collapseStep: 'כיווץ השלב',
+    templateLabel: 'תבנית הודעה', gapLabel: 'מרווח מהשלב הקודם:',
+    waitDays: 'המתנה (ימים)', waitHours: 'המתנה (שעות)',
+    whenToSend: 'מתי לשלוח את ההודעה',
+    condAlways: 'תמיד', condNoReply: 'רק אם הנמען לא הגיב', condReplied: 'רק אם הנמען הגיב',
+    ifNotMet: 'אם התנאי לא מתקיים', failSkip: 'דלג על ההודעה והמשך לבאה', failStop: 'עצור את הרצף',
+    varValues: 'ערכי המשתנים', noVars: 'התבנית לא דורשת משתנים',
+    // ולידציה
+    errName: 'יש להזין שם לרצף', errNoStep: 'יש להוסיף לפחות שלב אחד', errStepTemplate: 'יש לבחור תבנית לכל שלב',
+    errStepMedia: 'תבנית עם מדיה בכותרת — יש להזין קישור למדיה בכל שלב כזה',
+    // TimingExtras
+    unitDays: 'ימים', unitWeeks: 'שבועות', unitMonths: 'חודשים',
+    timeOfDay: 'שעה ביום', fixedDateOverrides: '· תאריך קבוע גובר על המרווח', anyHour: 'כל שעה',
+    advanced: 'אפשרויות מתקדמות', repeat: 'חזרה', none: 'ללא', every: 'כל',
+    repeatNote: 'הודעה חוזרת נשלחת שוב במחזור קבוע — עד שמסירים את הליד מהרצף.',
+    allowedDays: 'ימים מותרים לשליחה', dowAria: 'יום {day}',
+    allowedDaysNote: 'אם נבחרו ימים — השליחה נדחית ליום המותר הקרוב. ריק = כל הימים.',
+    fixedDate: 'תאריך קבוע (במקום מרווח יחסי)', clear: 'נקה',
+    fixedDateNote: 'כל הלידים יקבלו הודעה זו בתאריך הזה (שידור), במקום מרווח אישי מההרשמה.',
+    // MediaUrlField
+    noAccountUpload: 'חסר חשבון — לא ניתן להעלות',
+    compressedIn: 'כווץ בדפדפן: {before} ← {after}',
+    compressFailed: 'דחיסת הסרטון נכשלה', uploadFailed: 'העלאה נכשלה', compressCancelled: 'הדחיסה בוטלה',
+    stageProbe: 'בודק את הסרטון…', stageLoad: 'טוען מנוע דחיסה (פעם ראשונה)…', stageEncode: 'מכווץ סרטון…', stageRetry: 'משפר עוד קצת…', stageDefault: 'מעבד…',
+    mediaHeader: '{label} בכותרת (header)',
+    mediaUploaded: 'המדיה הועלתה — הקישור נוצר ונזכר אוטומטית ✓',
+    replace: 'החלפה', remove: 'הסרה',
+    localProcessing: 'הכל רץ במחשב שלך — אפס עומס על השרת. אפשר להמתין כמה שניות.',
+    uploadAria: 'העלאת {label}', uploading: 'מעלה…',
+    dropHere: 'גררו {label} לכאן או לחצו לבחירה',
+    linkAuto: 'הקישור ייווצר אוטומטית · מקסימום {max}', videoAutoCompress: ' · סרטון גדול יכווץ אוטומטית בדפדפן',
+    hideManualLink: 'הסתר קישור ידני', showManualLink: 'או הדבקת קישור ידני',
+    invalidHttps: 'נדרש קישור https תקין',
+    // VariableRow
+    varRowLabel: 'משתנה {n} — ערך:', varSelectAria: 'ערך למשתנה {n}', varCustomAria: 'ערך מותאם למשתנה {n}', freeText: 'טקסט חופשי',
+    // MessagePreview
+    preview: 'תצוגה מקדימה',
+  },
+  en: {
+    sysFirstName: 'First name', sysFullName: 'Full name', sysPhone: 'Phone', sysEmail: 'Email', sysCustom: 'Custom value',
+    presetNow: 'Immediately', presetHour: '1 hour', preset4h: '4 hours', presetDay: '1 day', preset3d: '3 days', presetWeek: '1 week',
+    repeatDay: 'Every day', repeatWeek: 'Every week', repeatMonth: 'Every month',
+    mediaImage: 'Image', mediaVideo: 'Video', mediaDocument: 'Document', mediaGeneric: 'Media',
+    tipSave: 'Tip: ⌘S to save quickly', cancel: 'Cancel', save: 'Save',
+    editTitle: 'Edit sequence — {name}', newTitle: 'New sequence',
+    nameLabel: 'Sequence name', namePlaceholder: 'e.g. Welcome sequence',
+    stopTitle: 'Stop when the recipient replies', stopDesc: 'The sequence stops automatically if the recipient sends a message',
+    shabbatTitle: "Don't send on Shabbat and holidays", shabbatDesc: 'Messages are paused automatically on Shabbat and holidays (Israel time)',
+    quietHours: 'Quiet hours (no messages sent)', quietStart: 'Start', quietEnd: 'End',
+    stepsHeading: 'Sequence steps ({count})', expandAll: 'Expand all', collapseAll: 'Collapse all',
+    fullPreview: 'Full preview', addStep: 'Add step',
+    durationPrefix: 'Sequence duration:', durationSuffix: 'from enrollment to the last message',
+    finishHint: '· if it starts today, it will end around {date}',
+    noSteps: 'No steps yet. Add a first step to get started.',
+    saveFailed: 'Failed to save', stepDeleted: 'Step deleted',
+    immediate: 'immediately',
+    dragReorder: 'Drag to reorder', stepN: 'Step {n}', noTemplate: 'No template',
+    dupStep: 'Duplicate step', moveUp: 'Move up', moveDown: 'Move down', delStep: 'Delete step',
+    expandStep: 'Expand step', collapseStep: 'Collapse step',
+    templateLabel: 'Message template', gapLabel: 'Gap from the previous step:',
+    waitDays: 'Wait (days)', waitHours: 'Wait (hours)',
+    whenToSend: 'When to send the message',
+    condAlways: 'Always', condNoReply: "Only if the recipient hasn't replied", condReplied: 'Only if the recipient replied',
+    ifNotMet: "If the condition isn't met", failSkip: 'Skip this message and continue to the next', failStop: 'Stop the sequence',
+    varValues: 'Variable values', noVars: 'This template requires no variables',
+    errName: 'Enter a name for the sequence', errNoStep: 'Add at least one step', errStepTemplate: 'Choose a template for every step',
+    errStepMedia: 'Template with header media — enter a media link for each such step',
+    unitDays: 'days', unitWeeks: 'weeks', unitMonths: 'months',
+    timeOfDay: 'Time of day', fixedDateOverrides: '· a fixed date overrides the gap', anyHour: 'Any hour',
+    advanced: 'Advanced options', repeat: 'Repeat', none: 'None', every: 'every',
+    repeatNote: 'A recurring message is sent again on a fixed cycle — until the lead is removed from the sequence.',
+    allowedDays: 'Allowed sending days', dowAria: '{day}',
+    allowedDaysNote: 'If days are selected — sending is deferred to the nearest allowed day. Empty = all days.',
+    fixedDate: 'Fixed date (instead of a relative gap)', clear: 'Clear',
+    fixedDateNote: 'All leads receive this message on this date (broadcast), instead of a personal gap from enrollment.',
+    noAccountUpload: 'No account — cannot upload',
+    compressedIn: 'Compressed in the browser: {before} ← {after}',
+    compressFailed: 'Video compression failed', uploadFailed: 'Upload failed', compressCancelled: 'Compression cancelled',
+    stageProbe: 'Checking the video…', stageLoad: 'Loading the compression engine (first time)…', stageEncode: 'Compressing video…', stageRetry: 'Improving a bit more…', stageDefault: 'Processing…',
+    mediaHeader: '{label} in the header',
+    mediaUploaded: 'Media uploaded — the link was created and remembered automatically ✓',
+    replace: 'Replace', remove: 'Remove',
+    localProcessing: 'Everything runs on your computer — zero server load. It may take a few seconds.',
+    uploadAria: 'Upload {label}', uploading: 'Uploading…',
+    dropHere: 'Drag {label} here or click to choose',
+    linkAuto: 'The link is created automatically · max {max}', videoAutoCompress: ' · a large video is compressed automatically in the browser',
+    hideManualLink: 'Hide manual link', showManualLink: 'Or paste a manual link',
+    invalidHttps: 'A valid https link is required',
+    varRowLabel: 'Variable {n} — value:', varSelectAria: 'Value for variable {n}', varCustomAria: 'Custom value for variable {n}', freeText: 'Free text',
+    preview: 'Preview',
+  },
+};
+
 /*
  * משתני התבנית יכולים למפות לשדה מערכת (מוחלף בערך האמיתי של הליד בזמן שליחה)
  * או לערך מותאם אישית (טקסט חופשי). אחסון ב-step.params[i]:
  *   שדה מערכת → המחרוזת '@first_name' / '@name' / '@phone' / '@email'
  *   מותאם     → הטקסט המילולי (כולל ריק)
+ * (התוויות מתורגמות ב-VariableRow דרך t; כאן נשמר רק מזהה השדה + מפתח התווית.)
  */
 const SYSTEM_FIELDS = [
-  { value: '@first_name', label: 'שם פרטי' },
-  { value: '@name', label: 'שם מלא' },
-  { value: '@phone', label: 'טלפון' },
-  { value: '@email', label: 'אימייל' },
-  { value: '@custom', label: 'ערך מותאם אישית' },
+  { value: '@first_name', labelKey: 'sysFirstName' },
+  { value: '@name', labelKey: 'sysFullName' },
+  { value: '@phone', labelKey: 'sysPhone' },
+  { value: '@email', labelKey: 'sysEmail' },
+  { value: '@custom', labelKey: 'sysCustom' },
 ];
 
 // ערך מאוחסן הוא שדה מערכת אם ורק אם הוא בדיוק אחד מהטוקנים (משמש את VariableRow)
@@ -77,22 +203,26 @@ function isSystemField(v) {
   return v === '@first_name' || v === '@name' || v === '@phone' || v === '@email';
 }
 
-// מרווחים נוחים מהשלב הקודם (צ'יפים) — גמיש, לצד הקלט המספרי המדויק
+// מרווחים נוחים מהשלב הקודם (צ'יפים) — גמיש, לצד הקלט המספרי המדויק. התווית מתורגמת ב-render.
 const DELAY_PRESETS = [
-  { label: 'מיד', days: 0, hours: 0 },
-  { label: 'שעה', days: 0, hours: 1 },
-  { label: '4 שעות', days: 0, hours: 4 },
-  { label: 'יום', days: 1, hours: 0 },
-  { label: '3 ימים', days: 3, hours: 0 },
-  { label: 'שבוע', days: 7, hours: 0 },
+  { labelKey: 'presetNow', days: 0, hours: 0 },
+  { labelKey: 'presetHour', days: 0, hours: 1 },
+  { labelKey: 'preset4h', days: 0, hours: 4 },
+  { labelKey: 'presetDay', days: 1, hours: 0 },
+  { labelKey: 'preset3d', days: 3, hours: 0 },
+  { labelKey: 'presetWeek', days: 7, hours: 0 },
 ];
 
 // בורר תזמון "שורה חכמה + מתקדם": שעה-ביום (גלוי תמיד) + חזרה / ימי-שבוע / תאריך מוחלט (מתקפל).
-const DOW_LABELS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש']; // JS getDay: 0=ראשון .. 6=שבת
+// תוויות ימי השבוע לפי שפה. JS getDay: 0=ראשון .. 6=שבת
+const DOW_LABELS = {
+  he: ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'],
+  en: ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'],
+};
 const REPEAT_UNITS = [
-  { value: 'day', label: 'כל יום' },
-  { value: 'week', label: 'כל שבוע' },
-  { value: 'month', label: 'כל חודש' },
+  { value: 'day', labelKey: 'repeatDay' },
+  { value: 'week', labelKey: 'repeatWeek' },
+  { value: 'month', labelKey: 'repeatMonth' },
 ];
 
 // מספר המשתנים בתבנית — לפי params_count אם קיים, אחרת ספירת {{N}} בגוף
@@ -104,17 +234,22 @@ function countVars(t) {
 
 // תבנית עם header מדיה (IMAGE/VIDEO/DOCUMENT) דורשת קישור (media_url) בשליחה —
 // ה-engine מצרף אותו כ-processed_params.header. מחזיר את הפורמט או null.
-const MEDIA_LABEL = { IMAGE: 'תמונה', VIDEO: 'וידאו', DOCUMENT: 'מסמך' };
+const MEDIA_FORMATS = new Set(['IMAGE', 'VIDEO', 'DOCUMENT']);
+const MEDIA_LABEL_KEY = { IMAGE: 'mediaImage', VIDEO: 'mediaVideo', DOCUMENT: 'mediaDocument' };
 function mediaHeaderFormat(t) {
   const f = String(t?.header_format || '').toUpperCase();
-  return MEDIA_LABEL[f] ? f : null;
+  return MEDIA_FORMATS.has(f) ? f : null;
 }
-
-// תאריך עברי קצר לתצוגת "אם יתחיל היום" (ללא שעה — אומדן)
-const DATE_FMT = new Intl.DateTimeFormat('he-IL', { day: 'numeric', month: 'long' });
 
 export default function SequenceEditor({ open, sequence, templates = [], onSave, onClose, accountId }) {
   const { toast } = useToast();
+  const t = useT(M);
+  const locale = useLocale();
+  // תאריך עברי/אנגלי קצר לתצוגת "אם יתחיל היום" (ללא שעה — אומדן)
+  const dateFmt = useMemo(
+    () => new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'he-IL', { day: 'numeric', month: 'long' }),
+    [locale]
+  );
   // עותק עבודה מקומי — לא נוגעים ב-state האב עד שמירה
   const [draft, setDraft] = useState(sequence);
   const [saving, setSaving] = useState(false);
@@ -192,9 +327,9 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
       const removed = d.steps[i];
       const steps = d.steps.filter((s) => s.id !== stepId);
       toast({
-        message: 'השלב נמחק',
+        message: translate(M, 'stepDeleted'),
         action: {
-          label: 'ביטול',
+          label: translate(M, 'cancel'),
           onClick: () =>
             setDraft((cur) => {
               if (cur.steps.some((s) => s.id === removed.id)) return cur; // כבר הוחזר
@@ -297,18 +432,18 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
       }),
     }));
 
-  const nameError = draft.name.trim() === '' ? 'יש להזין שם לרצף' : '';
+  const nameError = draft.name.trim() === '' ? t('errName') : '';
   const stepsError =
     draft.steps.length === 0
-      ? 'יש להוסיף לפחות שלב אחד'
+      ? t('errNoStep')
       : draft.steps.some((s) => !s.template)
-      ? 'יש לבחור תבנית לכל שלב'
+      ? t('errStepTemplate')
       : draft.steps.some(
           (s) =>
             mediaHeaderFormat(templateByName[s.template]) &&
             !String(s.mediaUrl || '').trim()
         )
-      ? 'תבנית עם מדיה בכותרת — יש להזין קישור למדיה בכל שלב כזה'
+      ? t('errStepMedia')
       : '';
   const hasError = !!(nameError || stepsError);
 
@@ -323,7 +458,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
         `seq_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
       await onSave({ ...draft, name: draft.name.trim(), key });
     } catch (e) {
-      setSaveError(e.message || 'השמירה נכשלה');
+      setSaveError(e.message || translate(M, 'saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -332,19 +467,19 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
   // אומדן תאריך סיום אם הרצף יתחיל עכשיו (תצוגה בלבד)
   const finishHint =
     duration.totalHours > 0
-      ? DATE_FMT.format(estimateFinishDate(draft.steps, new Date()))
+      ? dateFmt.format(estimateFinishDate(draft.steps, new Date()))
       : null;
 
   const footer = (
     <>
       <span className="me-auto hidden text-xs text-n-slate-10 sm:inline">
-        טיפ: ⌘S לשמירה מהירה
+        {t('tipSave')}
       </span>
       <Button variant="ghost" color="slate" onClick={onClose} disabled={saving}>
-        ביטול
+        {t('cancel')}
       </Button>
       <Button variant="solid" color="blue" onClick={handleSave} loading={saving} disabled={hasError}>
-        שמירה
+        {t('save')}
       </Button>
     </>
   );
@@ -353,7 +488,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
     <Modal
       open={open}
       onClose={onClose}
-      title={sequence?.name ? `עריכת רצף — ${sequence.name}` : 'רצף חדש'}
+      title={sequence?.name ? t('editTitle', { name: sequence.name }) : t('newTitle')}
       variant="center"
       size="2xl"
       footer={footer}
@@ -363,9 +498,9 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
         {/* פרטי הרצף */}
         <section className="flex flex-col gap-4">
           <Input
-            label="שם הרצף"
+            label={t('nameLabel')}
             value={draft.name}
-            placeholder="למשל: רצף קבלת פנים"
+            placeholder={t('namePlaceholder')}
             onChange={(e) => update({ name: e.target.value })}
             error={nameError}
           />
@@ -373,32 +508,32 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
           <div className="flex items-center justify-between rounded-lg bg-n-alpha-1 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-n-slate-12">
-                עצירה כשהנמען מגיב
+                {t('stopTitle')}
               </p>
               <p className="text-xs text-n-slate-11 mt-0.5">
-                הרצף ייעצר אוטומטית אם הנמען שולח הודעה
+                {t('stopDesc')}
               </p>
             </div>
             <Switch
               checked={draft.stopOnReply}
               onChange={(v) => update({ stopOnReply: v })}
-              aria-label="עצירה כשהנמען מגיב"
+              aria-label={t('stopTitle')}
             />
           </div>
 
           <div className="flex items-center justify-between rounded-lg bg-n-alpha-1 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-n-slate-12">
-                אל תשלח בשבת ובחגים
+                {t('shabbatTitle')}
               </p>
               <p className="text-xs text-n-slate-11 mt-0.5">
-                ההודעות יושהו אוטומטית בשבתות ובימי חג (שעון ישראל)
+                {t('shabbatDesc')}
               </p>
             </div>
             <Switch
               checked={draft.skipShabbat}
               onChange={(v) => update({ skipShabbat: v })}
-              aria-label="אל תשלח בשבת ובחגים"
+              aria-label={t('shabbatTitle')}
             />
           </div>
 
@@ -406,17 +541,17 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
           <div>
             <p className="text-sm font-medium text-n-slate-12 mb-1.5 flex items-center gap-1.5">
               <Clock size={14} className="text-n-slate-10" aria-hidden="true" />
-              שעות שקט (לא נשלחות הודעות)
+              {t('quietHours')}
             </p>
             <div className="grid grid-cols-2 gap-3">
               <Input
-                label="מתחילות"
+                label={t('quietStart')}
                 type="time"
                 value={draft.quietHoursStart}
                 onChange={(e) => update({ quietHoursStart: e.target.value })}
               />
               <Input
-                label="מסתיימות"
+                label={t('quietEnd')}
                 type="time"
                 value={draft.quietHoursEnd}
                 onChange={(e) => update({ quietHoursEnd: e.target.value })}
@@ -430,7 +565,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold text-n-slate-12">
-                שלבי הרצף ({draft.steps.length})
+                {t('stepsHeading', { count: draft.steps.length })}
               </h3>
               {draft.steps.length > 1 ? (
                 <button
@@ -438,7 +573,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
                   onClick={toggleAll}
                   className="text-xs font-medium text-n-blue-11 hover:underline"
                 >
-                  {allCollapsed ? 'הרחב הכול' : 'כווץ הכול'}
+                  {allCollapsed ? t('expandAll') : t('collapseAll')}
                 </button>
               ) : null}
             </div>
@@ -451,11 +586,11 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
                   icon={Eye}
                   onClick={() => setShowPreview(true)}
                 >
-                  תצוגה מלאה
+                  {t('fullPreview')}
                 </Button>
               ) : null}
               <Button variant="faded" color="blue" size="sm" icon={Plus} onClick={addStep}>
-                הוסף שלב
+                {t('addStep')}
               </Button>
             </div>
           </div>
@@ -465,14 +600,14 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
             <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-n-alpha-1 px-3 py-2 text-xs text-n-slate-11">
               <CalendarClock size={14} className="text-n-blue-11" aria-hidden="true" />
               <span>
-                משך הרצף:{' '}
+                {t('durationPrefix')}{' '}
                 <span className="font-semibold text-n-slate-12">
                   {formatDuration(duration)}
                 </span>{' '}
-                מההרשמה ועד ההודעה האחרונה
+                {t('durationSuffix')}
               </span>
               {finishHint ? (
-                <span className="text-n-slate-10">· אם יתחיל היום, יסתיים בערך ב-{finishHint}</span>
+                <span className="text-n-slate-10">{t('finishHint', { date: finishHint })}</span>
               ) : null}
             </div>
           ) : null}
@@ -487,7 +622,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
                 <div className="flex flex-col items-center gap-2 py-8 text-center">
                   <MessageSquare size={24} className="text-n-slate-9" aria-hidden="true" />
                   <p className="text-sm text-n-slate-11">
-                    אין שלבים עדיין. הוסיפו שלב ראשון כדי להתחיל.
+                    {t('noSteps')}
                   </p>
                 </div>
               </Card>
@@ -574,10 +709,11 @@ function StepCard({
   dragging,
   dropTarget,
 }) {
+  const t = useT(M);
   const varCount = countVars(templateInfo);
   const examples = Array.isArray(templateInfo?.examples) ? templateInfo.examples : [];
   const params = Array.isArray(step.params) ? step.params : [];
-  const offsetLabel = offset ? formatOffset(offset) : 'מיד';
+  const offsetLabel = offset ? formatOffset(offset) : t('immediate');
 
   return (
     <div
@@ -604,13 +740,13 @@ function StepCard({
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
                 className="cursor-grab text-n-slate-9 hover:text-n-slate-11 active:cursor-grabbing"
-                aria-label="גרור לשינוי סדר"
-                title="גרור לשינוי סדר"
+                aria-label={t('dragReorder')}
+                title={t('dragReorder')}
               >
                 <GripVertical size={16} aria-hidden="true" />
               </span>
               <span className="inline-flex items-center justify-center h-6 min-w-6 px-2 rounded-md bg-n-brand/10 text-n-blue-11 text-xs font-semibold">
-                שלב {index + 1}
+                {t('stepN', { n: index + 1 })}
               </span>
               {/* חיווי תזמון מצטבר — "מתי יישלח מההרשמה" */}
               <span className="inline-flex items-center gap-1 rounded-md bg-n-alpha-2 px-2 py-0.5 text-xs text-n-slate-11">
@@ -620,7 +756,7 @@ function StepCard({
               {/* כשמקופל — מציגים תקציר התבנית כדי שעדיין רואים מה יש */}
               {collapsed ? (
                 <span className="truncate text-xs text-n-slate-10">
-                  · {step.template || 'ללא תבנית'}
+                  · {step.template || t('noTemplate')}
                 </span>
               ) : null}
             </div>
@@ -631,8 +767,8 @@ function StepCard({
                 size="sm"
                 iconOnly
                 icon={Copy}
-                aria-label="שכפול שלב"
-                title="שכפול שלב"
+                aria-label={t('dupStep')}
+                title={t('dupStep')}
                 onClick={onDuplicate}
               />
               <Button
@@ -641,7 +777,7 @@ function StepCard({
                 size="sm"
                 iconOnly
                 icon={ArrowUp}
-                aria-label="הזז למעלה"
+                aria-label={t('moveUp')}
                 disabled={index === 0}
                 onClick={onMoveUp}
               />
@@ -651,7 +787,7 @@ function StepCard({
                 size="sm"
                 iconOnly
                 icon={ArrowDown}
-                aria-label="הזז למטה"
+                aria-label={t('moveDown')}
                 disabled={index === total - 1}
                 onClick={onMoveDown}
               />
@@ -661,14 +797,14 @@ function StepCard({
                 size="sm"
                 iconOnly
                 icon={Trash2}
-                aria-label="מחיקת שלב"
+                aria-label={t('delStep')}
                 onClick={onRemove}
               />
               {/* קיפול/הרחבה */}
               <button
                 type="button"
                 onClick={onToggleCollapse}
-                aria-label={collapsed ? 'הרחבת השלב' : 'כיווץ השלב'}
+                aria-label={collapsed ? t('expandStep') : t('collapseStep')}
                 aria-expanded={!collapsed}
                 className="ms-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg text-n-slate-10 transition-colors hover:bg-n-alpha-2 hover:text-n-slate-12"
               >
@@ -687,7 +823,7 @@ function StepCard({
                 {/* בורר תבנית מותאם — מציג תוכן (לא רק שם), נפתח אינליין כאקורדיון */}
                 <div className="sm:col-span-2">
                   <p className="block text-sm font-medium text-n-slate-12 mb-1.5">
-                    תבנית הודעה
+                    {t('templateLabel')}
                   </p>
                   <TemplatePicker
                     templates={templates}
@@ -699,7 +835,7 @@ function StepCard({
                 {/* מרווח מהשלב הקודם — צ'יפים מהירים מעל הקלט המספרי המדויק */}
                 <div className="sm:col-span-2">
                   <p className="text-sm font-medium text-n-slate-12 mb-1.5">
-                    מרווח מהשלב הקודם:
+                    {t('gapLabel')}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {DELAY_PRESETS.map((p) => {
@@ -708,7 +844,7 @@ function StepCard({
                         Number(step.delayHours) === p.hours;
                       return (
                         <button
-                          key={p.label}
+                          key={p.labelKey}
                           type="button"
                           aria-pressed={active}
                           onClick={() =>
@@ -720,7 +856,7 @@ function StepCard({
                               : 'bg-n-alpha-2 text-n-slate-12 hover:bg-n-alpha-3'
                           }`}
                         >
-                          {p.label}
+                          {t(p.labelKey)}
                         </button>
                       );
                     })}
@@ -728,7 +864,7 @@ function StepCard({
                 </div>
 
                 <Input
-                  label="המתנה (ימים)"
+                  label={t('waitDays')}
                   type="number"
                   min={0}
                   value={step.delayDays}
@@ -737,7 +873,7 @@ function StepCard({
                   }
                 />
                 <Input
-                  label="המתנה (שעות)"
+                  label={t('waitHours')}
                   type="number"
                   min={0}
                   max={23}
@@ -759,12 +895,12 @@ function StepCard({
               {index > 0 ? (
                 <div className="mt-4 rounded-lg bg-n-alpha-1 px-4 py-3 flex flex-col gap-3">
                   <div>
-                    <p className="text-sm font-medium text-n-slate-12 mb-1.5">מתי לשלוח את ההודעה</p>
+                    <p className="text-sm font-medium text-n-slate-12 mb-1.5">{t('whenToSend')}</p>
                     <div className="flex flex-wrap gap-2">
                       {[
-                        { value: 'always', label: 'תמיד' },
-                        { value: 'no_reply', label: 'רק אם הנמען לא הגיב' },
-                        { value: 'replied', label: 'רק אם הנמען הגיב' },
+                        { value: 'always', label: t('condAlways') },
+                        { value: 'no_reply', label: t('condNoReply') },
+                        { value: 'replied', label: t('condReplied') },
                       ].map((opt) => {
                         const active = (step.sendCondition || 'always') === opt.value;
                         return (
@@ -787,11 +923,11 @@ function StepCard({
                   </div>
                   {step.sendCondition && step.sendCondition !== 'always' ? (
                     <div>
-                      <p className="text-sm font-medium text-n-slate-12 mb-1.5">אם התנאי לא מתקיים</p>
+                      <p className="text-sm font-medium text-n-slate-12 mb-1.5">{t('ifNotMet')}</p>
                       <div className="flex flex-wrap gap-2">
                         {[
-                          { value: 'skip', label: 'דלג על ההודעה והמשך לבאה' },
-                          { value: 'stop', label: 'עצור את הרצף' },
+                          { value: 'skip', label: t('failSkip') },
+                          { value: 'stop', label: t('failStop') },
                         ].map((opt) => {
                           const active = (step.onConditionFail || 'skip') === opt.value;
                           return (
@@ -820,10 +956,10 @@ function StepCard({
               {step.template ? (
                 <div className="mt-4">
                   <p className="text-xs font-semibold text-n-slate-12 mb-2">
-                    ערכי המשתנים
+                    {t('varValues')}
                   </p>
                   {varCount === 0 ? (
-                    <p className="text-xs text-n-slate-11">התבנית לא דורשת משתנים</p>
+                    <p className="text-xs text-n-slate-11">{t('noVars')}</p>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {Array.from({ length: varCount }, (_, i) => (
@@ -870,6 +1006,9 @@ function StepCard({
 // בורר תזמון "שורה חכמה + מתקדם" — שעה ביום (גלוי תמיד) + אקורדיון "אפשרויות מתקדמות":
 // חזרה (יום/שבוע/חודש), ימי-שבוע מותרים, ותאריך מוחלט. כותב sendHour / repeat* / allowedDow / sendDate.
 function TimingExtras({ step, onChange }) {
+  const t = useT(M);
+  const locale = useLocale();
+  const dowLabels = DOW_LABELS[locale === 'en' ? 'en' : 'he'];
   const hasAdvanced =
     !!step.sendDate ||
     !!step.repeatInterval ||
@@ -882,7 +1021,7 @@ function TimingExtras({ step, onChange }) {
       allowedDow: dow.includes(d) ? dow.filter((x) => x !== d) : [...dow, d].sort((a, b) => a - b),
     });
   const unitNoun =
-    step.repeatUnit === 'day' ? 'ימים' : step.repeatUnit === 'week' ? 'שבועות' : 'חודשים';
+    step.repeatUnit === 'day' ? t('unitDays') : step.repeatUnit === 'week' ? t('unitWeeks') : t('unitMonths');
 
   return (
     <div className="mt-3">
@@ -890,9 +1029,9 @@ function TimingExtras({ step, onChange }) {
       <div>
         <p className="mb-1.5 inline-flex flex-wrap items-center gap-1.5 text-sm font-medium text-n-slate-12">
           <Clock className="h-4 w-4 text-n-slate-11" />
-          שעה ביום
+          {t('timeOfDay')}
           {step.sendDate ? (
-            <span className="text-xs font-normal text-n-slate-11">· תאריך קבוע גובר על המרווח</span>
+            <span className="text-xs font-normal text-n-slate-11">{t('fixedDateOverrides')}</span>
           ) : null}
         </p>
         {/* צ'יפים מובנים (לא רשימה נפתחת צפה) — "כל שעה" + 00:00..23:00 */}
@@ -905,7 +1044,7 @@ function TimingExtras({ step, onChange }) {
               step.sendHour == null ? 'bg-n-brand text-white' : 'bg-n-alpha-2 text-n-slate-12 hover:bg-n-alpha-3'
             }`}
           >
-            כל שעה
+            {t('anyHour')}
           </button>
           {Array.from({ length: 24 }, (_, h) => {
             const active = step.sendHour === h;
@@ -934,14 +1073,14 @@ function TimingExtras({ step, onChange }) {
         className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-n-brand hover:underline"
       >
         <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
-        אפשרויות מתקדמות
+        {t('advanced')}
       </button>
 
       {open ? (
         <div className="mt-2 rounded-lg bg-n-alpha-1 px-4 py-3 flex flex-col gap-4">
           {/* חזרה — הודעה במחזור קבוע (יום/שבוע/חודש) */}
           <div>
-            <p className="text-sm font-medium text-n-slate-12 mb-1.5">חזרה</p>
+            <p className="text-sm font-medium text-n-slate-12 mb-1.5">{t('repeat')}</p>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -951,7 +1090,7 @@ function TimingExtras({ step, onChange }) {
                   !step.repeatInterval ? 'bg-n-brand text-white' : 'bg-n-alpha-2 text-n-slate-12 hover:bg-n-alpha-3'
                 }`}
               >
-                ללא
+                {t('none')}
               </button>
               {REPEAT_UNITS.map((u) => {
                 const active = !!step.repeatInterval && step.repeatUnit === u.value;
@@ -965,13 +1104,13 @@ function TimingExtras({ step, onChange }) {
                       active ? 'bg-n-brand text-white' : 'bg-n-alpha-2 text-n-slate-12 hover:bg-n-alpha-3'
                     }`}
                   >
-                    {u.label}
+                    {t(u.labelKey)}
                   </button>
                 );
               })}
               {step.repeatInterval ? (
                 <span className="inline-flex items-center gap-1.5 text-xs text-n-slate-11">
-                  כל
+                  {t('every')}
                   <input
                     type="number"
                     min={1}
@@ -984,22 +1123,22 @@ function TimingExtras({ step, onChange }) {
               ) : null}
             </div>
             <p className="mt-1 text-xs text-n-slate-11">
-              הודעה חוזרת נשלחת שוב במחזור קבוע — עד שמסירים את הליד מהרצף.
+              {t('repeatNote')}
             </p>
           </div>
 
           {/* ימי שבוע מותרים — דוחה ליום המותר הקרוב */}
           <div>
-            <p className="text-sm font-medium text-n-slate-12 mb-1.5">ימים מותרים לשליחה</p>
+            <p className="text-sm font-medium text-n-slate-12 mb-1.5">{t('allowedDays')}</p>
             <div className="flex flex-wrap gap-1.5">
-              {DOW_LABELS.map((lbl, d) => {
+              {dowLabels.map((lbl, d) => {
                 const active = dow.includes(d);
                 return (
                   <button
                     key={d}
                     type="button"
                     aria-pressed={active}
-                    aria-label={`יום ${lbl}`}
+                    aria-label={t('dowAria', { day: lbl })}
                     onClick={() => toggleDow(d)}
                     className={`h-8 w-8 rounded-full text-xs font-medium transition-colors ${
                       active ? 'bg-n-brand text-white' : 'bg-n-alpha-2 text-n-slate-12 hover:bg-n-alpha-3'
@@ -1011,13 +1150,13 @@ function TimingExtras({ step, onChange }) {
               })}
             </div>
             <p className="mt-1 text-xs text-n-slate-11">
-              אם נבחרו ימים — השליחה נדחית ליום המותר הקרוב. ריק = כל הימים.
+              {t('allowedDaysNote')}
             </p>
           </div>
 
           {/* תאריך מוחלט — שידור לכל הלידים בתאריך נתון (במקום מרווח יחסי) */}
           <div>
-            <p className="text-sm font-medium text-n-slate-12 mb-1.5">תאריך קבוע (במקום מרווח יחסי)</p>
+            <p className="text-sm font-medium text-n-slate-12 mb-1.5">{t('fixedDate')}</p>
             <div className="flex items-center gap-2 flex-wrap">
               <input
                 type="date"
@@ -1031,12 +1170,12 @@ function TimingExtras({ step, onChange }) {
                   onClick={() => onChange({ sendDate: '' })}
                   className="text-xs text-n-brand hover:underline"
                 >
-                  נקה
+                  {t('clear')}
                 </button>
               ) : null}
             </div>
             <p className="mt-1 text-xs text-n-slate-11">
-              כל הלידים יקבלו הודעה זו בתאריך הזה (שידור), במקום מרווח אישי מההרשמה.
+              {t('fixedDateNote')}
             </p>
           </div>
         </div>
@@ -1046,7 +1185,8 @@ function TimingExtras({ step, onChange }) {
 }
 
 function MediaUrlField({ format, value, accountId, onChange }) {
-  const label = MEDIA_LABEL[format] || 'מדיה';
+  const t = useT(M);
+  const label = t(MEDIA_LABEL_KEY[format] || 'mediaGeneric');
   const trimmed = String(value || '').trim();
   const invalid = trimmed !== '' && !/^https:\/\/\S+/i.test(trimmed);
   const maxBytes = WA_MEDIA[format]?.maxBytes || 0;
@@ -1064,7 +1204,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
     if (!file) return;
     setErr('');
     setSizeNote('');
-    if (accountId == null) { setErr('חסר חשבון — לא ניתן להעלות'); return; }
+    if (accountId == null) { setErr(translate(M, 'noAccountUpload')); return; }
 
     let toUpload = file;
 
@@ -1077,10 +1217,10 @@ function MediaUrlField({ format, value, accountId, onChange }) {
       try {
         const r = await compressVideo(file, { onProgress: setProgress, onStage: setStage });
         toUpload = r.file;
-        setSizeNote(`כווץ בדפדפן: ${formatBytes(r.before)} ← ${formatBytes(r.after)}`);
+        setSizeNote(translate(M, 'compressedIn', { before: formatBytes(r.before), after: formatBytes(r.after) }));
       } catch (e) {
         setCompressing(false);
-        setErr(e.message || 'דחיסת הסרטון נכשלה');
+        setErr(e.message || translate(M, 'compressFailed'));
         return;
       }
       setCompressing(false);
@@ -1095,7 +1235,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
       const res = await uploadMedia(toUpload, format, accountId);
       onChange(res.url);
     } catch (e) {
-      setErr(e.message || 'העלאה נכשלה');
+      setErr(e.message || translate(M, 'uploadFailed'));
     } finally {
       setUploading(false);
     }
@@ -1105,35 +1245,35 @@ function MediaUrlField({ format, value, accountId, onChange }) {
     terminateCompression();
     setCompressing(false);
     setProgress(0);
-    setErr('הדחיסה בוטלה');
+    setErr(translate(M, 'compressCancelled'));
   };
 
   const stageLabel = {
-    probe: 'בודק את הסרטון…',
-    load: 'טוען מנוע דחיסה (פעם ראשונה)…',
-    encode: 'מכווץ סרטון…',
-    'encode-retry': 'משפר עוד קצת…',
-  }[stage] || 'מעבד…';
+    probe: t('stageProbe'),
+    load: t('stageLoad'),
+    encode: t('stageEncode'),
+    'encode-retry': t('stageRetry'),
+  }[stage] || t('stageDefault');
   const busy = uploading || compressing;
 
   return (
     <div className="mt-4 rounded-lg border border-n-amber-7 bg-n-amber-3 px-3 py-2.5">
       <p className="mb-2 flex items-center gap-1.5 text-sm font-medium text-n-amber-12">
         <ImageIcon size={14} className="text-n-amber-11" aria-hidden="true" />
-        {label} בכותרת (header)
+        {t('mediaHeader', { label })}
       </p>
 
       {trimmed && !invalid ? (
         <div className="flex items-center justify-between gap-2 rounded-lg border border-n-teal-7 bg-n-teal-3 px-3 py-2">
           <span className="flex min-w-0 items-center gap-2 text-sm text-n-teal-11">
             <CheckCircle2 size={16} className="shrink-0" aria-hidden="true" />
-            <span className="truncate">המדיה הועלתה — הקישור נוצר ונזכר אוטומטית ✓</span>
+            <span className="truncate">{t('mediaUploaded')}</span>
           </span>
           <div className="flex shrink-0 items-center gap-2">
             <button type="button" onClick={() => inputRef.current?.click()} className="text-xs font-medium text-n-blue-11 hover:underline">
-              החלפה
+              {t('replace')}
             </button>
-            <button type="button" onClick={() => { onChange(''); setSizeNote(''); }} aria-label="הסרה" className="text-n-slate-10 hover:text-n-ruby-11">
+            <button type="button" onClick={() => { onChange(''); setSizeNote(''); }} aria-label={t('remove')} className="text-n-slate-10 hover:text-n-ruby-11">
               <X size={15} />
             </button>
           </div>
@@ -1149,7 +1289,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
               onClick={cancelCompress}
               className="text-xs font-medium text-n-slate-11 hover:text-n-ruby-11"
             >
-              ביטול
+              {t('cancel')}
             </button>
           </div>
           {/* פס התקדמות; בשלבי probe/load אין אחוזים אמיתיים → אינדיקציה זוחלת */}
@@ -1159,7 +1299,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
               style={{ width: `${Math.max(4, Math.round(progress * 100))}%` }}
             />
           </div>
-          <p className="mt-2 text-xs text-n-blue-11">הכל רץ במחשב שלך — אפס עומס על השרת. אפשר להמתין כמה שניות.</p>
+          <p className="mt-2 text-xs text-n-blue-11">{t('localProcessing')}</p>
         </div>
       ) : (
         <div
@@ -1170,7 +1310,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
           onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !busy) inputRef.current?.click(); }}
           role="button"
           tabIndex={0}
-          aria-label={`העלאת ${label}`}
+          aria-label={t('uploadAria', { label })}
           className={`flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-3 py-5 text-center outline-none transition-colors focus-visible:border-n-brand ${
             dragOver ? 'border-n-brand bg-n-brand/5' : 'border-n-amber-7 bg-n-alpha-1 hover:bg-n-alpha-2'
           }`}
@@ -1178,15 +1318,15 @@ function MediaUrlField({ format, value, accountId, onChange }) {
           {uploading ? (
             <>
               <Loader2 size={20} className="animate-spin text-n-blue-11" aria-hidden="true" />
-              <span className="text-sm text-n-slate-11">מעלה…</span>
+              <span className="text-sm text-n-slate-11">{t('uploading')}</span>
             </>
           ) : (
             <>
               <UploadCloud size={22} className="text-n-amber-11" aria-hidden="true" />
-              <span className="text-sm font-medium text-n-slate-12">גררו {label} לכאן או לחצו לבחירה</span>
+              <span className="text-sm font-medium text-n-slate-12">{t('dropHere', { label })}</span>
               <span className="text-xs text-n-slate-10">
-                הקישור ייווצר אוטומטית · מקסימום {formatBytes(maxBytes)}
-                {format === 'VIDEO' ? ' · סרטון גדול יכווץ אוטומטית בדפדפן' : ''}
+                {t('linkAuto', { max: formatBytes(maxBytes) })}
+                {format === 'VIDEO' ? t('videoAutoCompress') : ''}
               </span>
             </>
           )}
@@ -1214,7 +1354,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
         onClick={() => setShowUrl((s) => !s)}
         className="mt-2 text-xs text-n-slate-10 hover:underline"
       >
-        {showUrl ? 'הסתר קישור ידני' : 'או הדבקת קישור ידני'}
+        {showUrl ? t('hideManualLink') : t('showManualLink')}
       </button>
       {showUrl ? (
         <Input
@@ -1224,7 +1364,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
           value={value || ''}
           placeholder="https://example.com/media.jpg"
           onChange={(e) => onChange(e.target.value)}
-          error={invalid ? 'נדרש קישור https תקין' : ''}
+          error={invalid ? t('invalidHttps') : ''}
         />
       ) : null}
     </div>
@@ -1238,9 +1378,12 @@ function MediaUrlField({ format, value, accountId, onChange }) {
  *   מותאם     → הטקסט המילולי
  */
 function VariableRow({ index, value, example, onChange }) {
+  const t = useT(M);
   const custom = !isSystemField(value);
   // הערך לבורר: '@name'/'@phone'/'@email' או '@custom' כשזה ערך מותאם
   const selectValue = custom ? '@custom' : value;
+  // תוויות שדות המערכת מתורגמות כאן (המזהים קבועים ב-SYSTEM_FIELDS)
+  const options = SYSTEM_FIELDS.map((f) => ({ value: f.value, label: t(f.labelKey) }));
 
   const onSelect = (v) => {
     // מעבר לשדה מערכת → מאחסנים את הטוקן; מעבר ל"מותאם" → מתחילים מטקסט ריק
@@ -1249,19 +1392,19 @@ function VariableRow({ index, value, example, onChange }) {
 
   return (
     <div>
-      <label className="mb-1.5 block text-sm font-medium text-n-slate-12">משתנה {index + 1} — ערך:</label>
+      <label className="mb-1.5 block text-sm font-medium text-n-slate-12">{t('varRowLabel', { n: index + 1 })}</label>
       <Dropdown
-        options={SYSTEM_FIELDS}
+        options={options}
         value={selectValue}
         onChange={onSelect}
-        ariaLabel={`ערך למשתנה ${index + 1}`}
+        ariaLabel={t('varSelectAria', { n: index + 1 })}
       />
       {custom ? (
         <Input
           className="mt-2"
-          aria-label={`ערך מותאם למשתנה ${index + 1}`}
+          aria-label={t('varCustomAria', { n: index + 1 })}
           value={value}
-          placeholder={example || 'טקסט חופשי'}
+          placeholder={example || t('freeText')}
           onChange={(e) => onChange(e.target.value)}
         />
       ) : null}
@@ -1273,9 +1416,10 @@ function VariableRow({ index, value, example, onChange }) {
  * MessagePreview — תווית "תצוגה מקדימה" + בועת ההודעה (MessageBubble המשותף).
  */
 function MessagePreview({ template, params, mediaUrl }) {
+  const t = useT(M);
   return (
     <div className="mt-4">
-      <p className="text-xs text-n-slate-11 mb-1.5">תצוגה מקדימה</p>
+      <p className="text-xs text-n-slate-11 mb-1.5">{t('preview')}</p>
       <MessageBubble template={template} params={params} mediaUrl={mediaUrl} />
     </div>
   );

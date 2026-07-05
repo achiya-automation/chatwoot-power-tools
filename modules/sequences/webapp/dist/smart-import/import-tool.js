@@ -371,17 +371,159 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 `;
 
   // ui/wizard.js
+  var DRIP_LOCALE = function() {
+    const a = document.querySelector("#app[dir]");
+    return (a || document.documentElement).getAttribute("dir") === "rtl" ? "he" : "en";
+  }();
+  var I18N = {
+    he: {
+      // system-field labels (mapping dropdown)
+      ignore: "\u2014 \u05D4\u05EA\u05E2\u05DC\u05DD \u2014",
+      fName: "\u05E9\u05DD \u05DE\u05DC\u05D0",
+      fFirstName: "\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9",
+      fLastName: "\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4",
+      fPhone: "\u05D8\u05DC\u05E4\u05D5\u05DF",
+      fEmail: "\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC",
+      fIdentifier: "\u05DE\u05D6\u05D4\u05D4",
+      fCompany: "\u05D7\u05D1\u05E8\u05D4",
+      fCity: "\u05E2\u05D9\u05E8",
+      fCountry: "\u05DE\u05D3\u05D9\u05E0\u05D4",
+      // step 1 — upload
+      uploadTitle: "\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8",
+      uploadDesc: "\u05D2\u05E8\u05E8\u05D5 \u05E7\u05D5\u05D1\u05E5 CSV \u05D0\u05D5 Excel, \u05D0\u05D5 \u05DC\u05D7\u05E6\u05D5 \u05DC\u05D1\u05D7\u05D9\u05E8\u05D4. ",
+      sampleLink: "\u05D4\u05D5\u05E8\u05D3\u05EA \u05E7\u05D5\u05D1\u05E5 \u05DC\u05D3\u05D5\u05D2\u05DE\u05D4",
+      sampleFileName: "\u05D3\u05D5\u05D2\u05DE\u05D4-\u05D0\u05E0\u05E9\u05D9-\u05E7\u05E9\u05E8.csv",
+      dropText: "\u05D1\u05D7\u05D9\u05E8\u05EA \u05E7\u05D5\u05D1\u05E5 \u05D0\u05D5 \u05D2\u05E8\u05D9\u05E8\u05D4 \u05DC\u05DB\u05D0\u05DF",
+      csvOrExcel: "CSV \u05D0\u05D5 Excel",
+      replace: "\u05D4\u05D7\u05DC\u05E3",
+      remove: "\u05D4\u05E1\u05E8",
+      emptyFile: "\u05D4\u05E7\u05D5\u05D1\u05E5 \u05E8\u05D9\u05E7 \u05D0\u05D5 \u05DC\u05DC\u05D0 \u05DB\u05D5\u05EA\u05E8\u05D5\u05EA",
+      // step 2 — mapping
+      mappingTitle: "\u05DE\u05D9\u05E4\u05D5\u05D9 \u05E2\u05DE\u05D5\u05D3\u05D5\u05EA",
+      mappingDesc: "\u05D4\u05EA\u05D0\u05D9\u05DE\u05D5 \u05DB\u05DC \u05E2\u05DE\u05D5\u05D3\u05D4 \u05DC\u05E9\u05D3\u05D4 \u05D1-Chatwoot. \u05D6\u05D9\u05D4\u05D9\u05E0\u05D5 \u05D0\u05D5\u05D8\u05D5\u05DE\u05D8\u05D9\u05EA \u2014 \u05EA\u05E7\u05E0\u05D5 \u05D1\u05DE\u05D9\u05D3\u05EA \u05D4\u05E6\u05D5\u05E8\u05DA.",
+      colInFile: "\u05E2\u05DE\u05D5\u05D3\u05D4 \u05D1\u05E7\u05D5\u05D1\u05E5",
+      fieldInChatwoot: "\u05E9\u05D3\u05D4 \u05D1-Chatwoot",
+      example: "\u05D3\u05D5\u05D2\u05DE\u05D4",
+      systemFields: "\u05E9\u05D3\u05D5\u05EA \u05DE\u05E2\u05E8\u05DB\u05EA",
+      customFields: "\u05E9\u05D3\u05D5\u05EA \u05DE\u05D5\u05EA\u05D0\u05DE\u05D9\u05DD",
+      createNewField: "\u05E6\u05D5\u05E8 \u05E9\u05D3\u05D4 \u05DE\u05D5\u05EA\u05D0\u05DD \u05D7\u05D3\u05E9\u2026",
+      newFieldName: "\u05E9\u05DD \u05D4\u05E9\u05D3\u05D4 \u05D4\u05D7\u05D3\u05E9",
+      confirmTitle: "\u05D0\u05E9\u05E8",
+      cancel: "\u05D1\u05D9\u05D8\u05D5\u05DC",
+      change: "\u05E9\u05E0\u05D4",
+      // customSelect
+      search: "\u05D7\u05D9\u05E4\u05D5\u05E9\u2026",
+      noResults: "\u05D0\u05D9\u05DF \u05EA\u05D5\u05E6\u05D0\u05D5\u05EA",
+      // step 3 — label
+      labelStepTitle: "\u05EA\u05D5\u05D5\u05D9\u05EA",
+      labelStepDesc: "\u05EA\u05D5\u05E7\u05E6\u05D4 \u05DC\u05DB\u05DC \u05D0\u05E0\u05E9\u05D9 \u05D4\u05E7\u05E9\u05E8 \u05D4\u05DE\u05D9\u05D5\u05D1\u05D0\u05D9\u05DD (\u05DC\u05D0 \u05EA\u05DE\u05D7\u05E7 \u05EA\u05D5\u05D5\u05D9\u05D5\u05EA \u05E7\u05D9\u05D9\u05DE\u05D5\u05EA)",
+      noLabel: "\u2014 \u05DC\u05DC\u05D0 \u05EA\u05D5\u05D5\u05D9\u05EA \u2014",
+      newLabelPlaceholder: "\u05D0\u05D5 \u05E6\u05E8\u05D5 \u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4",
+      selectLabel: "\u05D1\u05D7\u05E8 \u05EA\u05D5\u05D5\u05D9\u05EA:",
+      newLabelField: "\u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4:",
+      // step 4 — preview
+      previewTitle: "\u05D1\u05D3\u05D9\u05E7\u05D4 \u05DC\u05E4\u05E0\u05D9 \u05D9\u05D9\u05D1\u05D5\u05D0",
+      checkingDupes: "\u05D1\u05D5\u05D3\u05E7 \u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA\u2026",
+      readyToImport: "\u05DE\u05D5\u05DB\u05DF \u05DC\u05D9\u05D9\u05D1\u05D5\u05D0:",
+      newWord: "\u05D7\u05D3\u05E9\u05D9\u05DD",
+      existingWillUpdate: "\u05E7\u05D9\u05D9\u05DE\u05D9\u05DD (\u05D9\u05E2\u05D5\u05D3\u05DB\u05E0\u05D5)",
+      importVerb: "\u05D9\u05D9\u05D1\u05D0",
+      contactsWord: "\u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8",
+      // step 5 — run / done
+      importing: "\u05DE\u05D9\u05D9\u05D1\u05D0\u2026",
+      importDone: "\u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D4\u05D5\u05E9\u05DC\u05DD",
+      createdWord: "\u05E0\u05D5\u05E6\u05E8\u05D5",
+      updatedWord: "\u05E2\u05D5\u05D3\u05DB\u05E0\u05D5",
+      skippedWord: "\u05D3\u05D5\u05DC\u05D2\u05D5",
+      failedWord: "\u05E0\u05DB\u05E9\u05DC\u05D5",
+      downloadReport: "\u05D4\u05D5\u05E8\u05D3 \u05D3\u05D5\u05D7 CSV",
+      close: "\u05E1\u05D2\u05D5\u05E8",
+      // footer
+      back: "\u05D7\u05D6\u05E8\u05D4",
+      continue: "\u05D4\u05DE\u05E9\u05DA",
+      // preview table headers
+      thName: "\u05E9\u05DD",
+      thPhone: "\u05D8\u05DC\u05E4\u05D5\u05DF",
+      thEmail: "\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC",
+      thCompany: "\u05D7\u05D1\u05E8\u05D4"
+    },
+    en: {
+      ignore: "\u2014 Ignore \u2014",
+      fName: "Full name",
+      fFirstName: "First name",
+      fLastName: "Last name",
+      fPhone: "Phone",
+      fEmail: "Email",
+      fIdentifier: "Identifier",
+      fCompany: "Company",
+      fCity: "City",
+      fCountry: "Country",
+      uploadTitle: "Import contacts",
+      uploadDesc: "Drag a CSV or Excel file here, or click to choose. ",
+      sampleLink: "Download a sample file",
+      sampleFileName: "sample-contacts.csv",
+      dropText: "Choose a file or drag it here",
+      csvOrExcel: "CSV or Excel",
+      replace: "Replace",
+      remove: "Remove",
+      emptyFile: "The file is empty or has no headers",
+      mappingTitle: "Map columns",
+      mappingDesc: "Match each column to a Chatwoot field. We detected these automatically \u2014 adjust as needed.",
+      colInFile: "Column in file",
+      fieldInChatwoot: "Chatwoot field",
+      example: "Example",
+      systemFields: "System fields",
+      customFields: "Custom fields",
+      createNewField: "Create a new custom field\u2026",
+      newFieldName: "New field name",
+      confirmTitle: "Confirm",
+      cancel: "Cancel",
+      change: "Change",
+      search: "Search\u2026",
+      noResults: "No results",
+      labelStepTitle: "Label",
+      labelStepDesc: "Applied to all imported contacts (existing labels are kept)",
+      noLabel: "\u2014 No label \u2014",
+      newLabelPlaceholder: "Or create a new label",
+      selectLabel: "Select a label:",
+      newLabelField: "New label:",
+      previewTitle: "Review before import",
+      checkingDupes: "Checking for duplicates\u2026",
+      readyToImport: "Ready to import:",
+      newWord: "new",
+      existingWillUpdate: "existing (will be updated)",
+      importVerb: "Import",
+      contactsWord: "contacts",
+      importing: "Importing\u2026",
+      importDone: "Import complete",
+      createdWord: "Created",
+      updatedWord: "Updated",
+      skippedWord: "Skipped",
+      failedWord: "Failed",
+      downloadReport: "Download CSV report",
+      close: "Close",
+      back: "Back",
+      continue: "Continue",
+      thName: "Name",
+      thPhone: "Phone",
+      thEmail: "Email",
+      thCompany: "Company"
+    }
+  };
+  function t(k) {
+    return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k;
+  }
   var FIELD_LABELS = {
-    "": "\u2014 \u05D4\u05EA\u05E2\u05DC\u05DD \u2014",
-    name: "\u05E9\u05DD \u05DE\u05DC\u05D0",
-    first_name: "\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9",
-    last_name: "\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4",
-    phone_number: "\u05D8\u05DC\u05E4\u05D5\u05DF",
-    email: "\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC",
-    identifier: "\u05DE\u05D6\u05D4\u05D4",
-    company_name: "\u05D7\u05D1\u05E8\u05D4",
-    city: "\u05E2\u05D9\u05E8",
-    country: "\u05DE\u05D3\u05D9\u05E0\u05D4"
+    "": t("ignore"),
+    name: t("fName"),
+    first_name: t("fFirstName"),
+    last_name: t("fLastName"),
+    phone_number: t("fPhone"),
+    email: t("fEmail"),
+    identifier: t("fIdentifier"),
+    company_name: t("fCompany"),
+    city: t("fCity"),
+    country: t("fCountry")
   };
   var XLSX_LOADING = null;
   function loadXlsx(assetBase) {
@@ -430,13 +572,13 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     function stepUpload() {
       modal.replaceChildren();
       const desc = el("p", "mb-0 text-sm text-n-slate-11");
-      desc.append("\u05D2\u05E8\u05E8\u05D5 \u05E7\u05D5\u05D1\u05E5 CSV \u05D0\u05D5 Excel, \u05D0\u05D5 \u05DC\u05D7\u05E6\u05D5 \u05DC\u05D1\u05D7\u05D9\u05E8\u05D4. ");
+      desc.append(t("uploadDesc"));
       const sample = el("a", "text-n-blue-11");
-      sample.textContent = "\u05D4\u05D5\u05E8\u05D3\u05EA \u05E7\u05D5\u05D1\u05E5 \u05DC\u05D3\u05D5\u05D2\u05DE\u05D4";
-      sample.setAttribute("download", "\u05D3\u05D5\u05D2\u05DE\u05D4-\u05D0\u05E0\u05E9\u05D9-\u05E7\u05E9\u05E8.csv");
+      sample.textContent = t("sampleLink");
+      sample.setAttribute("download", t("sampleFileName"));
       sample.setAttribute("href", sampleCsvHref());
       desc.appendChild(sample);
-      modal.appendChild(header("\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8", desc));
+      modal.appendChild(header(t("uploadTitle"), desc));
       const input = el("input");
       input.type = "file";
       input.accept = ".csv,.xlsx,.xls";
@@ -449,8 +591,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       const body = el("div", "flex flex-col items-center justify-center gap-2");
       body.append(
         icon("upload", "size-6 text-n-slate-11"),
-        elWithText("span", "text-sm text-n-slate-12", "\u05D1\u05D7\u05D9\u05E8\u05EA \u05E7\u05D5\u05D1\u05E5 \u05D0\u05D5 \u05D2\u05E8\u05D9\u05E8\u05D4 \u05DC\u05DB\u05D0\u05DF"),
-        elWithText("span", "text-xs text-n-slate-11", "CSV \u05D0\u05D5 Excel")
+        elWithText("span", "text-sm text-n-slate-12", t("dropText")),
+        elWithText("span", "text-xs text-n-slate-11", t("csvOrExcel"))
       );
       drop.appendChild(body);
       drop.addEventListener("click", () => input.click());
@@ -474,7 +616,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       );
       const right = el("div", "flex items-center gap-2 shrink-0");
       const replaceBtn = btn("ghost");
-      replaceBtn.textContent = "\u05D4\u05D7\u05DC\u05E3";
+      replaceBtn.textContent = t("replace");
       replaceBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         stepUpload();
@@ -485,7 +627,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 cursor-pointer"
       );
       trashBtn.appendChild(icon("trash", "size-4"));
-      trashBtn.title = "\u05D4\u05E1\u05E8";
+      trashBtn.title = t("remove");
       trashBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         stepUpload();
@@ -497,7 +639,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       if (drop && body) showPickedFile(file, body);
       try {
         const table = await readFileToTable(file, { loadXlsx: () => loadXlsx(assetBase) });
-        if (!table.headers.length) throw new Error("\u05D4\u05E7\u05D5\u05D1\u05E5 \u05E8\u05D9\u05E7 \u05D0\u05D5 \u05DC\u05DC\u05D0 \u05DB\u05D5\u05EA\u05E8\u05D5\u05EA");
+        if (!table.headers.length) throw new Error(t("emptyFile"));
         state.table = table;
         state.mapping = detectColumns(table.headers, table.rows.slice(0, 20)).map((d) => ({ index: d.index, field: d.field }));
         stepMapping();
@@ -507,7 +649,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     }
     async function stepMapping() {
       modal.replaceChildren();
-      modal.appendChild(header("\u05DE\u05D9\u05E4\u05D5\u05D9 \u05E2\u05DE\u05D5\u05D3\u05D5\u05EA", "\u05D4\u05EA\u05D0\u05D9\u05DE\u05D5 \u05DB\u05DC \u05E2\u05DE\u05D5\u05D3\u05D4 \u05DC\u05E9\u05D3\u05D4 \u05D1-Chatwoot. \u05D6\u05D9\u05D4\u05D9\u05E0\u05D5 \u05D0\u05D5\u05D8\u05D5\u05DE\u05D8\u05D9\u05EA \u2014 \u05EA\u05E7\u05E0\u05D5 \u05D1\u05DE\u05D9\u05D3\u05EA \u05D4\u05E6\u05D5\u05E8\u05DA."));
+      modal.appendChild(header(t("mappingTitle"), t("mappingDesc")));
       let customDefs = [];
       try {
         customDefs = await api.listCustomAttributes();
@@ -515,7 +657,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       }
       const tbl = el("table", "w-full text-sm border-collapse");
       const thead = el("tr");
-      ["\u05E2\u05DE\u05D5\u05D3\u05D4 \u05D1\u05E7\u05D5\u05D1\u05E5", "\u05E9\u05D3\u05D4 \u05D1-Chatwoot", "\u05D3\u05D5\u05D2\u05DE\u05D4"].forEach((h) => {
+      [t("colInFile"), t("fieldInChatwoot"), t("example")].forEach((h) => {
         const th = el("th", "text-start font-medium text-n-slate-11 px-3 py-2 cwi-tbl-cell border-n-weak");
         th.textContent = h;
         thead.appendChild(th);
@@ -525,16 +667,16 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       state.table.headers.forEach((colHeader, i) => {
         const sample = (state.table.rows.find((r) => (r[i] || "").trim()) || [])[i] || "";
         const options = [];
-        options.push({ value: "", label: "\u2014 \u05D4\u05EA\u05E2\u05DC\u05DD \u2014" });
+        options.push({ value: "", label: t("ignore") });
         SYSTEM_FIELDS.forEach((fld) => {
-          options.push({ value: fld, label: FIELD_LABELS[fld] || fld, group: "\u05E9\u05D3\u05D5\u05EA \u05DE\u05E2\u05E8\u05DB\u05EA" });
+          options.push({ value: fld, label: FIELD_LABELS[fld] || fld, group: t("systemFields") });
         });
         if (customDefs.length) {
           customDefs.forEach((d) => {
-            options.push({ value: "custom:" + d.attribute_key, label: d.attribute_display_name, group: "\u05E9\u05D3\u05D5\u05EA \u05DE\u05D5\u05EA\u05D0\u05DE\u05D9\u05DD" });
+            options.push({ value: "custom:" + d.attribute_key, label: d.attribute_display_name, group: t("customFields") });
           });
         }
-        options.push({ value: "__new__", label: "\u05E6\u05D5\u05E8 \u05E9\u05D3\u05D4 \u05DE\u05D5\u05EA\u05D0\u05DD \u05D7\u05D3\u05E9\u2026", icon: "plus" });
+        options.push({ value: "__new__", label: t("createNewField"), icon: "plus" });
         const initial = state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field) ? state.mapping[i].field : "";
         const row = el("tr");
         const tdHeader = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
@@ -543,7 +685,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         const cs = customSelect({
           options,
           value: initial,
-          placeholder: "\u2014 \u05D4\u05EA\u05E2\u05DC\u05DD \u2014",
+          placeholder: t("ignore"),
           onSelect: (v) => {
             if (v === "__new__") {
               showInlineNewField(i, colHeader, tdSel, cs);
@@ -558,7 +700,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         row.append(tdHeader, tdSel, tdSample);
         tbl.appendChild(row);
       });
-      modal.append(tbl, footer({ onBack: stepUpload, onNext: stepLabel, nextLabel: "\u05D4\u05DE\u05E9\u05DA" }));
+      modal.append(tbl, footer({ onBack: stepUpload, onNext: stepLabel, nextLabel: t("continue") }));
     }
     function showInlineNewField(i, colHeader, tdSel, origCs) {
       state.mapping[i] = { index: i, field: null };
@@ -569,19 +711,19 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         "h-8 px-3 rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand text-sm w-full border-0 outline-offset-[-1px]"
       );
       inp.value = colHeader;
-      inp.placeholder = "\u05E9\u05DD \u05D4\u05E9\u05D3\u05D4 \u05D4\u05D7\u05D3\u05E9";
+      inp.placeholder = t("newFieldName");
       const confirmBtn = el(
         "button",
         BTN_BASE + " bg-n-brand text-white hover:brightness-110 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer"
       );
       confirmBtn.appendChild(icon("check", "size-4"));
-      confirmBtn.title = "\u05D0\u05E9\u05E8";
+      confirmBtn.title = t("confirmTitle");
       const cancelBtn = el(
         "button",
         BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer"
       );
       cancelBtn.appendChild(icon("x", "size-4"));
-      cancelBtn.title = "\u05D1\u05D9\u05D8\u05D5\u05DC";
+      cancelBtn.title = t("cancel");
       function commit() {
         const name = inp.value.trim() || colHeader;
         state.customMap.push({ index: i, attribute_key: slugify(name), create: { display: name } });
@@ -593,7 +735,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer"
         );
         changeBtn.appendChild(icon("x", "size-4"));
-        changeBtn.title = "\u05E9\u05E0\u05D4";
+        changeBtn.title = t("change");
         changeBtn.addEventListener("click", revert);
         done.append(lbl, changeBtn);
         tdSel.replaceChildren(done);
@@ -801,7 +943,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
             "reset-base w-full py-2 text-sm focus:outline-none border-none rounded-t-md bg-n-solid-1 text-n-slate-12 " + (pageIsRTL ? "pr-10 pl-2 text-right" : "pl-10 pr-2")
           );
           searchInput.type = "search";
-          searchInput.placeholder = "\u05D7\u05D9\u05E4\u05D5\u05E9\u2026";
+          searchInput.placeholder = t("search");
           searchWrap.appendChild(searchInput);
           panel.appendChild(searchWrap);
         }
@@ -824,7 +966,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           list.appendChild(rowNode);
         });
         const empty = el("li", "px-3 py-2 text-sm text-n-slate-11");
-        empty.textContent = "\u05D0\u05D9\u05DF \u05EA\u05D5\u05E6\u05D0\u05D5\u05EA";
+        empty.textContent = t("noResults");
         empty.style.display = "none";
         list.appendChild(empty);
         panel.appendChild(list);
@@ -878,24 +1020,24 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     }
     async function stepLabel() {
       modal.replaceChildren();
-      modal.appendChild(header("\u05EA\u05D5\u05D5\u05D9\u05EA", "\u05EA\u05D5\u05E7\u05E6\u05D4 \u05DC\u05DB\u05DC \u05D0\u05E0\u05E9\u05D9 \u05D4\u05E7\u05E9\u05E8 \u05D4\u05DE\u05D9\u05D5\u05D1\u05D0\u05D9\u05DD (\u05DC\u05D0 \u05EA\u05DE\u05D7\u05E7 \u05EA\u05D5\u05D5\u05D9\u05D5\u05EA \u05E7\u05D9\u05D9\u05DE\u05D5\u05EA)"));
+      modal.appendChild(header(t("labelStepTitle"), t("labelStepDesc")));
       let labels = [];
       try {
         labels = await api.listLabels().then((r) => r.payload || r);
       } catch {
       }
       let selValue = "";
-      const options = [{ value: "", label: "\u2014 \u05DC\u05DC\u05D0 \u05EA\u05D5\u05D5\u05D9\u05EA \u2014" }];
+      const options = [{ value: "", label: t("noLabel") }];
       (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
       const newInput = el(
         "input",
         "h-8 w-full px-3 py-2 text-sm rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand border-0 outline-offset-[-1px]"
       );
-      newInput.placeholder = "\u05D0\u05D5 \u05E6\u05E8\u05D5 \u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4";
+      newInput.placeholder = t("newLabelPlaceholder");
       const cs = customSelect({
         options,
         value: "",
-        placeholder: "\u2014 \u05DC\u05DC\u05D0 \u05EA\u05D5\u05D5\u05D9\u05EA \u2014",
+        placeholder: t("noLabel"),
         size: "field",
         // roomier single-select field for the label step
         onSelect: (v) => {
@@ -904,23 +1046,23 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         }
       });
       modal.append(
-        formRow("\u05D1\u05D7\u05E8 \u05EA\u05D5\u05D5\u05D9\u05EA:", cs.el),
-        formRow("\u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4:", newInput),
+        formRow(t("selectLabel"), cs.el),
+        formRow(t("newLabelField"), newInput),
         footer({
           onBack: stepMapping,
           onNext: () => {
             state.labelTitle = newInput.value.trim() || selValue;
             stepPreview();
           },
-          nextLabel: "\u05D4\u05DE\u05E9\u05DA"
+          nextLabel: t("continue")
         })
       );
     }
     async function stepPreview() {
       modal.replaceChildren();
-      modal.appendChild(header("\u05D1\u05D3\u05D9\u05E7\u05D4 \u05DC\u05E4\u05E0\u05D9 \u05D9\u05D9\u05D1\u05D5\u05D0", ""));
+      modal.appendChild(header(t("previewTitle"), ""));
       const status = el("div", "text-sm text-n-slate-11");
-      status.textContent = "\u05D1\u05D5\u05D3\u05E7 \u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA\u2026";
+      status.textContent = t("checkingDupes");
       modal.appendChild(status);
       await ensureCustomAttributes();
       await ensureLabel();
@@ -931,7 +1073,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       state.contacts = contacts;
       const N = contacts.length;
       for (let i = 0; i < N; i++) {
-        status.textContent = `\u05D1\u05D5\u05D3\u05E7 \u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA\u2026 ${i + 1}/${N}`;
+        status.textContent = `${t("checkingDupes")} ${i + 1}/${N}`;
         const c = contacts[i];
         try {
           const fp = buildFilterPayload(c);
@@ -947,10 +1089,10 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       }
       const existing = contacts.filter((c) => c.__match).length;
       const created = N - existing;
-      status.textContent = `\u05DE\u05D5\u05DB\u05DF \u05DC\u05D9\u05D9\u05D1\u05D5\u05D0: ${N} \xB7 ${created} \u05D7\u05D3\u05E9\u05D9\u05DD \xB7 ${existing} \u05E7\u05D9\u05D9\u05DE\u05D9\u05DD (\u05D9\u05E2\u05D5\u05D3\u05DB\u05E0\u05D5)`;
+      status.textContent = `${t("readyToImport")} ${N} \xB7 ${created} ${t("newWord")} \xB7 ${existing} ${t("existingWillUpdate")}`;
       modal.append(
         previewTable(contacts.slice(0, 10)),
-        footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `\u05D9\u05D9\u05D1\u05D0 ${N} \u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8` })
+        footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t("importVerb")} ${N} ${t("contactsWord")}` })
       );
     }
     async function ensureCustomAttributes() {
@@ -975,7 +1117,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     }
     async function stepRun() {
       modal.replaceChildren();
-      modal.appendChild(header("\u05DE\u05D9\u05D9\u05D1\u05D0\u2026", ""));
+      modal.appendChild(header(t("importing"), ""));
       const track = el("div", "h-2 w-full rounded-full bg-n-alpha-2 overflow-hidden");
       const fill = el("div", "cwi-prog-fill");
       fill.style.width = "0%";
@@ -986,27 +1128,27 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         contacts: state.contacts,
         api,
         labelTitle: state.labelTitle,
-        onProgress: (d, t) => {
-          fill.style.width = d / t * 100 + "%";
-          label.textContent = `${d}/${t}`;
+        onProgress: (d, t2) => {
+          fill.style.width = d / t2 * 100 + "%";
+          label.textContent = `${d}/${t2}`;
         }
       });
       stepDone(log);
     }
     function stepDone(log) {
       modal.replaceChildren();
-      modal.appendChild(header("\u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D4\u05D5\u05E9\u05DC\u05DD", ""));
+      modal.appendChild(header(t("importDone"), ""));
       const s = log.summary();
       const summary = el("div", "text-sm text-n-slate-12");
-      summary.textContent = `\u05E0\u05D5\u05E6\u05E8\u05D5 ${s.created} \xB7 \u05E2\u05D5\u05D3\u05DB\u05E0\u05D5 ${s.updated} \xB7 \u05D3\u05D5\u05DC\u05D2\u05D5 ${s.skipped} \xB7 \u05E0\u05DB\u05E9\u05DC\u05D5 ${s.failed}`;
+      summary.textContent = `${t("createdWord")} ${s.created} \xB7 ${t("updatedWord")} ${s.updated} \xB7 ${t("skippedWord")} ${s.skipped} \xB7 ${t("failedWord")} ${s.failed}`;
       modal.appendChild(summary);
       const dlBtn = btn("primary");
       dlBtn.className += " w-full";
-      dlBtn.textContent = "\u05D4\u05D5\u05E8\u05D3 \u05D3\u05D5\u05D7 CSV";
+      dlBtn.textContent = t("downloadReport");
       dlBtn.addEventListener("click", () => downloadCsv(log.toCsv(), "import-log.csv"));
       const closeBtn = btn("ghost");
       closeBtn.className += " w-full";
-      closeBtn.textContent = "\u05E1\u05D2\u05D5\u05E8";
+      closeBtn.textContent = t("close");
       closeBtn.addEventListener("click", close);
       const bar = el("div", "flex items-center justify-between w-full gap-3");
       bar.append(closeBtn, dlBtn);
@@ -1020,7 +1162,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     function previewTable(contacts) {
       const tbl = el("table", "w-full text-sm border-collapse");
       const thead = el("tr");
-      ["\u05E9\u05DD", "\u05D8\u05DC\u05E4\u05D5\u05DF", "\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC", "\u05D7\u05D1\u05E8\u05D4"].forEach((h) => {
+      [t("thName"), t("thPhone"), t("thEmail"), t("thCompany")].forEach((h) => {
         const th = el("th", "text-start font-medium text-n-slate-11 px-3 py-2 cwi-tbl-cell border-n-weak");
         th.textContent = h;
         thead.appendChild(th);
@@ -1042,21 +1184,21 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       if (onBack) {
         const b = btn("faded");
         b.className += " w-full";
-        b.textContent = "\u05D7\u05D6\u05E8\u05D4";
+        b.textContent = t("back");
         b.onclick = onBack;
         bar.appendChild(b);
       }
       if (onCancel) {
         const b = btn("ghost");
         b.className += " w-full";
-        b.textContent = "\u05D1\u05D9\u05D8\u05D5\u05DC";
+        b.textContent = t("cancel");
         b.onclick = onCancel;
         bar.appendChild(b);
       }
       if (onNext) {
         const b = btn("primary");
         b.className += " w-full";
-        b.textContent = nextLabel || "\u05D4\u05DE\u05E9\u05DA";
+        b.textContent = nextLabel || t("continue");
         b.onclick = onNext;
         bar.appendChild(b);
       }
@@ -1131,10 +1273,14 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     return stem.slice(0, head) + "\u2026" + stem.slice(stem.length - tail) + ext;
   }
   function sampleCsvHref() {
-    const rows = [
+    const rows = DRIP_LOCALE === "he" ? [
       "\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9,\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4,\u05D8\u05DC\u05E4\u05D5\u05DF,\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC,\u05D7\u05D1\u05E8\u05D4",
       '\u05D9\u05E9\u05E8\u05D0\u05DC,\u05D9\u05E9\u05E8\u05D0\u05DC\u05D9,0501234567,israel@example.com,\u05D7\u05D1\u05E8\u05D4 \u05D1\u05E2"\u05DE',
       "\u05D3\u05E0\u05D4,\u05DB\u05D4\u05DF,0527654321,dana@example.com,\u05E1\u05D8\u05D0\u05E8\u05D8\u05D0\u05E4"
+    ] : [
+      "First name,Last name,Phone,Email,Company",
+      "John,Doe,+15551234567,john@example.com,Acme Inc.",
+      "Jane,Smith,+15557654321,jane@example.com,Startup LLC"
     ];
     const BOM = "\uFEFF";
     return "data:text/csv;charset=utf-8," + encodeURIComponent(BOM + rows.join("\r\n"));

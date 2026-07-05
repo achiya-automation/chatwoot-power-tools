@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import Button from './Button.jsx';
+import useT from '../../useT.js';
 
 /*
  * Modal / Dialog — חלון מודאלי זהה לסגנון Chatwoot v4.
@@ -8,6 +9,12 @@ import Button from './Button.jsx';
  * variant: 'center' (מודאל ממורכז) | 'drawer' (מגירה מהצד — RTL: נפתחת משמאל).
  * נגישות: role=dialog, aria-modal, סגירה ב-Escape, נעילת גלילת body, החזרת פוקוס.
  */
+
+// מילון co-located (he/en)
+const M = {
+  he: { close: 'סגירה' },
+  en: { close: 'Close' },
+};
 
 export default function Modal({
   open,
@@ -19,6 +26,7 @@ export default function Modal({
   size = 'md', // sm | md | lg | xl
   closeOnOverlay = true,
 }) {
+  const t = useT(M);
   const panelRef = useRef(null);
   const previouslyFocused = useRef(null);
 
@@ -109,7 +117,7 @@ export default function Modal({
               size="sm"
               iconOnly
               icon={X}
-              aria-label="סגירה"
+              aria-label={t('close')}
               onClick={onClose}
             />
           </div>

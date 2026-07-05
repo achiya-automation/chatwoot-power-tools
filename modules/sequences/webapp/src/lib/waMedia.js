@@ -1,8 +1,17 @@
 /*
  * waMedia — מגבלות מדיה של WhatsApp (מראָה לצד-הלקוח של engine/src/media.js).
  * משמש לוולידציה מיידית לפני העלאה (חוויה), והשרת מאמת שוב (אבטחה).
+ * i18n: הודעות הוולידציה דו-לשוניות (he/en) לפי השפה הנוכחית — מוצגות ב-UI.
  */
+import { getLocale } from '../i18n.js';
+
 const MB = 1024 * 1024;
+
+// תווית סוג המדיה לפי שפה (לשגיאות ולידציה)
+const MEDIA_LABEL = {
+  he: { IMAGE: 'תמונה', VIDEO: 'וידאו', DOCUMENT: 'מסמך' },
+  en: { IMAGE: 'Image', VIDEO: 'Video', DOCUMENT: 'Document' },
+};
 
 export const WA_MEDIA = {
   IMAGE: { label: 'תמונה', maxBytes: 5 * MB, mimes: ['image/jpeg', 'image/png'] },
@@ -40,17 +49,21 @@ export function acceptFor(format) {
   return (WA_MEDIA[String(format || '').toUpperCase()]?.mimes || []).join(',');
 }
 
-// ולידציה: { ok:true } או { ok:false, error }
+// ולידציה: { ok:true } או { ok:false, error } — השגיאה בשפת המשתמש הנוכחית
 export function validateWhatsAppMedia({ format, mime, byteSize } = {}) {
-  const spec = WA_MEDIA[String(format || '').toUpperCase()];
-  if (!spec) return { ok: false, error: 'סוג מדיה לא נתמך בכותרת התבנית' };
+  const en = getLocale() === 'en';
+  const fmt = String(format || '').toUpperCase();
+  const spec = WA_MEDIA[fmt];
+  if (!spec) return { ok: false, error: en ? 'Unsupported media type in the template header' : 'סוג מדיה לא נתמך בכותרת התבנית' };
   const size = Number(byteSize) || 0;
-  if (size <= 0) return { ok: false, error: 'הקובץ ריק' };
+  if (size <= 0) return { ok: false, error: en ? 'The file is empty' : 'הקובץ ריק' };
+  const label = MEDIA_LABEL[en ? 'en' : 'he'][fmt] || fmt;
   if (!spec.mimes.includes(cleanMime(mime))) {
-    return { ok: false, error: `פורמט לא נתמך ל${spec.label} — נדרש ${spec.mimes.map((m) => m.split('/')[1]).join(' / ')}` };
+    const types = spec.mimes.map((m) => m.split('/')[1]).join(' / ');
+    return { ok: false, error: en ? `Unsupported format for ${label} — requires ${types}` : `פורמט לא נתמך ל${label} — נדרש ${types}` };
   }
   if (size > spec.maxBytes) {
-    return { ok: false, error: `הקובץ גדול מדי ל${spec.label} (מקסימום ${formatBytes(spec.maxBytes)})` };
+    return { ok: false, error: en ? `File too large for ${label} (max ${formatBytes(spec.maxBytes)})` : `הקובץ גדול מדי ל${label} (מקסימום ${formatBytes(spec.maxBytes)})` };
   }
   return { ok: true };
 }

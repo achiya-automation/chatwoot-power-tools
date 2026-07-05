@@ -2,6 +2,8 @@ import { MessageSquare, CalendarClock } from 'lucide-react';
 import Modal from './ui/Modal.jsx';
 import MessageBubble from './ui/MessageBubble.jsx';
 import { formatOffset, formatDuration } from '../lib/timeline.js';
+import useT from '../useT.js';
+import { translate } from '../i18n.js';
 
 /*
  * SequencePreview — מציג את כל שלבי הרצף כשיחת WhatsApp רציפה אחת, כדי שאפשר
@@ -11,6 +13,28 @@ import { formatOffset, formatDuration } from '../lib/timeline.js';
  * props: open, onClose, sequence (draft), templateByName, schedule (lib/timeline), duration
  */
 
+// מילון co-located (he/en) — רק ה-chrome של התצוגה; תוכן התבניות מגיע מהנתונים ולא מתורגם.
+const M = {
+  he: {
+    previewTitle: 'תצוגה מקדימה — {name} כשיחה',
+    theSequence: 'הרצף',
+    noSteps: 'אין שלבים להצגה.',
+    stepN: 'שלב {n}',
+    noTemplate: 'טרם נבחרה תבנית לשלב זה',
+    durationPrefix: 'סך הרצף נמשך',
+    messagesWord: 'הודעות',
+  },
+  en: {
+    previewTitle: 'Preview — {name} as a conversation',
+    theSequence: 'the sequence',
+    noSteps: 'No steps to display.',
+    stepN: 'Step {n}',
+    noTemplate: 'No template selected for this step yet',
+    durationPrefix: 'The full sequence lasts',
+    messagesWord: 'messages',
+  },
+};
+
 export default function SequencePreview({
   open,
   onClose,
@@ -19,13 +43,14 @@ export default function SequencePreview({
   schedule = [],
   duration,
 }) {
+  const t = useT(M);
   const steps = sequence?.steps || [];
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={`תצוגה מקדימה — ${sequence?.name || 'הרצף'} כשיחה`}
+      title={t('previewTitle', { name: sequence?.name || t('theSequence') })}
       variant="center"
       size="lg"
     >
@@ -34,7 +59,7 @@ export default function SequencePreview({
         {steps.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-n-slate-11">
             <MessageSquare size={22} className="text-n-slate-9" aria-hidden="true" />
-            אין שלבים להצגה.
+            {t('noSteps')}
           </div>
         ) : (
           <div className="flex flex-col gap-4">
@@ -46,7 +71,7 @@ export default function SequencePreview({
                   {/* מפריד-זמן ממורכז — מתי ההודעה תישלח מרגע ההרשמה */}
                   <div className="flex items-center justify-center">
                     <span className="inline-flex items-center gap-1 rounded-full bg-n-alpha-3 px-2.5 py-0.5 text-[11px] font-medium text-n-slate-11">
-                      שלב {i + 1} · {formatOffset(offset)}
+                      {translate(M, 'stepN', { n: i + 1 })} · {formatOffset(offset)}
                     </span>
                   </div>
                   {/* הבועה — או חיווי "טרם נבחרה תבנית" */}
@@ -55,7 +80,7 @@ export default function SequencePreview({
                       <MessageBubble template={t} params={step.params} mediaUrl={step.mediaUrl} />
                     ) : (
                       <div className="max-w-sm rounded-lg border border-dashed border-n-strong bg-n-solid-2 px-3 py-2 text-xs text-n-slate-10">
-                        טרם נבחרה תבנית לשלב זה
+                        {translate(M, 'noTemplate')}
                       </div>
                     )}
                   </div>
@@ -70,7 +95,7 @@ export default function SequencePreview({
       {steps.length > 0 && duration && duration.totalHours > 0 ? (
         <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-n-slate-11">
           <CalendarClock size={13} className="text-n-blue-11" aria-hidden="true" />
-          סך הרצף נמשך {formatDuration(duration)} — {steps.length} הודעות
+          {t('durationPrefix')} {formatDuration(duration)} — {steps.length} {t('messagesWord')}
         </p>
       ) : null}
     </Modal>

@@ -6,6 +6,86 @@ import Skeleton, { SkeletonCard, SkeletonText } from './ui/Skeleton.jsx';
 import { listEnrollments, listSequences, getStorageUsage, getDeliveryStats } from '../api/sequencesApi.js';
 import { summarizeEnrollments } from '../lib/summarize.js';
 import { formatBytes } from '../lib/waMedia.js';
+import useT from '../useT.js';
+import { translate } from '../i18n.js';
+
+// מילון co-located (he/en) — כל הטקסטים הגלויים של תצוגת הסקירה.
+const M = {
+  he: {
+    tcTotal: 'סה״כ משויכים',
+    tcActive: 'פעילים',
+    tcFailed: 'נתקעו',
+    tcCompleted: 'הושלמו',
+    tcStopped: 'נעצרו',
+    errLoad: 'שגיאה בטעינת הסקירה',
+    perSequenceTitle: 'פילוח לפי סדרה',
+    refresh: 'רענון',
+    emptyBody: 'אין עדיין סדרות או אנשי קשר משויכים.',
+    storageTitle: 'אחסון החשבון',
+    storageChatwoot: 'Chatwoot (קבצי שיחות): ',
+    storageDrip: 'מדיה שהועלתה לרצפים: ',
+    filesCount: '({count} קבצים)',
+    deliveryTitle: 'פעילות שליחה — היום',
+    retryWaiting: 'ממתינים לניסיון חוזר',
+    mSent: 'נשלחו',
+    mDelivered: 'נמסרו',
+    mRead: 'נקראו',
+    mBlocked: 'נחסמו',
+    reasonCap: 'תקרת שיווק',
+    reasonInvalid: 'מספר לא תקין',
+    reasonOptout: 'ביטלו הסכמה',
+    reasonOther: 'אחר',
+    blockReasons: 'סיבות חסימה:',
+    blockedMessages: 'הודעות שנחסמו:',
+    trend7: 'מגמת 7 ימים',
+    steps: 'שלבים',
+    active: 'פעיל',
+    off: 'כבוי',
+    enrolled: 'משויכים',
+    activeCount: 'פעילים',
+    stuckCount: 'נתקעו',
+    completedCount: 'הושלמו',
+    stoppedCount: 'נעצרו',
+    completionRate: 'שיעור השלמה',
+  },
+  en: {
+    tcTotal: 'Total enrolled',
+    tcActive: 'Active',
+    tcFailed: 'Stuck',
+    tcCompleted: 'Completed',
+    tcStopped: 'Stopped',
+    errLoad: 'Failed to load overview',
+    perSequenceTitle: 'Breakdown by sequence',
+    refresh: 'Refresh',
+    emptyBody: 'No sequences or enrolled contacts yet.',
+    storageTitle: 'Account storage',
+    storageChatwoot: 'Chatwoot (conversation files): ',
+    storageDrip: 'Media uploaded to sequences: ',
+    filesCount: '({count} files)',
+    deliveryTitle: 'Sending activity — today',
+    retryWaiting: 'waiting for retry',
+    mSent: 'Sent',
+    mDelivered: 'Delivered',
+    mRead: 'Read',
+    mBlocked: 'Blocked',
+    reasonCap: 'Marketing cap',
+    reasonInvalid: 'Invalid number',
+    reasonOptout: 'Opted out',
+    reasonOther: 'Other',
+    blockReasons: 'Block reasons:',
+    blockedMessages: 'Blocked messages:',
+    trend7: '7-day trend',
+    steps: 'steps',
+    active: 'Active',
+    off: 'Off',
+    enrolled: 'enrolled',
+    activeCount: 'active',
+    stuckCount: 'stuck',
+    completedCount: 'completed',
+    stoppedCount: 'stopped',
+    completionRate: 'Completion rate',
+  },
+};
 
 /*
  * OverviewView — תמונת-על: סה"כ + פילוח מלא לפי סדרה.
@@ -13,14 +93,15 @@ import { formatBytes } from '../lib/waMedia.js';
  */
 
 const TOTAL_CARDS = [
-  { key: 'total', label: 'סה״כ משויכים', text: 'text-n-blue-11' },
-  { key: 'active', label: 'פעילים', text: 'text-n-teal-11' },
-  { key: 'failed', label: 'נתקעו', text: 'text-n-ruby-11' },
-  { key: 'completed', label: 'הושלמו', text: 'text-n-blue-11' },
-  { key: 'stopped', label: 'נעצרו', text: 'text-n-slate-12' },
+  { key: 'total', label: 'tcTotal', text: 'text-n-blue-11' },
+  { key: 'active', label: 'tcActive', text: 'text-n-teal-11' },
+  { key: 'failed', label: 'tcFailed', text: 'text-n-ruby-11' },
+  { key: 'completed', label: 'tcCompleted', text: 'text-n-blue-11' },
+  { key: 'stopped', label: 'tcStopped', text: 'text-n-slate-12' },
 ];
 
 export default function OverviewView({ accountId }) {
+  const t = useT(M);
   const [enrollments, setEnrollments] = useState([]);
   const [sequences, setSequences] = useState([]);
   const [storage, setStorage] = useState(null);
@@ -44,7 +125,7 @@ export default function OverviewView({ accountId }) {
         setStorage(st);
         setStats(ds);
       })
-      .catch((e) => setError(e.message || 'שגיאה בטעינת הסקירה'))
+      .catch((e) => setError(e.message || translate(M, 'errLoad')))
       .finally(() => setLoading(false));
   }, [accountId]);
 
@@ -91,7 +172,7 @@ export default function OverviewView({ accountId }) {
         {TOTAL_CARDS.map((c) => (
           <div key={c.key} className="flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak">
             <span className={`text-2xl font-semibold leading-none ${c.text}`}>{totals[c.key]}</span>
-            <span className="mt-1 text-xs text-n-slate-11">{c.label}</span>
+            <span className="mt-1 text-xs text-n-slate-11">{t(c.label)}</span>
           </div>
         ))}
       </div>
@@ -105,10 +186,10 @@ export default function OverviewView({ accountId }) {
       <div className="mb-3 flex items-center justify-between">
         <h2 className="flex items-center gap-1.5 text-sm font-medium text-n-slate-12">
           <BarChart3 size={15} className="text-n-blue-11" aria-hidden="true" />
-          פילוח לפי סדרה
+          {t('perSequenceTitle')}
         </h2>
         <Button variant="ghost" color="slate" size="sm" icon={RefreshCw} onClick={load}>
-          רענון
+          {t('refresh')}
         </Button>
       </div>
 
@@ -117,7 +198,7 @@ export default function OverviewView({ accountId }) {
           <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-n-brand/10 text-n-blue-11">
             <Layers size={24} aria-hidden="true" />
           </span>
-          <p className="text-sm text-n-slate-11">אין עדיין סדרות או אנשי קשר משויכים.</p>
+          <p className="text-sm text-n-slate-11">{t('emptyBody')}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -131,6 +212,7 @@ export default function OverviewView({ accountId }) {
 }
 
 function StorageCard({ storage }) {
+  const t = useT(M);
   const total = Number(storage.total_bytes) || 0;
   const cw = Number(storage.chatwoot_bytes) || 0;
   const drip = Number(storage.drip_bytes) || 0;
@@ -140,17 +222,17 @@ function StorageCard({ storage }) {
       <div className="flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-1.5 text-sm font-medium text-n-slate-12">
           <HardDrive size={15} className="text-n-blue-11" aria-hidden="true" />
-          אחסון החשבון
+          {t('storageTitle')}
         </h2>
         <span className="text-xl font-semibold text-n-slate-12">{formatBytes(total)}</span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-n-slate-11">
         <span className="inline-flex items-center gap-1.5">
-          <Dot c="bg-n-blue-9" />Chatwoot (קבצי שיחות): <span className="font-medium text-n-slate-12">{formatBytes(cw)}</span>
+          <Dot c="bg-n-blue-9" />{t('storageChatwoot')}<span className="font-medium text-n-slate-12">{formatBytes(cw)}</span>
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <Dot c="bg-n-teal-9" />מדיה שהועלתה לרצפים: <span className="font-medium text-n-slate-12">{formatBytes(drip)}</span>
-          <span className="text-n-slate-10">({count} קבצים)</span>
+          <Dot c="bg-n-teal-9" />{t('storageDrip')}<span className="font-medium text-n-slate-12">{formatBytes(drip)}</span>
+          <span className="text-n-slate-10">{t('filesCount', { count })}</span>
         </span>
       </div>
     </div>
@@ -158,14 +240,15 @@ function StorageCard({ storage }) {
 }
 
 function DeliveryCard({ stats }) {
+  const tr = useT(M);
   const t = stats.today || {};
   const sent = t.sent || 0;
   const pct = (n) => (sent > 0 ? Math.round((n / sent) * 100) : 0);
   const reasons = [
-    { label: 'תקרת שיווק', n: t.block_cap || 0 },
-    { label: 'מספר לא תקין', n: t.block_invalid || 0 },
-    { label: 'ביטלו הסכמה', n: t.block_optout || 0 },
-    { label: 'אחר', n: t.block_other || 0 },
+    { label: tr('reasonCap'), n: t.block_cap || 0 },
+    { label: tr('reasonInvalid'), n: t.block_invalid || 0 },
+    { label: tr('reasonOptout'), n: t.block_optout || 0 },
+    { label: tr('reasonOther'), n: t.block_other || 0 },
   ].filter((r) => r.n > 0);
   const trend = stats.trend || [];
   const maxTrend = Math.max(1, ...trend.map((d) => d.sent || 0));
@@ -175,27 +258,27 @@ function DeliveryCard({ stats }) {
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-1.5 text-sm font-medium text-n-slate-12">
           <Send size={15} className="text-n-blue-11" aria-hidden="true" />
-          פעילות שליחה — היום
+          {tr('deliveryTitle')}
         </h2>
         {stats.retryWaiting > 0 ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-n-alpha-3 px-2 py-0.5 text-xs text-n-slate-11">
             <Clock size={12} aria-hidden="true" />
-            {stats.retryWaiting} ממתינים לניסיון חוזר
+            {stats.retryWaiting} {tr('retryWaiting')}
           </span>
         ) : null}
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <DeliveryMetric label="נשלחו" value={sent} text="text-n-slate-12" />
-        <DeliveryMetric label="נמסרו" value={t.delivered || 0} sub={`${pct(t.delivered || 0)}%`} text="text-n-teal-11" />
-        <DeliveryMetric label="נקראו" value={t.read || 0} sub={`${pct(t.read || 0)}%`} text="text-n-blue-11" />
-        <DeliveryMetric label="נחסמו" value={t.failed || 0} sub={`${pct(t.failed || 0)}%`} text="text-n-ruby-11" />
+        <DeliveryMetric label={tr('mSent')} value={sent} text="text-n-slate-12" />
+        <DeliveryMetric label={tr('mDelivered')} value={t.delivered || 0} sub={`${pct(t.delivered || 0)}%`} text="text-n-teal-11" />
+        <DeliveryMetric label={tr('mRead')} value={t.read || 0} sub={`${pct(t.read || 0)}%`} text="text-n-blue-11" />
+        <DeliveryMetric label={tr('mBlocked')} value={t.failed || 0} sub={`${pct(t.failed || 0)}%`} text="text-n-ruby-11" />
       </div>
 
       {reasons.length > 0 ? (
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
           <span className="inline-flex items-center gap-1 font-medium text-n-ruby-11">
-            <Ban size={12} aria-hidden="true" />סיבות חסימה:
+            <Ban size={12} aria-hidden="true" />{tr('blockReasons')}
           </span>
           {reasons.map((r) => (
             <span key={r.label} className="text-n-slate-11">
@@ -207,7 +290,7 @@ function DeliveryCard({ stats }) {
 
       {stats.byTemplate && stats.byTemplate.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-n-slate-11">
-          <span className="text-n-slate-10">הודעות שנחסמו:</span>
+          <span className="text-n-slate-10">{tr('blockedMessages')}</span>
           {stats.byTemplate.map((x) => (
             <span key={x.template} className="font-mono">
               {x.template} <span className="text-n-ruby-11">({x.failed})</span>
@@ -219,9 +302,9 @@ function DeliveryCard({ stats }) {
       {trend.length > 0 ? (
         <div className="mt-4">
           <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-n-slate-11">
-            <span className="inline-flex items-center gap-1"><TrendingUp size={12} aria-hidden="true" />מגמת 7 ימים</span>
-            <span className="inline-flex items-center gap-1 text-n-slate-10"><Dot c="bg-n-teal-9" />נמסרו</span>
-            <span className="inline-flex items-center gap-1 text-n-slate-10"><Dot c="bg-n-ruby-9" />נחסמו</span>
+            <span className="inline-flex items-center gap-1"><TrendingUp size={12} aria-hidden="true" />{tr('trend7')}</span>
+            <span className="inline-flex items-center gap-1 text-n-slate-10"><Dot c="bg-n-teal-9" />{tr('mDelivered')}</span>
+            <span className="inline-flex items-center gap-1 text-n-slate-10"><Dot c="bg-n-ruby-9" />{tr('mBlocked')}</span>
           </div>
           <div className="flex items-end gap-1.5">
             {trend.map((d) => {
@@ -230,8 +313,8 @@ function DeliveryCard({ stats }) {
               return (
                 <div key={d.day} className="flex flex-1 flex-col items-center gap-1">
                   <div className="flex w-full max-w-[28px] flex-col justify-end" style={{ height: '48px' }}>
-                    <div className="w-full rounded-t bg-n-ruby-9" style={{ height: `${failH}px` }} title={`${d.day}: נחסמו ${d.failed || 0}`} />
-                    <div className="w-full bg-n-teal-9" style={{ height: `${okH}px` }} title={`${d.day}: נמסרו ${d.delivered || 0}`} />
+                    <div className="w-full rounded-t bg-n-ruby-9" style={{ height: `${failH}px` }} title={`${d.day}: ${tr('mBlocked')} ${d.failed || 0}`} />
+                    <div className="w-full bg-n-teal-9" style={{ height: `${okH}px` }} title={`${d.day}: ${tr('mDelivered')} ${d.delivered || 0}`} />
                   </div>
                   <span className="text-[10px] text-n-slate-10">{d.day}</span>
                 </div>
@@ -254,6 +337,7 @@ function DeliveryMetric({ label, value, sub, text }) {
 }
 
 function SequenceCard({ s }) {
+  const t = useT(M);
   return (
     <div className="rounded-xl border border-n-weak bg-n-surface-1 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -262,31 +346,31 @@ function SequenceCard({ s }) {
           <p className="mt-0.5 truncate font-mono text-xs text-n-slate-10">{s.key}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <Badge color="slate">{s.steps} שלבים</Badge>
-          <Badge color={s.enabled ? 'teal' : 'slate'}>{s.enabled ? 'פעיל' : 'כבוי'}</Badge>
+          <Badge color="slate">{s.steps} {t('steps')}</Badge>
+          <Badge color={s.enabled ? 'teal' : 'slate'}>{s.enabled ? t('active') : t('off')}</Badge>
         </div>
       </div>
 
       {/* מספרים */}
       <div className="mt-3 flex items-baseline gap-1.5">
         <span className="text-2xl font-semibold leading-none text-n-slate-12">{s.total}</span>
-        <span className="text-xs text-n-slate-11">משויכים</span>
+        <span className="text-xs text-n-slate-11">{t('enrolled')}</span>
       </div>
 
       {/* פילוח סטטוס */}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-n-slate-11">
-        <span className="inline-flex items-center gap-1"><Dot c="bg-n-teal-9" />{s.active} פעילים</span>
+        <span className="inline-flex items-center gap-1"><Dot c="bg-n-teal-9" />{s.active} {t('activeCount')}</span>
         {s.failed > 0 ? (
-          <span className="inline-flex items-center gap-1 font-medium text-n-ruby-11"><Dot c="bg-n-ruby-9" />{s.failed} נתקעו</span>
+          <span className="inline-flex items-center gap-1 font-medium text-n-ruby-11"><Dot c="bg-n-ruby-9" />{s.failed} {t('stuckCount')}</span>
         ) : null}
-        <span className="inline-flex items-center gap-1"><Dot c="bg-n-blue-9" />{s.completed} הושלמו</span>
-        <span className="inline-flex items-center gap-1"><Dot c="bg-n-slate-8" />{s.stopped} נעצרו</span>
+        <span className="inline-flex items-center gap-1"><Dot c="bg-n-blue-9" />{s.completed} {t('completedCount')}</span>
+        <span className="inline-flex items-center gap-1"><Dot c="bg-n-slate-8" />{s.stopped} {t('stoppedCount')}</span>
       </div>
 
       {/* % השלמה + פס */}
       <div className="mt-3">
         <div className="flex items-center justify-between">
-          <span className="text-xs text-n-slate-11">שיעור השלמה</span>
+          <span className="text-xs text-n-slate-11">{t('completionRate')}</span>
           <span className="text-xs font-medium text-n-slate-12">{s.completionPct}%</span>
         </div>
         <div className="mt-1.5 h-1.5 w-full rounded-full bg-n-alpha-3" aria-hidden="true">

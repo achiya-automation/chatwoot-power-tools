@@ -41,16 +41,120 @@ import {
 } from './api/sequencesApi.js';
 import { makeEmptySequence } from './data/mockSequences.js';
 import { resolveAccountId, isEmbedded, isSideNav } from './config.js';
+import useT, { useLocale } from './useT.js';
+import { dirFor, translate } from './i18n.js';
 
 /*
  * App — ממשק ניהול רצפי drip ב-WhatsApp.
- * RTL (עברית), עיצוב זהה ל-Chatwoot v4 (n-tokens בלבד).
+ * דו-לשוני (he/en), עיצוב זהה ל-Chatwoot v4 (n-tokens בלבד).
  *
  * הנתונים נטענים מ-n8n "Drip — API" (ראה src/api/sequencesApi.js) לפי
  * ה-account שמזוהה מה-Dashboard App context או מ-?account_id ב-URL.
  */
 
+// מילון co-located (he/en) — משותף לרכיבי המשנה בקובץ (ContextBanner / EmptyState).
+const M = {
+  he: {
+    tab_overview: 'סקירה',
+    tab_sequences: 'רצפים',
+    tab_contacts: 'אנשי קשר',
+    appTitle: 'רצפי WhatsApp',
+    subtitle: 'ניהול רצפי הודעות אוטומטיים (drip)',
+    subtitleFull: 'ניהול רצפי הודעות אוטומטיים (drip) ללקוחות',
+    activeSuffix: 'פעילים מתוך {total}',
+    assignByLabel: 'שיוך לפי תווית',
+    newSequence: 'רצף חדש',
+    waitingAccount: 'ממתין לזיהוי החשבון מ-Chatwoot…',
+    searchPlaceholder: 'חיפוש לפי שם או מזהה…',
+    searchAria: 'חיפוש רצפים',
+    ofTotal: 'מתוך {total}',
+    noMatch: 'לא נמצאו רצפים התואמים לחיפוש.',
+    colName: 'שם הרצף',
+    colStatus: 'סטטוס',
+    colSteps: 'שלבים',
+    colStop: 'עצירה בתגובה',
+    colActions: 'פעולות',
+    enrollTitle: 'צירוף לידים חדשים לרצף. כיבוי = לא נכנסים חדשים; מי שכבר ברצף ממשיך.',
+    enrollAria: 'כניסות חדשות לרצף {name}',
+    enrollLabel: 'כניסות',
+    sendTitle: 'שליחת הודעות למי שכבר ברצף. כיבוי = הרצפים הפעילים נעצרים; הפעלה ממשיכה מאותו שלב.',
+    sendAria: 'שליחת הודעות לרצף {name}',
+    sendLabel: 'הודעות',
+    on: 'מופעל',
+    off: 'כבוי',
+    editAria: 'עריכת {name}',
+    duplicateAria: 'שכפול {name}',
+    deleteAria: 'מחיקת {name}',
+    deleteTitle: 'מחיקת רצף',
+    cancel: 'ביטול',
+    delete: 'מחיקה',
+    deleteConfirmPrefix: 'למחוק את הרצף',
+    deleteConfirmSuffix: '? פעולה זו אינה ניתנת לשחזור.',
+    conversation: 'שיחה',
+    contact: 'איש קשר',
+    agentLabel: 'סוכן:',
+    emptyTitle: 'אין רצפים עדיין',
+    emptyBody:
+      'רצף שולח סדרת הודעות וואטסאפ אוטומטית לאורך זמן. למשל: "תודה" מיד אחרי הצילום, שאלה כעבור יומיים, והפניה להמלצה כעבור שבוע — כל איש קשר שתשייכו מקבל אותן לפי הזמנים שתקבעו.',
+    copySuffix: '(עותק)',
+    errLoad: 'שגיאה בטעינת הרצפים',
+    errStatus: 'עדכון הסטטוס נכשל',
+    errDelete: 'המחיקה נכשלה',
+  },
+  en: {
+    tab_overview: 'Overview',
+    tab_sequences: 'Sequences',
+    tab_contacts: 'Contacts',
+    appTitle: 'WhatsApp Sequences',
+    subtitle: 'Manage automated (drip) message sequences',
+    subtitleFull: 'Manage automated (drip) message sequences for your customers',
+    activeSuffix: 'active of {total}',
+    assignByLabel: 'Assign by label',
+    newSequence: 'New sequence',
+    waitingAccount: 'Waiting for account detection from Chatwoot…',
+    searchPlaceholder: 'Search by name or ID…',
+    searchAria: 'Search sequences',
+    ofTotal: 'of {total}',
+    noMatch: 'No sequences match your search.',
+    colName: 'Sequence name',
+    colStatus: 'Status',
+    colSteps: 'Steps',
+    colStop: 'Stop on reply',
+    colActions: 'Actions',
+    enrollTitle: 'Enroll new leads into the sequence. Off = no new entries; anyone already in the sequence keeps going.',
+    enrollAria: 'New enrollments for {name}',
+    enrollLabel: 'Enrollments',
+    sendTitle: 'Send messages to those already in the sequence. Off = active sequences pause; turning it on resumes from the same step.',
+    sendAria: 'Send messages for {name}',
+    sendLabel: 'Messages',
+    on: 'On',
+    off: 'Off',
+    editAria: 'Edit {name}',
+    duplicateAria: 'Duplicate {name}',
+    deleteAria: 'Delete {name}',
+    deleteTitle: 'Delete sequence',
+    cancel: 'Cancel',
+    delete: 'Delete',
+    deleteConfirmPrefix: 'Delete the sequence',
+    deleteConfirmSuffix: '? This action cannot be undone.',
+    conversation: 'Conversation',
+    contact: 'Contact',
+    agentLabel: 'Agent:',
+    emptyTitle: 'No sequences yet',
+    emptyBody:
+      'A sequence sends a series of WhatsApp messages automatically over time. For example: a "thank you" right after the shoot, a question two days later, and a review request a week later — every contact you enroll receives them on the schedule you set.',
+    copySuffix: '(copy)',
+    errLoad: 'Failed to load sequences',
+    errStatus: 'Failed to update status',
+    errDelete: 'Delete failed',
+  },
+};
+
 export default function App() {
+  const t = useT(M);
+  const locale = useLocale(); // כיוון (rtl/ltr) ריאקטיבי
+  const dir = dirFor(locale);
+
   const [sequences, setSequences] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -110,7 +214,7 @@ export default function App() {
   // ניווט מהסיידבר (?nav=side) — מסתירים את שורת הטאבים הפנימית; הניווט מגיע מ-Chatwoot
   const sideNav = isSideNav();
   // כותרת לפי הטאב הפעיל — בסגנון הכותרות הנייטיביות של Chatwoot (text-base font-medium)
-  const viewTitle = view === 'sequences' ? 'רצפים' : view === 'contacts' ? 'אנשי קשר' : 'סקירה';
+  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : t('tab_overview');
 
   // מצב "שיחה" — האפליקציה רצה כ-Dashboard App בתוך שיחה (סרגל צד צר).
   // אז מציגים תצוגת מצב קומפקטית לקריאה-בלבד של הליד הזה בלבד (בלי ניהול).
@@ -133,7 +237,7 @@ export default function App() {
         const data = await listSequences(acc);
         setSequences(data);
       } catch (e) {
-        setError(e.message || 'שגיאה בטעינת הרצפים');
+        setError(e.message || translate(M, 'errLoad'));
       } finally {
         setLoading(false);
       }
@@ -207,7 +311,7 @@ export default function App() {
     try {
       await saveSequence(apply(seq, value), accountId);
     } catch (e) {
-      setError(e.message || 'עדכון הסטטוס נכשל');
+      setError(e.message || translate(M, 'errStatus'));
       setSequences((prev) => prev.map((s) => (s.id === seq.id ? apply(s, !value) : s)));
     }
   };
@@ -220,7 +324,7 @@ export default function App() {
       ...structuredClone(seq),
       id: null,
       key: `${seq.key}_copy`,
-      name: `${seq.name} (עותק)`,
+      name: `${seq.name} ${translate(M, 'copySuffix')}`,
       enabled: false,
       enrollEnabled: false,
       sendEnabled: false,
@@ -237,7 +341,7 @@ export default function App() {
     try {
       await deleteSequence(target.key, accountId);
     } catch (e) {
-      setError(e.message || 'המחיקה נכשלה');
+      setError(e.message || translate(M, 'errDelete'));
       reload(accountId);
     }
   };
@@ -247,7 +351,7 @@ export default function App() {
   // ── מצב שיחה (סרגל צד צר) — רק כרטיס המצב של הליד, בלי כותרת/טאבים/חיפוש ──
   if (conversationMode) {
     return (
-      <div dir="rtl" className="min-h-screen bg-n-background font-inter text-n-slate-12">
+      <div dir={dir} className="min-h-screen bg-n-background font-inter text-n-slate-12">
         <div className="mx-auto w-full max-w-[360px] p-4">
           <ConversationStatus
             conversationId={conversation.id}
@@ -259,7 +363,7 @@ export default function App() {
   }
 
   return (
-    <div dir="rtl" className="min-h-screen bg-n-background font-inter text-n-slate-12">
+    <div dir={dir} className="min-h-screen bg-n-background font-inter text-n-slate-12">
       <div
         className={`mx-auto max-w-5xl px-4 sm:px-6 ${
           embedded ? 'py-4' : 'py-6 sm:py-8'
@@ -271,10 +375,10 @@ export default function App() {
           <header className="flex items-center h-16 mb-4 -mt-1">
             <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-3">
               <h1 className="text-2xl font-medium text-n-slate-12 mb-0">
-                רצפי WhatsApp
+                {t('appTitle')}
               </h1>
               <p className="text-sm text-n-slate-11">
-                ניהול רצפי הודעות אוטומטיים (drip)
+                {t('subtitle')}
               </p>
             </div>
           </header>
@@ -286,17 +390,17 @@ export default function App() {
               </span>
               <div>
                 <h1 className="text-xl font-semibold text-n-slate-12">
-                  רצפי WhatsApp
+                  {t('appTitle')}
                 </h1>
                 <p className="text-sm text-n-slate-11 mt-0.5">
-                  ניהול רצפי הודעות אוטומטיים (drip) ללקוחות
+                  {t('subtitleFull')}
                   {sequences.length > 0 ? (
                     <>
                       {' · '}
                       <span className="text-n-slate-12 font-medium">
                         {totalActive}
                       </span>{' '}
-                      פעילים מתוך {sequences.length}
+                      {t('activeSuffix', { total: sequences.length })}
                     </>
                   ) : null}
                 </p>
@@ -330,13 +434,13 @@ export default function App() {
           ) : (
             <div className="flex items-center gap-1">
               <TabButton active={view === 'overview'} onClick={() => setView('overview')} icon={BarChart3}>
-                סקירה
+                {t('tab_overview')}
               </TabButton>
               <TabButton active={view === 'sequences'} onClick={() => setView('sequences')} icon={Layers}>
-                רצפים
+                {t('tab_sequences')}
               </TabButton>
               <TabButton active={view === 'contacts'} onClick={() => setView('contacts')} icon={Users}>
-                אנשי קשר
+                {t('tab_contacts')}
               </TabButton>
             </div>
           )}
@@ -349,12 +453,12 @@ export default function App() {
                 icon={Tag}
                 onClick={() => setBulkOpen(true)}
               >
-                שיוך לפי תווית
+                {t('assignByLabel')}
               </Button>
             ) : null}
             {view === 'sequences' && !noAccount ? (
               <Button variant="solid" color="blue" size="sm" icon={Plus} onClick={handleNew}>
-                רצף חדש
+                {t('newSequence')}
               </Button>
             ) : null}
           </div>
@@ -363,7 +467,7 @@ export default function App() {
         {/* תוכן */}
         {noAccount ? (
           <div className="py-16 text-center text-sm text-n-slate-11">
-            ממתין לזיהוי החשבון מ-Chatwoot…
+            {t('waitingAccount')}
           </div>
         ) : view === 'overview' ? (
           <OverviewView accountId={accountId} />
@@ -391,8 +495,8 @@ export default function App() {
                   type="search"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="חיפוש לפי שם או מזהה…"
-                  aria-label="חיפוש רצפים"
+                  placeholder={t('searchPlaceholder')}
+                  aria-label={t('searchAria')}
                   className="ps-9"
                 />
               </div>
@@ -400,23 +504,23 @@ export default function App() {
                 <span className="font-medium text-n-slate-12">
                   {filteredSequences.length}
                 </span>{' '}
-                מתוך {sequences.length}
+                {t('ofTotal', { total: sequences.length })}
               </p>
             </div>
 
             {filteredSequences.length === 0 ? (
               <div className="rounded-xl border border-dashed border-n-strong bg-n-solid-2 py-12 text-center text-sm text-n-slate-11">
-                לא נמצאו רצפים התואמים לחיפוש.
+                {t('noMatch')}
               </div>
             ) : (
               <Table>
                 <THead>
                   <TR className="hover:bg-transparent">
-                    <TH>שם הרצף</TH>
-                    <TH>סטטוס</TH>
-                    <TH>שלבים</TH>
-                    <TH>עצירה בתגובה</TH>
-                    <TH align="end">פעולות</TH>
+                    <TH>{t('colName')}</TH>
+                    <TH>{t('colStatus')}</TH>
+                    <TH>{t('colSteps')}</TH>
+                    <TH>{t('colStop')}</TH>
+                    <TH align="end">{t('colActions')}</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -436,25 +540,25 @@ export default function App() {
                     <div className="flex flex-col gap-1.5">
                       <div
                         className="flex items-center gap-2"
-                        title="צירוף לידים חדשים לרצף. כיבוי = לא נכנסים חדשים; מי שכבר ברצף ממשיך."
+                        title={t('enrollTitle')}
                       >
                         <Switch
                           checked={seq.enrollEnabled}
                           onChange={(v) => handleToggleField(seq, 'enrollEnabled', v)}
-                          aria-label={`כניסות חדשות לרצף ${seq.name}`}
+                          aria-label={t('enrollAria', { name: seq.name })}
                         />
-                        <span className="text-xs text-n-slate-11">כניסות</span>
+                        <span className="text-xs text-n-slate-11">{t('enrollLabel')}</span>
                       </div>
                       <div
                         className="flex items-center gap-2"
-                        title="שליחת הודעות למי שכבר ברצף. כיבוי = הרצפים הפעילים נעצרים; הפעלה ממשיכה מאותו שלב."
+                        title={t('sendTitle')}
                       >
                         <Switch
                           checked={seq.sendEnabled}
                           onChange={(v) => handleToggleField(seq, 'sendEnabled', v)}
-                          aria-label={`שליחת הודעות לרצף ${seq.name}`}
+                          aria-label={t('sendAria', { name: seq.name })}
                         />
-                        <span className="text-xs text-n-slate-11">הודעות</span>
+                        <span className="text-xs text-n-slate-11">{t('sendLabel')}</span>
                       </div>
                     </div>
                   </TD>
@@ -463,9 +567,9 @@ export default function App() {
                   </TD>
                   <TD>
                     {seq.stopOnReply ? (
-                      <Badge color="teal">מופעל</Badge>
+                      <Badge color="teal">{t('on')}</Badge>
                     ) : (
-                      <Badge color="slate">כבוי</Badge>
+                      <Badge color="slate">{t('off')}</Badge>
                     )}
                   </TD>
                   <TD align="end">
@@ -476,7 +580,7 @@ export default function App() {
                         size="sm"
                         iconOnly
                         icon={Pencil}
-                        aria-label={`עריכת ${seq.name}`}
+                        aria-label={t('editAria', { name: seq.name })}
                         onClick={() => handleEdit(seq)}
                       />
                       <Button
@@ -485,7 +589,7 @@ export default function App() {
                         size="sm"
                         iconOnly
                         icon={Copy}
-                        aria-label={`שכפול ${seq.name}`}
+                        aria-label={t('duplicateAria', { name: seq.name })}
                         onClick={() => handleDuplicate(seq)}
                       />
                       <Button
@@ -494,7 +598,7 @@ export default function App() {
                         size="sm"
                         iconOnly
                         icon={Trash2}
-                        aria-label={`מחיקת ${seq.name}`}
+                        aria-label={t('deleteAria', { name: seq.name })}
                         onClick={() => setDeleteTarget(seq)}
                       />
                     </div>
@@ -525,7 +629,7 @@ export default function App() {
       <Modal
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title="מחיקת רצף"
+        title={t('deleteTitle')}
         size="sm"
         footer={
           <>
@@ -534,18 +638,17 @@ export default function App() {
               color="slate"
               onClick={() => setDeleteTarget(null)}
             >
-              ביטול
+              {t('cancel')}
             </Button>
             <Button variant="solid" color="ruby" onClick={confirmDelete}>
-              מחיקה
+              {t('delete')}
             </Button>
           </>
         }
       >
         <p className="text-sm text-n-slate-12">
-          למחוק את הרצף{' '}
-          <span className="font-semibold">{deleteTarget?.name}</span>? פעולה זו
-          אינה ניתנת לשחזור.
+          {t('deleteConfirmPrefix')}{' '}
+          <span className="font-semibold">{deleteTarget?.name}</span>{t('deleteConfirmSuffix')}
         </p>
       </Modal>
 
@@ -580,25 +683,26 @@ function TabButton({ active, onClick, icon: Icon, children }) {
 }
 
 function ContextBanner({ conversation, contact, agent }) {
+  const t = useT(M);
   return (
     <div className="mb-6 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-n-weak bg-n-solid-2 px-4 py-3 shadow-sm">
       <span className="inline-flex items-center gap-1.5 text-sm text-n-slate-11">
         <MessageCircle size={15} className="text-n-blue-11" aria-hidden="true" />
-        שיחה
+        {t('conversation')}
         <span className="font-medium text-n-slate-12">
           {conversation?.id ? `#${conversation.id}` : '—'}
         </span>
       </span>
       <span className="inline-flex items-center gap-1.5 text-sm text-n-slate-11">
         <User size={15} className="text-n-blue-11" aria-hidden="true" />
-        איש קשר
+        {t('contact')}
         <span className="font-medium text-n-slate-12">
           {contact?.name || '—'}
         </span>
       </span>
       {agent?.name ? (
         <span className="text-sm text-n-slate-11">
-          סוכן: <span className="font-medium text-n-slate-12">{agent.name}</span>
+          {t('agentLabel')} <span className="font-medium text-n-slate-12">{agent.name}</span>
         </span>
       ) : null}
     </div>
@@ -606,20 +710,20 @@ function ContextBanner({ conversation, contact, agent }) {
 }
 
 function EmptyState({ onNew }) {
+  const t = useT(M);
   return (
     <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-n-strong bg-n-solid-2 py-16 text-center">
       <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-n-brand/10 text-n-blue-11">
         <Layers size={24} aria-hidden="true" />
       </span>
       <div>
-        <p className="text-base font-medium text-n-slate-12">אין רצפים עדיין</p>
+        <p className="text-base font-medium text-n-slate-12">{t('emptyTitle')}</p>
         <p className="mx-auto mt-1 max-w-sm text-sm text-n-slate-11">
-          רצף שולח סדרת הודעות וואטסאפ אוטומטית לאורך זמן. למשל: "תודה" מיד אחרי הצילום,
-          שאלה כעבור יומיים, והפניה להמלצה כעבור שבוע — כל איש קשר שתשייכו מקבל אותן לפי הזמנים שתקבעו.
+          {t('emptyBody')}
         </p>
       </div>
       <Button variant="solid" color="blue" icon={Plus} onClick={onNew}>
-        רצף חדש
+        {t('newSequence')}
       </Button>
     </div>
   );

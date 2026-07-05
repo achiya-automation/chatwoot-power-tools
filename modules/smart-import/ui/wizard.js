@@ -7,10 +7,87 @@ import { buildFilterPayload, pickMatch } from '../lib/dedup.js';
 import { vendorUrl } from '../lib/basepath.js';
 import { STYLES } from './styles.js';
 
+// ── i18n: Hebrew for RTL (he) users, English for everyone else. Same signal the
+// wizard already uses for layout (pageIsRTL, below): Chatwoot sets #app[dir]=rtl only
+// for Hebrew. he→Hebrew, ltr→English (also the sane fallback for fr/es/…). The bundle
+// loads lazily after the app renders, so #app[dir] exists by the time this runs. ──
+const DRIP_LOCALE = (function () {
+  const a = document.querySelector('#app[dir]');
+  return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
+})();
+const I18N = {
+  he: {
+    // system-field labels (mapping dropdown)
+    ignore: '— התעלם —', fName: 'שם מלא', fFirstName: 'שם פרטי', fLastName: 'שם משפחה',
+    fPhone: 'טלפון', fEmail: 'אימייל', fIdentifier: 'מזהה', fCompany: 'חברה',
+    fCity: 'עיר', fCountry: 'מדינה',
+    // step 1 — upload
+    uploadTitle: 'ייבוא אנשי קשר', uploadDesc: 'גררו קובץ CSV או Excel, או לחצו לבחירה. ',
+    sampleLink: 'הורדת קובץ לדוגמה', sampleFileName: 'דוגמה-אנשי-קשר.csv',
+    dropText: 'בחירת קובץ או גרירה לכאן', csvOrExcel: 'CSV או Excel',
+    replace: 'החלף', remove: 'הסר', emptyFile: 'הקובץ ריק או ללא כותרות',
+    // step 2 — mapping
+    mappingTitle: 'מיפוי עמודות',
+    mappingDesc: 'התאימו כל עמודה לשדה ב-Chatwoot. זיהינו אוטומטית — תקנו במידת הצורך.',
+    colInFile: 'עמודה בקובץ', fieldInChatwoot: 'שדה ב-Chatwoot', example: 'דוגמה',
+    systemFields: 'שדות מערכת', customFields: 'שדות מותאמים',
+    createNewField: 'צור שדה מותאם חדש…', newFieldName: 'שם השדה החדש',
+    confirmTitle: 'אשר', cancel: 'ביטול', change: 'שנה',
+    // customSelect
+    search: 'חיפוש…', noResults: 'אין תוצאות',
+    // step 3 — label
+    labelStepTitle: 'תווית',
+    labelStepDesc: 'תוקצה לכל אנשי הקשר המיובאים (לא תמחק תוויות קיימות)',
+    noLabel: '— ללא תווית —', newLabelPlaceholder: 'או צרו תווית חדשה',
+    selectLabel: 'בחר תווית:', newLabelField: 'תווית חדשה:',
+    // step 4 — preview
+    previewTitle: 'בדיקה לפני ייבוא', checkingDupes: 'בודק כפילויות…',
+    readyToImport: 'מוכן לייבוא:', newWord: 'חדשים', existingWillUpdate: 'קיימים (יעודכנו)',
+    importVerb: 'ייבא', contactsWord: 'אנשי קשר',
+    // step 5 — run / done
+    importing: 'מייבא…', importDone: 'הייבוא הושלם',
+    createdWord: 'נוצרו', updatedWord: 'עודכנו', skippedWord: 'דולגו', failedWord: 'נכשלו',
+    downloadReport: 'הורד דוח CSV', close: 'סגור',
+    // footer
+    back: 'חזרה', continue: 'המשך',
+    // preview table headers
+    thName: 'שם', thPhone: 'טלפון', thEmail: 'אימייל', thCompany: 'חברה',
+  },
+  en: {
+    ignore: '— Ignore —', fName: 'Full name', fFirstName: 'First name', fLastName: 'Last name',
+    fPhone: 'Phone', fEmail: 'Email', fIdentifier: 'Identifier', fCompany: 'Company',
+    fCity: 'City', fCountry: 'Country',
+    uploadTitle: 'Import contacts', uploadDesc: 'Drag a CSV or Excel file here, or click to choose. ',
+    sampleLink: 'Download a sample file', sampleFileName: 'sample-contacts.csv',
+    dropText: 'Choose a file or drag it here', csvOrExcel: 'CSV or Excel',
+    replace: 'Replace', remove: 'Remove', emptyFile: 'The file is empty or has no headers',
+    mappingTitle: 'Map columns',
+    mappingDesc: 'Match each column to a Chatwoot field. We detected these automatically — adjust as needed.',
+    colInFile: 'Column in file', fieldInChatwoot: 'Chatwoot field', example: 'Example',
+    systemFields: 'System fields', customFields: 'Custom fields',
+    createNewField: 'Create a new custom field…', newFieldName: 'New field name',
+    confirmTitle: 'Confirm', cancel: 'Cancel', change: 'Change',
+    search: 'Search…', noResults: 'No results',
+    labelStepTitle: 'Label',
+    labelStepDesc: 'Applied to all imported contacts (existing labels are kept)',
+    noLabel: '— No label —', newLabelPlaceholder: 'Or create a new label',
+    selectLabel: 'Select a label:', newLabelField: 'New label:',
+    previewTitle: 'Review before import', checkingDupes: 'Checking for duplicates…',
+    readyToImport: 'Ready to import:', newWord: 'new', existingWillUpdate: 'existing (will be updated)',
+    importVerb: 'Import', contactsWord: 'contacts',
+    importing: 'Importing…', importDone: 'Import complete',
+    createdWord: 'Created', updatedWord: 'Updated', skippedWord: 'Skipped', failedWord: 'Failed',
+    downloadReport: 'Download CSV report', close: 'Close',
+    back: 'Back', continue: 'Continue',
+    thName: 'Name', thPhone: 'Phone', thEmail: 'Email', thCompany: 'Company',
+  },
+};
+function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
+
 const FIELD_LABELS = {
-  '': '— התעלם —', name: 'שם מלא', first_name: 'שם פרטי', last_name: 'שם משפחה',
-  phone_number: 'טלפון', email: 'אימייל', identifier: 'מזהה', company_name: 'חברה',
-  city: 'עיר', country: 'מדינה',
+  '': t('ignore'), name: t('fName'), first_name: t('fFirstName'), last_name: t('fLastName'),
+  phone_number: t('fPhone'), email: t('fEmail'), identifier: t('fIdentifier'),
+  company_name: t('fCompany'), city: t('fCity'), country: t('fCountry'),
 };
 
 let XLSX_LOADING = null;
@@ -70,13 +147,13 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
     // Description <p> with sample-CSV download link (like the original dialog).
     const desc = el('p', 'mb-0 text-sm text-n-slate-11');
-    desc.append('גררו קובץ CSV או Excel, או לחצו לבחירה. ');
+    desc.append(t('uploadDesc'));
     const sample = el('a', 'text-n-blue-11');
-    sample.textContent = 'הורדת קובץ לדוגמה';
-    sample.setAttribute('download', 'דוגמה-אנשי-קשר.csv');
+    sample.textContent = t('sampleLink');
+    sample.setAttribute('download', t('sampleFileName'));
     sample.setAttribute('href', sampleCsvHref());
     desc.appendChild(sample);
-    modal.appendChild(header('ייבוא אנשי קשר', desc));
+    modal.appendChild(header(t('uploadTitle'), desc));
 
     const input = el('input'); input.type = 'file'; input.accept = '.csv,.xlsx,.xls'; input.style.display = 'none';
     input.addEventListener('change', () => input.files[0] && handleFile(input.files[0], drop, body));
@@ -87,8 +164,8 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     const body = el('div', 'flex flex-col items-center justify-center gap-2');
     body.append(
       icon('upload', 'size-6 text-n-slate-11'),
-      elWithText('span', 'text-sm text-n-slate-12', 'בחירת קובץ או גרירה לכאן'),
-      elWithText('span', 'text-xs text-n-slate-11', 'CSV או Excel'),
+      elWithText('span', 'text-sm text-n-slate-12', t('dropText')),
+      elWithText('span', 'text-xs text-n-slate-11', t('csvOrExcel')),
     );
     drop.appendChild(body);
     drop.addEventListener('click', () => input.click());
@@ -113,13 +190,13 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
     const right = el('div', 'flex items-center gap-2 shrink-0');
     const replaceBtn = btn('ghost');
-    replaceBtn.textContent = 'החלף';
+    replaceBtn.textContent = t('replace');
     replaceBtn.addEventListener('click', (e) => { e.stopPropagation(); stepUpload(); });
     const sep = el('div', 'w-px h-3 bg-n-strong');
     const trashBtn = el('button',
       BTN_BASE + ' text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 cursor-pointer');
     trashBtn.appendChild(icon('trash', 'size-4'));
-    trashBtn.title = 'הסר';
+    trashBtn.title = t('remove');
     trashBtn.addEventListener('click', (e) => { e.stopPropagation(); stepUpload(); });
     right.append(replaceBtn, sep, trashBtn);
 
@@ -130,7 +207,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     if (drop && body) showPickedFile(file, body); // reflect the pick immediately
     try {
       const table = await readFileToTable(file, { loadXlsx: () => loadXlsx(assetBase) });
-      if (!table.headers.length) throw new Error('הקובץ ריק או ללא כותרות');
+      if (!table.headers.length) throw new Error(t('emptyFile'));
       state.table = table;
       state.mapping = detectColumns(table.headers, table.rows.slice(0, 20))
         .map((d) => ({ index: d.index, field: d.field }));
@@ -142,14 +219,14 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // customDefs are loaded once; every column dropdown offers system + custom + create-new.
   async function stepMapping() {
     modal.replaceChildren();
-    modal.appendChild(header('מיפוי עמודות', 'התאימו כל עמודה לשדה ב-Chatwoot. זיהינו אוטומטית — תקנו במידת הצורך.'));
+    modal.appendChild(header(t('mappingTitle'), t('mappingDesc')));
 
     let customDefs = [];
     try { customDefs = await api.listCustomAttributes(); } catch { /* ignore */ }
 
     const tbl = el('table', 'w-full text-sm border-collapse');
     const thead = el('tr');
-    ['עמודה בקובץ', 'שדה ב-Chatwoot', 'דוגמה'].forEach((h) => {
+    [t('colInFile'), t('fieldInChatwoot'), t('example')].forEach((h) => {
       const th = el('th', 'text-start font-medium text-n-slate-11 px-3 py-2 cwi-tbl-cell border-n-weak');
       th.textContent = h;
       thead.appendChild(th);
@@ -164,16 +241,16 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       // Build the option list in the same order/grouping the native <select> used:
       // ignore → system fields → existing custom attrs (if any) → create-new.
       const options = [];
-      options.push({ value: '', label: '— התעלם —' });
+      options.push({ value: '', label: t('ignore') });
       SYSTEM_FIELDS.forEach((fld) => {
-        options.push({ value: fld, label: FIELD_LABELS[fld] || fld, group: 'שדות מערכת' });
+        options.push({ value: fld, label: FIELD_LABELS[fld] || fld, group: t('systemFields') });
       });
       if (customDefs.length) {
         customDefs.forEach((d) => {
-          options.push({ value: 'custom:' + d.attribute_key, label: d.attribute_display_name, group: 'שדות מותאמים' });
+          options.push({ value: 'custom:' + d.attribute_key, label: d.attribute_display_name, group: t('customFields') });
         });
       }
-      options.push({ value: '__new__', label: 'צור שדה מותאם חדש…', icon: 'plus' });
+      options.push({ value: '__new__', label: t('createNewField'), icon: 'plus' });
 
       // Initial selection mirrors the old code: only a matching system field
       // pre-selects; custom attrs never pre-select on first render.
@@ -189,7 +266,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       const cs = customSelect({
         options,
         value: initial,
-        placeholder: '— התעלם —',
+        placeholder: t('ignore'),
         onSelect: (v) => {
           if (v === '__new__') {
             showInlineNewField(i, colHeader, tdSel, cs);
@@ -206,7 +283,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       tbl.appendChild(row);
     });
 
-    modal.append(tbl, footer({ onBack: stepUpload, onNext: stepLabel, nextLabel: 'המשך' }));
+    modal.append(tbl, footer({ onBack: stepUpload, onNext: stepLabel, nextLabel: t('continue') }));
   }
 
   // FIX 3: inline editor for creating a new custom field — replaces the select cell
@@ -223,17 +300,17 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     const inp = el('input',
       'h-8 px-3 rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand text-sm w-full border-0 outline-offset-[-1px]');
     inp.value = colHeader;
-    inp.placeholder = 'שם השדה החדש';
+    inp.placeholder = t('newFieldName');
 
     const confirmBtn = el('button',
       BTN_BASE + ' bg-n-brand text-white hover:brightness-110 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer');
     confirmBtn.appendChild(icon('check', 'size-4'));
-    confirmBtn.title = 'אשר';
+    confirmBtn.title = t('confirmTitle');
 
     const cancelBtn = el('button',
       BTN_BASE + ' text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer');
     cancelBtn.appendChild(icon('x', 'size-4'));
-    cancelBtn.title = 'ביטול';
+    cancelBtn.title = t('cancel');
 
     function commit() {
       const name = inp.value.trim() || colHeader;
@@ -245,7 +322,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       const changeBtn = el('button',
         BTN_BASE + ' text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer');
       changeBtn.appendChild(icon('x', 'size-4'));
-      changeBtn.title = 'שנה';
+      changeBtn.title = t('change');
       changeBtn.addEventListener('click', revert);
       done.append(lbl, changeBtn);
       tdSel.replaceChildren(done);
@@ -464,7 +541,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
           'reset-base w-full py-2 text-sm focus:outline-none border-none rounded-t-md bg-n-solid-1 text-n-slate-12 ' +
           (pageIsRTL ? 'pr-10 pl-2 text-right' : 'pl-10 pr-2'));
         searchInput.type = 'search';
-        searchInput.placeholder = 'חיפוש…';
+        searchInput.placeholder = t('search');
         searchWrap.appendChild(searchInput);
         panel.appendChild(searchWrap);
       }
@@ -491,7 +568,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       });
 
       const empty = el('li', 'px-3 py-2 text-sm text-n-slate-11');
-      empty.textContent = 'אין תוצאות';
+      empty.textContent = t('noResults');
       empty.style.display = 'none';
       list.appendChild(empty);
 
@@ -550,35 +627,35 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // ── Step 3 — Label ───────────────────────────────────────────────────────────
   async function stepLabel() {
     modal.replaceChildren();
-    modal.appendChild(header('תווית', 'תוקצה לכל אנשי הקשר המיובאים (לא תמחק תוויות קיימות)'));
+    modal.appendChild(header(t('labelStepTitle'), t('labelStepDesc')));
 
     let labels = [];
     try { labels = await api.listLabels().then((r) => r.payload || r); } catch { /* allow new only */ }
 
     let selValue = ''; // tracks the chosen existing-label value (replaces sel.value)
 
-    const options = [{ value: '', label: '— ללא תווית —' }];
+    const options = [{ value: '', label: t('noLabel') }];
     (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
 
     const newInput = el('input',
       'h-8 w-full px-3 py-2 text-sm rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand border-0 outline-offset-[-1px]');
-    newInput.placeholder = 'או צרו תווית חדשה';
+    newInput.placeholder = t('newLabelPlaceholder');
 
     const cs = customSelect({
       options,
       value: '',
-      placeholder: '— ללא תווית —',
+      placeholder: t('noLabel'),
       size: 'field', // roomier single-select field for the label step
       onSelect: (v) => { selValue = v; if (v) newInput.value = ''; },
     });
 
     modal.append(
-      formRow('בחר תווית:', cs.el),
-      formRow('תווית חדשה:', newInput),
+      formRow(t('selectLabel'), cs.el),
+      formRow(t('newLabelField'), newInput),
       footer({
         onBack: stepMapping,
         onNext: () => { state.labelTitle = newInput.value.trim() || selValue; stepPreview(); },
-        nextLabel: 'המשך',
+        nextLabel: t('continue'),
       }),
     );
   }
@@ -586,10 +663,10 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // ── Step 4 — Preview ─────────────────────────────────────────────────────────
   async function stepPreview() {
     modal.replaceChildren();
-    modal.appendChild(header('בדיקה לפני ייבוא', ''));
+    modal.appendChild(header(t('previewTitle'), ''));
 
     const status = el('div', 'text-sm text-n-slate-11');
-    status.textContent = 'בודק כפילויות…';
+    status.textContent = t('checkingDupes');
     modal.appendChild(status);
 
     await ensureCustomAttributes();
@@ -604,7 +681,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
     // Full dedup — run now so runImport can skip the filter calls
     for (let i = 0; i < N; i++) {
-      status.textContent = `בודק כפילויות… ${i + 1}/${N}`;
+      status.textContent = `${t('checkingDupes')} ${i + 1}/${N}`;
       const c = contacts[i];
       try {
         const fp = buildFilterPayload(c);
@@ -621,11 +698,11 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
     const existing = contacts.filter((c) => c.__match).length;
     const created = N - existing;
-    status.textContent = `מוכן לייבוא: ${N} · ${created} חדשים · ${existing} קיימים (יעודכנו)`;
+    status.textContent = `${t('readyToImport')} ${N} · ${created} ${t('newWord')} · ${existing} ${t('existingWillUpdate')}`;
 
     modal.append(
       previewTable(contacts.slice(0, 10)),
-      footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `ייבא ${N} אנשי קשר` }),
+      footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t('importVerb')} ${N} ${t('contactsWord')}` }),
     );
   }
 
@@ -650,7 +727,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // ── Step 5 — Run + Done ──────────────────────────────────────────────────────
   async function stepRun() {
     modal.replaceChildren();
-    modal.appendChild(header('מייבא…', ''));
+    modal.appendChild(header(t('importing'), ''));
 
     const track = el('div', 'h-2 w-full rounded-full bg-n-alpha-2 overflow-hidden');
     const fill = el('div', 'cwi-prog-fill'); fill.style.width = '0%';
@@ -672,18 +749,18 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
   function stepDone(log) {
     modal.replaceChildren();
-    modal.appendChild(header('הייבוא הושלם', ''));
+    modal.appendChild(header(t('importDone'), ''));
     const s = log.summary();
     const summary = el('div', 'text-sm text-n-slate-12');
-    summary.textContent = `נוצרו ${s.created} · עודכנו ${s.updated} · דולגו ${s.skipped} · נכשלו ${s.failed}`;
+    summary.textContent = `${t('createdWord')} ${s.created} · ${t('updatedWord')} ${s.updated} · ${t('skippedWord')} ${s.skipped} · ${t('failedWord')} ${s.failed}`;
     modal.appendChild(summary);
 
     const dlBtn = btn('primary'); dlBtn.className += ' w-full';
-    dlBtn.textContent = 'הורד דוח CSV';
+    dlBtn.textContent = t('downloadReport');
     dlBtn.addEventListener('click', () => downloadCsv(log.toCsv(), 'import-log.csv'));
 
     const closeBtn = btn('ghost'); closeBtn.className += ' w-full';
-    closeBtn.textContent = 'סגור';
+    closeBtn.textContent = t('close');
     closeBtn.addEventListener('click', close);
 
     const bar = el('div', 'flex items-center justify-between w-full gap-3');
@@ -701,7 +778,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   function previewTable(contacts) {
     const tbl = el('table', 'w-full text-sm border-collapse');
     const thead = el('tr');
-    ['שם', 'טלפון', 'אימייל', 'חברה'].forEach((h) => {
+    [t('thName'), t('thPhone'), t('thEmail'), t('thCompany')].forEach((h) => {
       const th = el('th', 'text-start font-medium text-n-slate-11 px-3 py-2 cwi-tbl-cell border-n-weak');
       th.textContent = h;
       thead.appendChild(th);
@@ -723,13 +800,13 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     // Matches Dialog.vue footer: flex row, each button w-full.
     const bar = el('div', 'flex items-center justify-between w-full gap-3');
     if (onBack) {
-      const b = btn('faded'); b.className += ' w-full'; b.textContent = 'חזרה'; b.onclick = onBack; bar.appendChild(b);
+      const b = btn('faded'); b.className += ' w-full'; b.textContent = t('back'); b.onclick = onBack; bar.appendChild(b);
     }
     if (onCancel) {
-      const b = btn('ghost'); b.className += ' w-full'; b.textContent = 'ביטול'; b.onclick = onCancel; bar.appendChild(b);
+      const b = btn('ghost'); b.className += ' w-full'; b.textContent = t('cancel'); b.onclick = onCancel; bar.appendChild(b);
     }
     if (onNext) {
-      const b = btn('primary'); b.className += ' w-full'; b.textContent = nextLabel || 'המשך'; b.onclick = onNext; bar.appendChild(b);
+      const b = btn('primary'); b.className += ' w-full'; b.textContent = nextLabel || t('continue'); b.onclick = onNext; bar.appendChild(b);
     }
     return bar;
   }
@@ -820,13 +897,18 @@ function processFileName(name) {
   return stem.slice(0, head) + '…' + stem.slice(stem.length - tail) + ext;
 }
 
-// Client-generated sample CSV (Hebrew headers + 2 example rows). BOM-prefixed so
-// Excel opens the Hebrew correctly; URL-encoded for a data: URL.
+// Client-generated sample CSV — headers per locale (both header sets are recognized
+// by columnDetector's bilingual SYNONYMS). BOM-prefixed so Excel opens UTF-8/Hebrew
+// correctly; URL-encoded for a data: URL.
 function sampleCsvHref() {
-  const rows = [
+  const rows = DRIP_LOCALE === 'he' ? [
     'שם פרטי,שם משפחה,טלפון,אימייל,חברה',
     'ישראל,ישראלי,0501234567,israel@example.com,חברה בע"מ',
     'דנה,כהן,0527654321,dana@example.com,סטארטאפ',
+  ] : [
+    'First name,Last name,Phone,Email,Company',
+    'John,Doe,+15551234567,john@example.com,Acme Inc.',
+    'Jane,Smith,+15557654321,jane@example.com,Startup LLC',
   ];
   const BOM = '﻿';
   return 'data:text/csv;charset=utf-8,' + encodeURIComponent(BOM + rows.join('\r\n'));
