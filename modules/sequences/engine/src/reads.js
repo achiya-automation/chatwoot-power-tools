@@ -65,5 +65,22 @@ export function makeDbReads(query) {
       );
       return rows.length > 0;
     },
+
+    // Meta creds (token + phone_number_id) for an account's WhatsApp channel, so the engine
+    // can read the number's messaging_limit_tier from the Graph API — the same channel token
+    // Chatwoot already stores and sends through. Returns null if the account has no WA channel.
+    getWhatsappCreds: async (accountId) => {
+      const rows = await query(
+        `SELECT cw.provider_config->>'api_key'         AS token,
+                cw.provider_config->>'phone_number_id' AS "phoneId"
+           FROM public.inboxes i
+           JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
+          WHERE i.account_id = $1 AND i.channel_type = 'Channel::Whatsapp'
+          ORDER BY i.id
+          LIMIT 1`,
+        [accountId]
+      );
+      return rows[0]?.token && rows[0]?.phoneId ? rows[0] : null;
+    },
   };
 }
