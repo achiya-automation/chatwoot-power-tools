@@ -6,9 +6,14 @@ export function loadConfig(env = process.env) {
     chatwootBaseUrl: env.CHATWOOT_BASE_URL,
     port: Number(env.PORT || 3100),
     reconcileIntervalMs: Number(env.RECONCILE_INTERVAL || 60000),
-    // Safety guardrail: max template sends per account per reconcile cycle, so a large
-    // backlog (bulk import / re-enabled sequence) drains gradually instead of blasting.
+    // Safety guardrail: max template sends per account per reconcile cycle. Now only a
+    // fallback for the unlimited tier — the dynamic tier throttle (meta.getDailyCap) governs
+    // the real per-tick pace for every capped tier. Kept for the unlimited-tier edge case.
     maxSendsPerTick: Number(env.MAX_SENDS_PER_TICK || 30),
+    // Burst-smoothing window: a full messaging tier is spread over this long so a backlog
+    // drains promptly (preserving each step's schedule) without blasting Meta in one tick.
+    // NOT a 24h spread — that would delay steps far past their intended send time.
+    spreadWindowMs: Number(env.SPREAD_WINDOW_MS || 3600000), // 1h
     // Transient per-user marketing-cap (131049/130472) retry policy: re-send the step
     // after deliveryRetryHours×attempt, up to maxDeliveryRetries, then give up.
     maxDeliveryRetries: Number(env.MAX_DELIVERY_RETRIES || 3),
