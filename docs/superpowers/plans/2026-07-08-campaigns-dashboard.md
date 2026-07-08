@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS public.taggings (
   id int PRIMARY KEY, tag_id int, taggable_type text, taggable_id int, context text);
 ```
 
-- [ ] **Step 2: שכפל את אותן טבלאות ל-`deploy/run-tests.sh`**. פתח את הקובץ, מצא את בלוק ה-`CREATE TABLE public.*` (המקביל ל-CI), והוסף את אותן 4 הטבלאות (זהה ל-Step 1). זה מה שמריץ את הבדיקות מקומית.
+- [ ] **Step 2: (סביבה מקומית — אין `deploy/run-tests.sh`)**. הקובץ נמחק (commit legacy). הדפוס בפועל: **כל קובץ בדיקה מקים את טבלאות ה-`public` שלו ב-`beforeEach`** עם `CREATE TABLE IF NOT EXISTS` (ראה `test/reads.test.js`, `test/send_cap.test.js`). לכן `campaigns.test.js` יקים את טבלאותיו בעצמו (Step 4) — אין צורך בקובץ scaffold. ה-controller כבר סיפק `DATABASE_URL_TEST=postgres://localhost:5432/drip_test` (Postgres מקומי עם scaffold מלא). **הרץ בדיקות עם ה-env הזה.**
 
 - [ ] **Step 3: הוסף grants ל-`lib/db.sh`**. בבלוק ה-heredoc `SQL` בתוך `provision_db` (השורה `GRANT SELECT ON public.conversations, public.messages, ...`), הוסף שורה חדשה:
 
@@ -92,9 +92,20 @@ import { runMigrations } from '../src/migrate.js';
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
 
+// ה-beforeEach הזה משותף ל-Tasks 2/3/4/7B — מקים את כל טבלאות ה-public הנדרשות (כמו reads.test.js).
 beforeEach(async () => {
-  await runMigrations(pool);
-  await pool.query('TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations, public.labels, public.tags, public.taggings');
+  await runMigrations(pool); // schema drip
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.campaigns (id int PRIMARY KEY, display_id int, account_id int, inbox_id int, title text, message text, campaign_type int, campaign_status int, audience jsonb DEFAULT '[]'::jsonb, template_params jsonb DEFAULT '{}'::jsonb, scheduled_at timestamp, created_at timestamp);
+    CREATE TABLE IF NOT EXISTS public.messages (id int, conversation_id int, account_id int, message_type int, content text, status int, content_attributes jsonb, created_at timestamp);
+    CREATE TABLE IF NOT EXISTS public.conversations (id int PRIMARY KEY, display_id int, account_id int, contact_id int);
+    CREATE TABLE IF NOT EXISTS public.contacts (id int PRIMARY KEY, account_id int, name text, phone_number text, email text);
+    CREATE TABLE IF NOT EXISTS public.inboxes (id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int);
+    CREATE TABLE IF NOT EXISTS public.labels (id int PRIMARY KEY, account_id int, title text);
+    CREATE TABLE IF NOT EXISTS public.tags (id int PRIMARY KEY, name text);
+    CREATE TABLE IF NOT EXISTS public.taggings (id int PRIMARY KEY, tag_id int, taggable_type text, taggable_id int, context text);
+  `);
+  await pool.query('TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations, public.inboxes, public.labels, public.tags, public.taggings');
 });
 
 test('scaffold: campaigns table is queryable', async () => {
@@ -234,7 +245,7 @@ export async function listCampaigns(query, accountId) {
 }
 ```
 
-> **הערת prod ל-`messages.account_id`:** אם בסכמת Chatwoot בפועל אין `messages.account_id`, החלף את `WHERE account_id = $1` ב-CTE ב-JOIN: `JOIN public.conversations cv ON cv.id = messages.conversation_id WHERE cv.account_id = $1`. **אמת מול `\d messages` על achiya לפני מיזוג** (feedback: אימות מבנה לפני assertion). ה-stand-in של הבדיקות כולל `messages.account_id` (ראה `ci.yml`) — לכן הבדיקה עוברת עם הגרסה הישירה; אם prod שונה, הבדיקה תישאר ירוקה כי ה-stand-in משקף את מה שנבחר.
+> **`messages.account_id` — מאומת מול prod (v4.15.1):** ל-`public.messages` יש `account_id` (אומת מול ה-DB האמיתי של achiya, יחד עם `content_attributes`, `status`, `conversation_id`). לכן `WHERE account_id = $1` ישיר על `messages` תקף — אין צורך ב-JOIN ל-conversations. ה-stand-in ב-`ci.yml` וב-`beforeEach` כולל `account_id` בהתאם.
 
 - [ ] **Step 4: הרץ — ודא הצלחה**.
 Run: `DATABASE_URL_TEST=... node --test test/campaigns.test.js`
