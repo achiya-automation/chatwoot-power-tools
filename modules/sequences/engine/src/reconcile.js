@@ -74,6 +74,36 @@ const MAX_SEND_ATTEMPTS = 3;
 const TRANSIENT_DELIVERY_CODES = new Set(['131049', '130472']);
 
 /**
+ * Pure send-budget calc: how many due steps may go out THIS tick.
+ *
+ * Balances the two goals from the brief:
+ *   1. Never exceed Meta's tier — `tierCap` conversations per rolling 24h (past it → 131049).
+ *   2. Keep each step close to its scheduled time — so this is a burst SMOOTHER, not a 24h
+ *      spreader: `perTick` lets a full tier drain within ~`spreadWindowMs` (default 1h), which
+ *      is prompt enough that normal due volume ships the same tick, yet never blasts Meta in
+ *      one go (which reads as a spam burst → 135000 / quality hit).
+ *
+ * @param {object} a
+ * @param {number} a.tierCap          - Meta 24h tier (Infinity = unlimited)
+ * @param {number} [a.used24h]        - conversations already opened in the last 24h
+ * @param {number} [a.intervalMs]     - reconciler cadence (default 60s)
+ * @param {number} [a.spreadWindowMs] - window to spread a full tier over (default 1h)
+ * @param {number} [a.staticCap]      - per-tick fallback for the unlimited tier (0 = no cap)
+ * @returns {number} max sends this tick (Infinity = no limit)
+ */
+export function sendBudget({ tierCap, used24h = 0, intervalMs = 60000, spreadWindowMs = 3600000, staticCap = 0 }) {
+  if (!Number.isFinite(tierCap)) {
+    return Number(staticCap) > 0 ? Number(staticCap) : Infinity;   // unlimited tier
+  }
+  const tierRemaining = Math.max(0, tierCap - (Number(used24h) || 0));
+  const perTick = Math.max(
+    1,
+    Math.ceil(tierCap * (Number(intervalMs) || 60000) / (Number(spreadWindowMs) || 3600000))
+  );
+  return Math.min(perTick, tierRemaining);
+}
+
+/**
  * Record a failed send (the send tx already rolled back, so the advance never
  * committed). Increment the attempt counter and back off next_send_at by an hour
  * per attempt; after MAX_SEND_ATTEMPTS, flag the enrollment 'failed'. Runs on the
@@ -237,10 +267,45 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
     [accountId, now]
   )).map((r) => r.id);
 
-  // Per-tick send cap (safety guardrail): never blast a large backlog in one cycle.
-  // 0/undefined = unlimited. The rest stay due and drain on subsequent ticks.
-  const cap = Number(opts.maxSendsPerTick) || 0;
-  const toSend = cap > 0 ? dueIds.slice(0, cap) : dueIds;
+  // ── Send EXACTLY up to Meta's tier, favouring each step's original schedule ──────────
+  // dueIds is already ORDER BY next_send_at — the MOST overdue steps first — so when we can't
+  // send everything this tick, the ones sent are the ones closest to (or past) their intended
+  // time. Throttling therefore preserves the sequence's original timing as much as possible;
+  // it is a safety net, NOT an even-24h spreader (which would delay steps far from schedule).
+  //
+  // Two caps apply, whichever is tighter:
+  //   • tierRemaining — Meta's 24h conversation tier (opts.tierCap, from meta.getDailyCap)
+  //     minus the conversations we've already opened in the last rolling 24h. HARD limit:
+  //     past it Meta returns 131049. Infinity = unlimited tier (no cap).
+  //   • perTickCap — burst smoothing: spread a full tier over ~1h (opts.spreadWindowMs) so a
+  //     large backlog can't blast in a single tick (which reads as a spam burst → 135000 /
+  //     quality hit). Small enough to be safe, large enough that normal due volume goes out
+  //     promptly (when few steps are due, all of them send this tick → timing preserved).
+  // Count DISTINCT conversations opened in the last 24h that were NOT blocked — a 131049 never
+  // opened a conversation, so it must not count against the tier (drip-initiated sends only;
+  // ponytail: manual Chatwoot campaigns on the same number aren't counted — add them if that
+  // ever becomes a real mixed-use case). Only needed for a finite tier.
+  let used24h = 0;
+  if (Number.isFinite(opts.tierCap)) {
+    used24h = Number((await q(
+      `SELECT count(DISTINCT sm.conversation_id)::int AS c
+         FROM drip.sent_messages sm
+         LEFT JOIN public.messages m ON m.id = sm.message_id
+        WHERE sm.account_id = $1
+          AND sm.sent_at > $2::timestamptz - interval '24 hours'
+          AND (m.status IS NULL OR m.status <> 3)`,
+      [accountId, now]
+    ))[0].c);
+  }
+
+  const budget = sendBudget({
+    tierCap:        opts.tierCap,
+    used24h,
+    intervalMs:     opts.intervalMs,
+    spreadWindowMs: opts.spreadWindowMs,
+    staticCap:      opts.maxSendsPerTick,
+  });
+  const toSend = Number.isFinite(budget) ? dueIds.slice(0, budget) : dueIds;
 
   for (const enrollmentId of toSend) {
     try {
