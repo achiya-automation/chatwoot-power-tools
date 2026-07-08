@@ -3,6 +3,7 @@ import { createApp } from './api.js';
 import { getPool, query } from './db.js';
 import { runMigrations } from './migrate.js';
 import { reconcileAccount } from './reconcile.js';
+import { getDailyCap } from './meta.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
@@ -76,9 +77,15 @@ async function tick() {
       reads,
     });
     try {
+      // Read Meta's live messaging tier for this account (cached ~6h) so the reconciler sends
+      // exactly up to what Meta allows — and follows the tier up automatically as it grows.
+      const tierCap = await getDailyCap(reads, a.account_id, now);
       // Attribute definitions are provisioned once at onboarding (the AgentBot token can't
       // manage them), so the per-tick ensureAttributes call is gone — reconcile only.
       await reconcileAccount(pool, client, a.account_id, now, windows, {
+        tierCap,
+        intervalMs: config.reconcileIntervalMs,
+        spreadWindowMs: config.spreadWindowMs,
         maxSendsPerTick: config.maxSendsPerTick,
         maxDeliveryRetries: config.maxDeliveryRetries,
         deliveryRetryHours: config.deliveryRetryHours,
