@@ -1,7 +1,7 @@
 // sequences-nav — injected as part of DASHBOARD_SCRIPTS (Chatwoot's InstallationConfig hook,
 // loaded last in <body> on every dashboard page except login). Adds "WhatsApp Sequences" as a
-// top-level nav group in the sidebar (after "Campaigns"), with 3 sub-items (overview /
-// sequences / contacts) — exactly like Chatwoot's built-in features. Clicking a sub-item shows
+// top-level nav group in the sidebar (after "Campaigns"), with 4 sub-items (overview /
+// sequences / contacts / campaigns) — exactly like Chatwoot's built-in features. Clicking a sub-item shows
 // the sequences dashboard inline (filling <main>) and swaps tabs smoothly (postMessage). State
 // persists in sessionStorage + the URL so a refresh stays on the same tab. Instance-wide.
 // DOM-dependent (sidebar components-next) — fails silently if the structure changes.
@@ -34,11 +34,11 @@
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
   }
   var NAV_I18N = {
-    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר' },
-    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts' },
+    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר', campaigns: 'קמפיינים' },
+    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts', campaigns: 'Campaigns' },
   };
   function navLabels() { return NAV_I18N[dripLocale()] || NAV_I18N.en; }
-  var TAB_KEYS = ['overview', 'sequences', 'contacts'];
+  var TAB_KEYS = ['overview', 'sequences', 'contacts', 'campaigns'];
   // exact classes lifted from Chatwoot's own DOM (components-next sidebar)
   var UL_CLASS = 'grid m-0 list-none sidebar-group-children min-w-0';
   var LI_CLASS = 'py-0.5 ltr:pl-2 rtl:pr-2 rtl:mr-3 ltr:ml-3 relative text-n-slate-11 child-item before:bg-n-slate-4 after:bg-transparent after:border-n-slate-4 before:left-0 rtl:before:right-0 min-w-0';
@@ -76,7 +76,7 @@
   function dripFromUrl() {
     try {
       var t = new URL(location.href).searchParams.get('drip');
-      return (t === 'overview' || t === 'sequences' || t === 'contacts') ? t : null;
+      return (t === 'overview' || t === 'sequences' || t === 'contacts' || t === 'campaigns') ? t : null;
     } catch (e) { return null; }
   }
   function urlWithDrip(tab) {
@@ -94,7 +94,7 @@
   function dripFromState() {
     try {
       var cur = history.state && history.state.current;
-      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts)\b/);
+      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts|campaigns)\b/);
       return m ? m[1] : null;
     } catch (e) { return null; }
   }
@@ -184,7 +184,7 @@
     expand(!ul || ul.style.display === 'none');
   }
 
-  // nav group with 3 sub-items — header cloned (exact styling), <ul> built from scratch
+  // nav group with 4 sub-items — header cloned (exact styling), <ul> built from scratch
   function inject() {
     if (document.getElementById('drip-nav-item')) return;
     var camp = document.querySelector('div[name="Campaigns"]');
@@ -210,7 +210,7 @@
     var chev = clone.querySelector('span[class*="chevron"]');
     if (chev) { chev.style.display = 'inline-flex'; chev.style.transition = 'transform .15s'; chev.setAttribute('data-drip-chev', ''); }
 
-    // build the <ul> + 3 sub-items from scratch (Chatwoot's exact structure)
+    // build the <ul> + 4 sub-items from scratch (Chatwoot's exact structure)
     var ul = document.createElement('ul');
     ul.className = UL_CLASS;
     ul.setAttribute('data-drip-ul', '');

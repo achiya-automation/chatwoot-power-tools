@@ -136,6 +136,8 @@ GRANT SELECT ON public.conversations, public.messages, public.contacts,
 GRANT SELECT ON public.accounts TO drip_engine;
 -- active_storage_* — read the Chatwoot account's own attachment storage (storage_usage).
 GRANT SELECT ON public.active_storage_attachments, public.active_storage_blobs TO drip_engine;
+-- campaigns dashboard: read campaign definitions + audience labels (contact tags).
+GRANT SELECT ON public.campaigns, public.labels, public.tags, public.taggings TO drip_engine;
 -- WRITE scoped to the ONE column the engine owns (custom_attributes.sequence). Column-level
 -- least-privilege: even a bug in the engine can't rewrite a contact's name/phone/email.
 -- REVOKE clears any prior table-wide UPDATE from an earlier provision (idempotent tightening).
