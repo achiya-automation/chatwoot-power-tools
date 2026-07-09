@@ -206,6 +206,7 @@ export default function App() {
       if (d && typeof d === 'object' && d.type === 'drip-nav'
           && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns')) {
         setView(d.tab);
+        setCampaignId(null); // איפוס צלילת הקמפיין — לא לנחות על תצוגת פרטים ישנה (כמו TabButton הפנימי)
       }
     };
     window.addEventListener('message', onMsg);
