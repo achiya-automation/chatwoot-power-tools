@@ -13,13 +13,13 @@ import { translate } from '../i18n.js';
 const M = {
   he: { back: 'חזרה', audience: 'קהל', sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו',
         funnel: 'משפך מסירה', replied: 'הגיבו', replyRate: 'שיעור תגובה', costTitle: 'עלות משוערת',
-        costNote: 'אומדן לפי תעריפי Meta לישראל — לא כולל חלון חינם/הנחות',
+        costNote: 'אומדן: תעריף Meta לישראל ($ למסר), ללא חלון שירות חינם/הנחות נפח · עודכן',
         recipients: 'נמענים', notSent: 'לא נשלחו', name: 'שם', phone: 'טלפון', status: 'סטטוס', when: 'זמן',
         export: 'ייצוא CSV', errLoad: 'שגיאה בטעינת הקמפיין', notFound: 'הקמפיין לא נמצא',
         s_sent: 'נשלח', s_delivered: 'נמסר', s_read: 'נקרא', s_failed: 'נכשל', s_pending: 'ממתין' },
   en: { back: 'Back', audience: 'Audience', sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed',
         funnel: 'Delivery funnel', replied: 'Replied', replyRate: 'Reply rate', costTitle: 'Estimated cost',
-        costNote: 'Estimate at Meta IL rates — excludes free window / discounts',
+        costNote: 'Estimate: Meta IL rate ($/msg), excl. free service window / volume discounts · updated',
         recipients: 'Recipients', notSent: 'Not sent', name: 'Name', phone: 'Phone', status: 'Status', when: 'Time',
         export: 'Export CSV', errLoad: 'Failed to load campaign', notFound: 'Campaign not found',
         s_sent: 'Sent', s_delivered: 'Delivered', s_read: 'Read', s_failed: 'Failed', s_pending: 'Pending' },
@@ -126,8 +126,8 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         </div>
         <div className="rounded-xl border border-n-weak bg-n-surface-1 p-4">
           <h2 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-n-slate-12"><Coins size={15} className="text-n-blue-11" aria-hidden="true" />{t('costTitle')}</h2>
-          <div className="flex items-baseline gap-1"><span className="text-2xl font-semibold text-n-slate-12">₪{cost.total}</span></div>
-          <p className="mt-1 text-xs text-n-slate-10">{t('costNote')}</p>
+          <div className="flex items-baseline gap-1"><span className="text-2xl font-semibold text-n-slate-12">${cost.total}</span></div>
+          <p className="mt-1 text-xs text-n-slate-10">{t('costNote')} {cost.updated}</p>
         </div>
       </div>
 
