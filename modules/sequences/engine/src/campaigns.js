@@ -48,3 +48,100 @@ export async function listCampaigns(query, accountId) {
   );
   return rows;
 }
+
+// One campaign's full detail. campaignSel = exact jsonb containment (never a substring match).
+export async function getCampaignDetail(query, accountId, campaignId) {
+  const id = parseInt(campaignId, 10);
+  const campaign = (await query(
+    `SELECT c.id, c.title, c.message, c.campaign_type, c.campaign_status, c.audience,
+            c.template_params ->> 'name'     AS template_name,
+            c.template_params ->> 'language' AS language,
+            c.template_params ->> 'category' AS category,
+            to_char(c.created_at, 'YYYY-MM-DD HH24:MI') AS created_at
+       FROM public.campaigns c
+      WHERE c.account_id = $1 AND c.id = $2 LIMIT 1`,
+    [accountId, id]
+  ))[0] || null;
+  if (!campaign) return null;
+
+  // Recipients: one row per campaign message, joined to the contact + failure title.
+  const recipients = await query(
+    `SELECT ct.name AS contact_name,
+            ct.phone_number AS phone,
+            m.status,
+            m.content_attributes::jsonb #>> '{external_error,title}' AS error_title,
+            to_char(m.created_at, 'YYYY-MM-DD HH24:MI') AS sent_at,
+            m.conversation_id
+       FROM public.messages m
+       LEFT JOIN public.conversations cv ON cv.id = m.conversation_id
+       LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
+      WHERE m.account_id = $1
+        AND m.content_attributes::jsonb @> jsonb_build_object('campaign_id', $2::int)
+      ORDER BY m.created_at`,
+    [accountId, id]
+  );
+
+  const funnel = recipients.reduce(
+    (f, r) => {
+      f.sent += 1;
+      if (r.status === 1 || r.status === 2) f.delivered += 1;
+      if (r.status === 2) f.read += 1;
+      if (r.status === 3) f.failed += 1;
+      return f;
+    },
+    { audience: 0, sent: 0, delivered: 0, read: 0, failed: 0 }
+  );
+
+  // Engagement: distinct conversations with an INCOMING message after the campaign send.
+  const replied = Number((await query(
+    `SELECT count(DISTINCT m_in.conversation_id)::int AS c
+       FROM public.messages m_out
+       JOIN public.messages m_in
+         ON m_in.conversation_id = m_out.conversation_id
+        AND m_in.message_type = 0
+        AND m_in.created_at > m_out.created_at
+      WHERE m_out.account_id = $1
+        AND m_out.content_attributes::jsonb @> jsonb_build_object('campaign_id', $2::int)`,
+    [accountId, id]
+  ))[0]?.c || 0);
+  const engagement = { replied, reply_rate: funnel.delivered ? Math.round((replied / funnel.delivered) * 100) : 0 };
+
+  // "Not sent": audience labels → contacts (via acts-as-taggable) minus those who got a message.
+  // Verified against real taggings schema: taggings/tags carry no account_id (shared across the
+  // whole Chatwoot install), so a same-named tag in another account resolves to the SAME tags row —
+  // ct.account_id is re-checked below to stop that from leaking another account's contacts in.
+  // Best-effort: empty on any shape mismatch.
+  let not_sent = [];
+  try {
+    not_sent = await query(
+      `WITH aud AS (
+         SELECT (a ->> 'id')::int AS label_id
+           FROM public.campaigns c, jsonb_array_elements(c.audience) a
+          WHERE c.id = $2 AND a ->> 'type' = 'Label'
+       ), aud_contacts AS (
+         SELECT DISTINCT tg.taggable_id AS contact_id
+           FROM aud
+           JOIN public.labels l  ON l.id = aud.label_id AND l.account_id = $1
+           JOIN public.tags   t  ON lower(t.name) = lower(l.title)
+           JOIN public.taggings tg ON tg.tag_id = t.id
+                AND tg.taggable_type = 'Contact' AND tg.context = 'labels'
+       ), received AS (
+         SELECT DISTINCT cv.contact_id
+           FROM public.messages m
+           JOIN public.conversations cv ON cv.id = m.conversation_id
+          WHERE m.account_id = $1
+            AND m.content_attributes::jsonb @> jsonb_build_object('campaign_id', $2::int)
+       )
+       SELECT ct.name AS contact_name, ct.phone_number AS phone
+         FROM aud_contacts ac
+         JOIN public.contacts ct ON ct.id = ac.contact_id AND ct.account_id = $1
+        WHERE ac.contact_id NOT IN (SELECT contact_id FROM received WHERE contact_id IS NOT NULL)
+        ORDER BY ct.name NULLS LAST
+        LIMIT 500`,
+      [accountId, id]
+    );
+  } catch { not_sent = []; }
+  funnel.audience = funnel.sent + not_sent.length;
+
+  return { campaign, funnel, engagement, recipients, not_sent };
+}

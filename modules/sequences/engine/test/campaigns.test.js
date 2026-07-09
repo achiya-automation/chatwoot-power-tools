@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
 import { runMigrations } from '../src/migrate.js';
-import { listCampaigns } from '../src/campaigns.js';
+import { listCampaigns, getCampaignDetail } from '../src/campaigns.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
@@ -69,4 +69,71 @@ test('listCampaigns: campaign 16 does not swallow campaign 160 (no LIKE bug)', a
   const list = await listCampaigns(query, 1);
   const c16 = list.find((c) => c.id === 16);
   assert.equal(c16.sent, 0); // messages for 160 must NOT count toward 16
+});
+
+// ── getCampaignDetail: funnel + recipients + engagement + not_sent ──
+
+test('getCampaignDetail: funnel + recipients + engagement', async () => {
+  await seedCampaign({ id: 20, title: 'מבצע' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (1,1,'דנה','+972500000001'),(2,1,'רון','+972500000002')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (500,500,1,1),(501,501,1,2)`);
+  await seedCampaignMessage({ id: 1, conv: 500, campaignId: 20, status: 2 }); // דנה קראה
+  await seedCampaignMessage({ id: 2, conv: 501, campaignId: 20, status: 1 }); // רון נמסר
+  // דנה הגיבה (incoming אחרי ה-outgoing)
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, created_at)
+               VALUES (99, 500, 1, 0, 0, now() + interval '1 minute')`);
+
+  const d = await getCampaignDetail(query, 1, 20);
+  assert.equal(d.campaign.title, 'מבצע');
+  assert.equal(d.funnel.sent, 2);
+  assert.equal(d.funnel.delivered, 2); // status 1 + 2
+  assert.equal(d.funnel.read, 1);
+  assert.equal(d.engagement.replied, 1); // דנה
+  assert.equal(d.recipients.length, 2);
+  const dana = d.recipients.find((r) => r.phone === '+972500000001');
+  assert.equal(dana.status, 2);
+  const ron = d.recipients.find((r) => r.phone === '+972500000002');
+  assert.equal(ron.status, 1); // רון לא הגיב — לא נספר ב-engagement
+});
+
+test('getCampaignDetail: unknown campaign returns null', async () => {
+  const d = await getCampaignDetail(query, 1, 999999);
+  assert.equal(d, null);
+});
+
+test('getCampaignDetail: failed message carries error_title + conversation_id', async () => {
+  await seedCampaign({ id: 23, title: 'נכשל' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (3,1,'עומר','+972500000003')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (502,502,1,3)`);
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
+               VALUES (4, 502, 1, 1, 3, $1, now())`,
+    [JSON.stringify({ campaign_id: 23, external_error: { title: 'Recipient opted out' } })]);
+
+  const d = await getCampaignDetail(query, 1, 23);
+  assert.equal(d.funnel.failed, 1);
+  const r = d.recipients[0];
+  assert.equal(r.error_title, 'Recipient opted out');
+  assert.equal(r.conversation_id, 502);
+});
+
+test('getCampaignDetail: not_sent = labeled audience minus recipients; excludes cross-account tag collisions', async () => {
+  await seedCampaign({ id: 21, title: 'תזכורת' });
+  await query(`UPDATE public.campaigns SET audience = $1 WHERE id = 21`, [JSON.stringify([{ id: 5, type: 'Label' }])]);
+  await query(`INSERT INTO public.labels(id, account_id, title) VALUES (5, 1, 'VIP')`);
+  await query(`INSERT INTO public.tags(id, name) VALUES (7, 'VIP')`);
+
+  // שני אנשי קשר של account 1 מתויגים VIP: אחד קיבל הודעה, השני לא.
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (10,1,'שירה','+972500000010'),(11,1,'איתי','+972500000011')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (510,510,1,10)`);
+  await seedCampaignMessage({ id: 10, conv: 510, campaignId: 21, status: 1 }); // שירה קיבלה
+  await query(`INSERT INTO public.taggings(id, tag_id, taggable_type, taggable_id, context) VALUES (100,7,'Contact',10,'labels'),(101,7,'Contact',11,'labels')`);
+
+  // איש קשר של account אחר (2) מתויג באותו שם תג ('VIP' → אותה שורת tags גלובלית) — לא אמור לדלוף ל-not_sent של account 1.
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (12,2,'זר','+972500000012')`);
+  await query(`INSERT INTO public.taggings(id, tag_id, taggable_type, taggable_id, context) VALUES (102,7,'Contact',12,'labels')`);
+
+  const d = await getCampaignDetail(query, 1, 21);
+  assert.equal(d.not_sent.length, 1);
+  assert.equal(d.not_sent[0].phone, '+972500000011'); // איתי — לא קיבל
+  assert.equal(d.funnel.audience, 2); // sent(1) + not_sent(1)
 });
