@@ -48,6 +48,7 @@
 import { query, withTx, getPool } from './db.js';
 import { makeDbReads } from './reads.js';
 import { projectSchedule } from './schedule.js';
+import { listCampaigns, getCampaignDetail, campaignsTrend } from './campaigns.js';
 
 let _config = null;
 
@@ -121,6 +122,12 @@ export async function handleAction(accountId, action, payload) {
       return actionStorageUsage(accId);
     case 'delivery_stats':
       return actionDeliveryStats(accId);
+    case 'campaigns':
+      return { data: await listCampaigns(query, accId) };
+    case 'campaign_detail':
+      return { data: await getCampaignDetail(query, accId, payload?.campaign_id) };
+    case 'campaigns_trend':
+      return { data: await campaignsTrend(query, accId, payload?.days || 14) };
     case 'contacts':
       return actionContacts(accId, payload);
     default:

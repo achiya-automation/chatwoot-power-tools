@@ -19,11 +19,13 @@
     he: { firstName: 'שם פרטי', fullName: 'שם מלא', phone: 'טלפון', email: 'אימייל',
           remove: 'הסר', addField: 'הוסף שדה:',
           lang_he: 'עברית', lang_en: 'אנגלית', lang_ar: 'ערבית',
-          cat_MARKETING: 'שיווקי', cat_UTILITY: 'שירותי', cat_AUTHENTICATION: 'אימות' },
+          cat_MARKETING: 'שיווקי', cat_UTILITY: 'שירותי', cat_AUTHENTICATION: 'אימות',
+          uploadBtn: '📎 העלה קובץ', uploading: 'מעלה…', uploaded: '✓ הועלה', uploadFailed: '✗ נכשל' },
     en: { firstName: 'First name', fullName: 'Full name', phone: 'Phone', email: 'Email',
           remove: 'Remove', addField: 'Add field:',
           lang_he: 'Hebrew', lang_en: 'English', lang_ar: 'Arabic',
-          cat_MARKETING: 'Marketing', cat_UTILITY: 'Utility', cat_AUTHENTICATION: 'Authentication' },
+          cat_MARKETING: 'Marketing', cat_UTILITY: 'Utility', cat_AUTHENTICATION: 'Authentication',
+          uploadBtn: '📎 Upload', uploading: 'Uploading…', uploaded: '✓ Uploaded', uploadFailed: '✗ Failed' },
   };
   function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
 
@@ -36,6 +38,7 @@
       '.drip-chip:hover{background:var(--n-alpha-3,rgba(0,0,0,.1));color:var(--n-slate-12,#1e293b)}',
       '.drip-chip-custom{border-color:var(--n-blue-6,#bfdbfe);color:var(--n-blue-11,#1d4ed8)}',
       '.drip-chip-custom:hover{background:var(--n-blue-3,#dbeafe)}',
+      '.drip-chip:disabled{cursor:default;opacity:.6}',
       // token overlay — shows a friendly label, hides the raw Liquid
       '.drip-token-wrap{position:relative;width:100%;display:block}',
       '.drip-token-wrap.has-token > input{color:transparent!important;caret-color:transparent}',
@@ -50,6 +53,8 @@
       '.drip-tpl-name{font-size:13.5px;font-weight:600;line-height:1.4;flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
       '.drip-tpl-badges{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap}',
       '.drip-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:2px 9px;border-radius:9999px;background:var(--n-alpha-2,rgba(0,0,0,.06));color:var(--n-slate-11,#64748b);white-space:nowrap}',
+      // media upload button (sits below the campaign form's media_url field)
+      '.drip-media-upload{margin:2px 0 10px;display:flex}',
     ].join('');
     (document.head || document.documentElement).appendChild(st);
   })();
@@ -271,12 +276,126 @@
     }
   }
 
+  // ── media upload button: WhatsApp header media (IMAGE/VIDEO/DOCUMENT) already works
+  // end-to-end in Chatwoot — it just wants a public media_url pasted into an <input
+  // type="url"> that WhatsAppTemplateParser.vue renders once a media-header template is
+  // picked. There's no "upload a file" button for it. We add one, reusing the exact same
+  // /drip-api/media endpoint (+ validation) that sequences already use — no new backend.
+  //
+  // Finding the field: Chatwoot's own (untranslated) placeholder already embeds the header
+  // format — "Enter Image URL" (en) / "הזן כתובת URL של Image" (he) — {type} is always the
+  // English word even in the Hebrew string, so we read it back out instead of guessing it
+  // from the preview card (which never shows the format as text anywhere). type="url" is
+  // otherwise unique in this form (title/scheduled-at are text/datetime-local; inbox/
+  // template/audience are comboboxes) — matching on type+placeholder-with-a-known-format-
+  // word keeps this from ever touching an unrelated url field elsewhere in the dashboard.
+  //
+  // Chatwoot keeps the SAME <input> DOM node alive across a template switch (Vue just
+  // updates its placeholder reactively) — so format is re-read fresh at click/upload time,
+  // not captured once at injection time, or a template switch would silently upload against
+  // a stale format. ──
+  var MEDIA_ACCEPT = {
+    IMAGE: 'image/jpeg,image/png',
+    VIDEO: 'video/mp4,video/3gpp',
+    DOCUMENT: '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt',
+  };
+  function mediaFormatFromPlaceholder(inp) {
+    var ph = (inp && inp.placeholder) || '';
+    if (!/url/i.test(ph)) return '';   // require "URL" too (not just the format word) — e.g. a stray
+                                        // "Profile Image" field elsewhere must never match
+    var m = /\b(Image|Video|Document)\b/i.exec(ph);
+    return m ? m[1].toUpperCase() : '';
+  }
+  function accountIdFromPath() {
+    var m = location.pathname.match(/accounts\/(\d+)/);
+    return m ? m[1] : '';
+  }
+
+  function uploadCampaignMedia(file, format, urlInput, btn) {
+    var base = window.__CW_ADDONS_BASE || '/chatwoot-addons';
+    var acc = accountIdFromPath();
+    btn.disabled = true;
+    btn.textContent = t('uploading');
+    fetch(base + '/drip-api/media?account_id=' + encodeURIComponent(acc) +
+          '&format=' + encodeURIComponent(format) + '&locale=' + DRIP_LOCALE, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-filename': encodeURIComponent(file.name || 'file') },
+      body: file,
+    })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.j || res.j.ok === false) throw new Error((res.j && res.j.error) || 'upload failed');
+        setNativeValue(urlInput, res.j.data.url); // Vue picks up the public URL through the normal v-model path
+        btn.textContent = t('uploaded');
+      })
+      .catch(function (e) { btn.textContent = t('uploadFailed'); btn.title = e.message || ''; })
+      .finally(function () { btn.disabled = false; setTimeout(function () { btn.textContent = t('uploadBtn'); }, 2500); });
+  }
+
+  function augmentMediaInput(urlInput) {
+    // Chatwoot's <Input> SFC (components-next/input/Input.vue) always renders a single
+    // wrapping <div> around the native <input> — one parentElement hop is stable across
+    // Tailwind class changes. One more hop reaches the "flex items-center" row that lays
+    // the field out, so the button lands next to it instead of inside its own flex-col
+    // wrapper (which would stack it awkwardly). Falls back to the inner wrapper if
+    // Chatwoot's markup ever nests differently — never throws either way.
+    var inputWrap = urlInput.parentElement;
+    if (!inputWrap) return;
+    var row = inputWrap.parentElement || inputWrap;
+    var mount = row.parentNode;
+    if (!mount) return;
+
+    var holder = document.createElement('div');
+    holder.className = 'drip-media-upload';
+
+    var file = document.createElement('input');
+    file.type = 'file';
+    file.style.display = 'none';
+    file.accept = MEDIA_ACCEPT[urlInput.getAttribute('data-drip-media-format')] || '';
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'drip-chip';
+    btn.textContent = t('uploadBtn');
+    btn.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      var fmt = mediaFormatFromPlaceholder(urlInput) || urlInput.getAttribute('data-drip-media-format') || '';
+      file.accept = MEDIA_ACCEPT[fmt] || '';
+      file.click();
+    });
+    file.addEventListener('change', function () {
+      var f = file.files && file.files[0];
+      file.value = ''; // allow re-picking the same filename on a retry
+      if (!f) return;
+      var fmt = mediaFormatFromPlaceholder(urlInput) || urlInput.getAttribute('data-drip-media-format') || '';
+      uploadCampaignMedia(f, fmt, urlInput, btn);
+    });
+
+    holder.appendChild(btn);
+    holder.appendChild(file);
+    mount.insertBefore(holder, row.nextSibling);
+  }
+
+  function enhanceCampaignMedia() {
+    var inputs = document.querySelectorAll('input[type="url"]');
+    for (var i = 0; i < inputs.length; i++) {
+      var inp = inputs[i];
+      if (inp.getAttribute('data-drip-media')) continue;
+      var format = mediaFormatFromPlaceholder(inp);
+      if (!format) continue; // not the WhatsApp media-header field (or Chatwoot reworded it) — leave any other url input untouched
+      inp.setAttribute('data-drip-media', '1');
+      inp.setAttribute('data-drip-media-format', format);
+      augmentMediaInput(inp);
+    }
+  }
+
   // bootstrap: independent of sequences-nav.js's own bootstrap (each part module can be
   // installed on its own) — when both are installed together, the combined effect is
   // identical to the original single-IIFE version, just via two observers instead of one.
   loadCustomFields();
   var enhanceTimer;
-  new MutationObserver(function () { clearTimeout(enhanceTimer); enhanceTimer = setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); }, 150); })
+  new MutationObserver(function () { clearTimeout(enhanceTimer); enhanceTimer = setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); }, 150); })
     .observe(document.documentElement, { childList: true, subtree: true });
-  setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); }, 500);
+  setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); }, 500);
 })();

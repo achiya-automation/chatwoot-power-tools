@@ -12,6 +12,7 @@ import {
   Search,
   BarChart3,
   Tag,
+  Megaphone,
 } from 'lucide-react';
 import Button from './components/ui/Button.jsx';
 import Switch from './components/ui/Switch.jsx';
@@ -32,6 +33,8 @@ import EnrollmentsView from './components/EnrollmentsView.jsx';
 import OverviewView from './components/OverviewView.jsx';
 import ConversationStatus from './components/ConversationStatus.jsx';
 import BulkEnrollModal from './components/BulkEnrollModal.jsx';
+import CampaignsView from './components/CampaignsView.jsx';
+import CampaignDetailView from './components/CampaignDetailView.jsx';
 import useChatwootContext from './useChatwootContext.js';
 import {
   listSequences,
@@ -58,6 +61,7 @@ const M = {
     tab_overview: 'סקירה',
     tab_sequences: 'רצפים',
     tab_contacts: 'אנשי קשר',
+    tab_campaigns: 'קמפיינים',
     appTitle: 'רצפי WhatsApp',
     subtitle: 'ניהול רצפי הודעות אוטומטיים (drip)',
     subtitleFull: 'ניהול רצפי הודעות אוטומטיים (drip) ללקוחות',
@@ -105,6 +109,7 @@ const M = {
     tab_overview: 'Overview',
     tab_sequences: 'Sequences',
     tab_contacts: 'Contacts',
+    tab_campaigns: 'Campaigns',
     appTitle: 'WhatsApp Sequences',
     subtitle: 'Manage automated (drip) message sequences',
     subtitleFull: 'Manage automated (drip) message sequences for your customers',
@@ -176,7 +181,7 @@ export default function App() {
   // טאב פעיל: סקירה (ברירת מחדל) / רצפים / אנשי קשר.
   // נשמר ב-localStorage כדי שריענון העמוד יישאר באותו טאב; ?tab= גובר (deep-link).
   const [view, setView] = useState(() => {
-    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview';
+    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview' || v === 'campaigns';
     const t = new URLSearchParams(window.location.search).get('tab');
     if (valid(t)) return t;
     try {
@@ -185,6 +190,8 @@ export default function App() {
     } catch { /* ignore */ }
     return 'overview';
   });
+
+  const [campaignId, setCampaignId] = useState(null); // קמפיין נבחר לצלילה (null = רשימה)
 
   // שמירת הטאב הפעיל — כדי שריענון לא יחזיר לסקירה
   useEffect(() => {
@@ -197,8 +204,9 @@ export default function App() {
       if (e.origin !== window.location.origin) return; // same-origin embed בלבד
       const d = e?.data;
       if (d && typeof d === 'object' && d.type === 'drip-nav'
-          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts')) {
+          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns')) {
         setView(d.tab);
+        setCampaignId(null); // איפוס צלילת הקמפיין — לא לנחות על תצוגת פרטים ישנה (כמו TabButton הפנימי)
       }
     };
     window.addEventListener('message', onMsg);
@@ -214,7 +222,7 @@ export default function App() {
   // ניווט מהסיידבר (?nav=side) — מסתירים את שורת הטאבים הפנימית; הניווט מגיע מ-Chatwoot
   const sideNav = isSideNav();
   // כותרת לפי הטאב הפעיל — בסגנון הכותרות הנייטיביות של Chatwoot (text-base font-medium)
-  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : t('tab_overview');
+  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : t('tab_overview');
 
   // מצב "שיחה" — האפליקציה רצה כ-Dashboard App בתוך שיחה (סרגל צד צר).
   // אז מציגים תצוגת מצב קומפקטית לקריאה-בלבד של הליד הזה בלבד (בלי ניהול).
@@ -442,6 +450,9 @@ export default function App() {
               <TabButton active={view === 'contacts'} onClick={() => setView('contacts')} icon={Users}>
                 {t('tab_contacts')}
               </TabButton>
+              <TabButton active={view === 'campaigns'} onClick={() => { setView('campaigns'); setCampaignId(null); }} icon={Megaphone}>
+                {t('tab_campaigns')}
+              </TabButton>
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -471,6 +482,10 @@ export default function App() {
           </div>
         ) : view === 'overview' ? (
           <OverviewView accountId={accountId} />
+        ) : view === 'campaigns' ? (
+          campaignId != null
+            ? <CampaignDetailView campaignId={campaignId} accountId={accountId} onBack={() => setCampaignId(null)} />
+            : <CampaignsView accountId={accountId} onSelect={setCampaignId} />
         ) : view === 'contacts' ? (
           <EnrollmentsView accountId={accountId} />
         ) : loading ? (
