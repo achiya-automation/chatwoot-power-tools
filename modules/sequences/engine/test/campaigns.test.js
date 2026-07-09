@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
 import { runMigrations } from '../src/migrate.js';
-import { listCampaigns, getCampaignDetail } from '../src/campaigns.js';
+import { listCampaigns, getCampaignDetail, campaignsTrend } from '../src/campaigns.js';
 import { handleAction } from '../src/store.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
@@ -154,4 +154,47 @@ test('getCampaignDetail: missing/non-numeric campaign_id → null (no DB error)'
   assert.equal(await getCampaignDetail(query, 1, 'abc'), null);
   assert.equal(await getCampaignDetail(query, 1, undefined), null);
   assert.equal(await getCampaignDetail(query, 1, null), null);
+});
+
+// ── campaignsTrend: daily bucketing (Task 7B) ──
+
+test('campaignsTrend: buckets campaign messages by day', async () => {
+  await seedCampaign({ id: 40 });
+  await seedCampaignMessage({ id: 1, campaignId: 40, status: 1 });
+  await seedCampaignMessage({ id: 2, campaignId: 40, status: 3 });
+  const trend = await campaignsTrend(query, 1, 14);
+  assert.ok(trend.length >= 1);
+  const last = trend[trend.length - 1];
+  assert.equal(last.sent, 2);
+  assert.equal(last.delivered, 1);
+  assert.equal(last.failed, 1);
+});
+
+// Real day-bucketing (not just same-day aggregation): a message from 2 days ago must land
+// in its OWN bucket, distinct from today's, and ordered oldest → newest.
+test('campaignsTrend: separates messages into distinct day buckets, oldest → newest', async () => {
+  await seedCampaign({ id: 41 });
+  await seedCampaignMessage({ id: 3, campaignId: 41, status: 1 }); // today: delivered
+  await query(
+    `INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
+     VALUES (4, 500, 1, 1, 3, $1, now() - interval '2 days')`, // 2 days ago: failed
+    [JSON.stringify({ campaign_id: 41 })]
+  );
+  const trend = await campaignsTrend(query, 1, 14);
+  assert.equal(trend.length, 2); // two distinct day buckets, not merged into one
+  const [older, newer] = trend;
+  assert.equal(older.sent, 1);
+  assert.equal(older.failed, 1);
+  assert.equal(older.delivered, 0);
+  assert.equal(newer.sent, 1);
+  assert.equal(newer.delivered, 1);
+  assert.equal(newer.failed, 0);
+});
+
+test('handleAction: campaigns_trend wiring', async () => {
+  await seedCampaign({ id: 42 });
+  await seedCampaignMessage({ id: 5, campaignId: 42, status: 1 });
+  const res = await handleAction(1, 'campaigns_trend', {});
+  assert.ok(Array.isArray(res.data));
+  assert.equal(res.data[res.data.length - 1].sent, 1);
 });

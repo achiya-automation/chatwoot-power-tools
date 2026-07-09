@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, AlertCircle, Megaphone, BarChart3, Trophy } from 'lucide-react';
+import { RefreshCw, AlertCircle, Megaphone, BarChart3, Trophy, TrendingUp } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
 import Skeleton, { SkeletonRows } from './ui/Skeleton.jsx';
 import { Table, THead, TBody, TR, TH, TD } from './ui/Table.jsx';
-import { listCampaigns } from '../api/sequencesApi.js';
+import { listCampaigns, getCampaignsTrend } from '../api/sequencesApi.js';
 import useT from '../useT.js';
 import { translate } from '../i18n.js';
 
@@ -16,6 +16,7 @@ const M = {
     colSent: 'נשלחו', colDelivered: 'נמסרו', colRead: 'נקראו', colReadRate: 'אחוז קריאה',
     refresh: 'רענון', empty: 'אין עדיין קמפייני WhatsApp.', errLoad: 'שגיאה בטעינת הקמפיינים',
     compareTitle: 'השוואת קמפיינים (לפי אחוז קריאה)',
+    trendTitle: 'מגמת קמפיינים',
     st_active: 'פעיל', st_completed: 'הסתיים', st_processing: 'בעיבוד',
   },
   en: {
@@ -24,6 +25,7 @@ const M = {
     colSent: 'Sent', colDelivered: 'Delivered', colRead: 'Read', colReadRate: 'Read rate',
     refresh: 'Refresh', empty: 'No WhatsApp campaigns yet.', errLoad: 'Failed to load campaigns',
     compareTitle: 'Campaign comparison (by read rate)',
+    trendTitle: 'Campaign trend',
     st_active: 'Active', st_completed: 'Completed', st_processing: 'Processing',
   },
 };
@@ -40,6 +42,7 @@ export default function CampaignsView({ accountId, onSelect }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [trend, setTrend] = useState([]);
 
   const load = useCallback(() => {
     if (accountId == null) return;
@@ -48,6 +51,8 @@ export default function CampaignsView({ accountId, onSelect }) {
       .then(setRows)
       .catch((e) => setError(e.message || translate(M, 'errLoad')))
       .finally(() => setLoading(false));
+    // מקבילי לרשימה — לא חוסם ולא משפיע על מצב הטעינה/שגיאה שלה; נכשל בשקט ל-[].
+    getCampaignsTrend(accountId).then(setTrend).catch(() => setTrend([]));
   }, [accountId]);
   useEffect(() => { load(); }, [load]);
 
@@ -86,6 +91,29 @@ export default function CampaignsView({ accountId, onSelect }) {
           </div>
         ))}
       </div>
+
+      {/* גרף מגמה — נשלחו/נמסרו/נכשלו ליום, דפוס זהה ל-trend bars ב-DeliveryCard (OverviewView) */}
+      {trend.length > 0 ? (
+        <div className="mb-5 rounded-xl border border-n-weak bg-n-surface-1 p-4">
+          <h2 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-n-slate-12"><TrendingUp size={15} className="text-n-blue-11" aria-hidden="true" />{t('trendTitle')}</h2>
+          <div className="flex items-end gap-1.5">
+            {trend.map((dd) => {
+              const maxT = Math.max(1, ...trend.map((x) => x.sent || 0));
+              const okH = Math.round(((dd.delivered || 0) / maxT) * 44);
+              const failH = Math.round(((dd.failed || 0) / maxT) * 44);
+              return (
+                <div key={dd.day} className="flex flex-1 flex-col items-center gap-1">
+                  <div className="flex w-full max-w-[28px] flex-col justify-end" style={{ height: '48px' }}>
+                    <div className="w-full rounded-t bg-n-ruby-9" style={{ height: `${failH}px` }} title={`${dd.day}: ${dd.failed || 0}`} />
+                    <div className="w-full bg-n-teal-9" style={{ height: `${okH}px` }} title={`${dd.day}: ${dd.delivered || 0}`} />
+                  </div>
+                  <span className="text-[10px] text-n-slate-10">{dd.day}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {/* השוואה — bar-list לפי אחוז קריאה */}
       {ranked.length > 0 ? (

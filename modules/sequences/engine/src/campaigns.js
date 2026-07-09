@@ -146,3 +146,21 @@ export async function getCampaignDetail(query, accountId, campaignId) {
 
   return { campaign, funnel, engagement, recipients, not_sent };
 }
+
+// Daily campaign-message trend (last `days`), Asia/Jerusalem, oldest → newest.
+export async function campaignsTrend(query, accountId, days = 14) {
+  const TZ = 'Asia/Jerusalem';
+  return query(
+    `SELECT to_char(m.created_at AT TIME ZONE '${TZ}', 'DD/MM') AS day,
+            count(*)::int AS sent,
+            count(*) FILTER (WHERE m.status IN (1,2))::int AS delivered,
+            count(*) FILTER (WHERE m.status = 3)::int       AS failed
+       FROM public.messages m
+      WHERE m.account_id = $1
+        AND m.content_attributes::jsonb ? 'campaign_id'
+        AND m.created_at >= (now() AT TIME ZONE '${TZ}')::date - ($2::int - 1) * interval '1 day'
+      GROUP BY 1, date_trunc('day', m.created_at AT TIME ZONE '${TZ}')
+      ORDER BY date_trunc('day', m.created_at AT TIME ZONE '${TZ}')`,
+    [accountId, days]
+  );
+}
