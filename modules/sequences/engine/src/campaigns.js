@@ -5,17 +5,27 @@
  * whatsapp_campaign_conversations initializer). We use jsonb containment (@>) — NOT LIKE —
  * so campaign 16 never swallows 160/216. conversations.campaign_id is NULL for WhatsApp.
  *
+ * ⚠️ content_attributes in production is a DOUBLE-ENCODED JSON *string*
+ * (e.g. "{\"campaign_id\":19,\"external_error\":\"131049: ...\"}"), not a jsonb object —
+ * Chatwoot serializes the initializer's Ruby hash to a JSON string. `caObj(col)` normalizes
+ * BOTH the double-encoded string AND a plain object to a real jsonb object via
+ * `(col::jsonb #>> '{}')::jsonb`, so ?/->>/@> behave the same on either shape.
+ * external_error is itself a plain string ("131049: ..."), not an object — read it with ->>.
+ *
  * Status enum: sent:0, delivered:1, read:2, failed:3. "delivered" = status IN (1,2).
  */
 
+// Normalize a content_attributes column to a jsonb OBJECT (handles the double-encoded-string
+// production shape and a plain-object test/other shape identically).
+const caObj = (col) => `(${col}::jsonb #>> '{}')::jsonb`;
+
 // Per-campaign status counts, aggregated in ONE pass over messages carrying a campaign_id.
-// content_attributes may be json OR jsonb depending on the column type; cast to jsonb for `?`/`->>'`.
 const AGG_CTE = `
   WITH msg AS (
-    SELECT (content_attributes::jsonb ->> 'campaign_id')::int AS campaign_id, status
+    SELECT (${caObj('content_attributes')} ->> 'campaign_id')::int AS campaign_id, status
       FROM public.messages
      WHERE account_id = $1
-       AND content_attributes::jsonb ? 'campaign_id'
+       AND ${caObj('content_attributes')} ? 'campaign_id'
   ), agg AS (
     SELECT campaign_id,
            count(*)::int                              AS sent,
@@ -49,7 +59,7 @@ export async function listCampaigns(query, accountId) {
   return rows;
 }
 
-// One campaign's full detail. campaignSel = exact jsonb containment (never a substring match).
+// One campaign's full detail. Exact jsonb containment (never a substring match).
 export async function getCampaignDetail(query, accountId, campaignId) {
   const id = parseInt(campaignId, 10);
   if (Number.isNaN(id)) return null; // missing/non-numeric campaign_id → clean null, not a DB error
@@ -65,19 +75,20 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   ))[0] || null;
   if (!campaign) return null;
 
-  // Recipients: one row per campaign message, joined to the contact + failure title.
+  // Recipients: one row per campaign message, joined to the contact + failure reason.
+  // external_error is a plain string in prod (e.g. "131049: ..."), so read it with ->>.
   const recipients = await query(
     `SELECT ct.name AS contact_name,
             ct.phone_number AS phone,
             m.status,
-            m.content_attributes::jsonb #>> '{external_error,title}' AS error_title,
+            ${caObj('m.content_attributes')} ->> 'external_error' AS error_title,
             to_char(m.created_at, 'YYYY-MM-DD HH24:MI') AS sent_at,
             m.conversation_id
        FROM public.messages m
        LEFT JOIN public.conversations cv ON cv.id = m.conversation_id
        LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
       WHERE m.account_id = $1
-        AND m.content_attributes::jsonb @> jsonb_build_object('campaign_id', $2::int)
+        AND ${caObj('m.content_attributes')} @> jsonb_build_object('campaign_id', $2::int)
       ORDER BY m.created_at`,
     [accountId, id]
   );
@@ -102,7 +113,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
         AND m_in.message_type = 0
         AND m_in.created_at > m_out.created_at
       WHERE m_out.account_id = $1
-        AND m_out.content_attributes::jsonb @> jsonb_build_object('campaign_id', $2::int)`,
+        AND ${caObj('m_out.content_attributes')} @> jsonb_build_object('campaign_id', $2::int)`,
     [accountId, id]
   ))[0]?.c || 0);
   const engagement = { replied, reply_rate: funnel.delivered ? Math.round((replied / funnel.delivered) * 100) : 0 };
@@ -131,7 +142,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
            FROM public.messages m
            JOIN public.conversations cv ON cv.id = m.conversation_id
           WHERE m.account_id = $1
-            AND m.content_attributes::jsonb @> jsonb_build_object('campaign_id', $2::int)
+            AND ${caObj('m.content_attributes')} @> jsonb_build_object('campaign_id', $2::int)
        )
        SELECT ct.name AS contact_name, ct.phone_number AS phone
          FROM aud_contacts ac
@@ -157,7 +168,7 @@ export async function campaignsTrend(query, accountId, days = 14) {
             count(*) FILTER (WHERE m.status = 3)::int       AS failed
        FROM public.messages m
       WHERE m.account_id = $1
-        AND m.content_attributes::jsonb ? 'campaign_id'
+        AND ${caObj('m.content_attributes')} ? 'campaign_id'
         AND m.created_at >= (now() AT TIME ZONE '${TZ}')::date - ($2::int - 1) * interval '1 day'
       GROUP BY 1, date_trunc('day', m.created_at AT TIME ZONE '${TZ}')
       ORDER BY date_trunc('day', m.created_at AT TIME ZONE '${TZ}')`,
