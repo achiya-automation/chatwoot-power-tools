@@ -252,3 +252,16 @@ export async function searchContacts(queryText, accountId) {
   const data = await call('contacts', { query: queryText || '' }, accountId);
   return data || [];
 }
+
+// campaigns — רשימת קמפייני WhatsApp + אגרגציית סטטוס לכל קמפיין (תצוגת סקירה).
+// כל שורה: { id, title, campaign_type, campaign_status, template_name, language, category,
+//            audience, scheduled_at, created_at, sent, delivered, read, failed }.
+export async function listCampaigns(accountId) {
+  const data = await call('campaigns', {}, accountId);
+  return data || [];
+}
+
+// campaign_detail — צלילה לקמפיין בודד: { campaign, funnel, engagement, recipients, not_sent }.
+export async function getCampaignDetail(campaignId, accountId) {
+  return call('campaign_detail', { campaign_id: campaignId }, accountId);
+}
