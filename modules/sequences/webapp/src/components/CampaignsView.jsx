@@ -12,7 +12,7 @@ import { translate } from '../i18n.js';
 const M = {
   he: {
     kTotal: 'קמפיינים', kSent: 'נשלחו', kDelivered: 'נמסרו', kRead: 'נקראו', kFailed: 'נכשלו',
-    colName: 'קמפיין', colStatus: 'סטטוס', colDate: 'תאריך', colAudience: 'קהל',
+    colName: 'קמפיין', colStatus: 'סטטוס', colDate: 'תאריך',
     colSent: 'נשלחו', colDelivered: 'נמסרו', colRead: 'נקראו', colReadRate: 'אחוז קריאה',
     refresh: 'רענון', empty: 'אין עדיין קמפייני WhatsApp.', errLoad: 'שגיאה בטעינת הקמפיינים',
     compareTitle: 'השוואת קמפיינים (לפי אחוז קריאה)',
@@ -21,7 +21,7 @@ const M = {
   },
   en: {
     kTotal: 'Campaigns', kSent: 'Sent', kDelivered: 'Delivered', kRead: 'Read', kFailed: 'Failed',
-    colName: 'Campaign', colStatus: 'Status', colDate: 'Date', colAudience: 'Audience',
+    colName: 'Campaign', colStatus: 'Status', colDate: 'Date',
     colSent: 'Sent', colDelivered: 'Delivered', colRead: 'Read', colReadRate: 'Read rate',
     refresh: 'Refresh', empty: 'No WhatsApp campaigns yet.', errLoad: 'Failed to load campaigns',
     compareTitle: 'Campaign comparison (by read rate)',
@@ -65,7 +65,7 @@ export default function CampaignsView({ accountId, onSelect }) {
     [rows]
   );
 
-  if (loading) return <div className="flex flex-col gap-4"><Skeleton className="h-20 w-full rounded-xl" /><SkeletonRows rows={4} cols={6} /></div>;
+  if (loading) return <div className="flex flex-col gap-4"><Skeleton className="h-20 w-full rounded-xl" /><SkeletonRows rows={4} cols={7} /></div>;
   if (error) return (
     <div className="flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
       <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" /><span>{error}</span>
@@ -79,6 +79,9 @@ export default function CampaignsView({ accountId, onSelect }) {
     { label: t('kRead'), value: `${pct(totals.read, totals.sent)}%`, text: 'text-n-blue-11' },
     { label: t('kFailed'), value: `${pct(totals.failed, totals.sent)}%`, text: 'text-n-ruby-11' },
   ];
+
+  // מחושב פעם אחת לכל הגרף (לא בכל איטרציה של ה-map) — הגובה המקסימלי לנרמול העמודות.
+  const maxT = Math.max(1, ...trend.map((x) => x.sent || 0));
 
   return (
     <>
@@ -98,7 +101,6 @@ export default function CampaignsView({ accountId, onSelect }) {
           <h2 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-n-slate-12"><TrendingUp size={15} className="text-n-blue-11" aria-hidden="true" />{t('trendTitle')}</h2>
           <div className="flex items-end gap-1.5">
             {trend.map((dd) => {
-              const maxT = Math.max(1, ...trend.map((x) => x.sent || 0));
               const okH = Math.round(((dd.delivered || 0) / maxT) * 44);
               const failH = Math.round(((dd.failed || 0) / maxT) * 44);
               return (
@@ -127,7 +129,7 @@ export default function CampaignsView({ accountId, onSelect }) {
               return (
                 <div key={c.id} className="flex items-center gap-3">
                   <span className="w-40 truncate text-xs text-n-slate-11" title={c.title}>{c.title}</span>
-                  <div className="h-2 flex-1 rounded-full bg-n-alpha-3"><div className="h-2 rounded-full bg-n-brand" style={{ width: `${rr}%` }} /></div>
+                  <div className="h-2 flex-1 rounded-full bg-n-alpha-3" aria-hidden="true"><div className="h-2 rounded-full bg-n-brand" style={{ width: `${rr}%` }} /></div>
                   <span className="w-10 text-end text-xs font-medium text-n-slate-12">{rr}%</span>
                 </div>
               );
@@ -157,7 +159,15 @@ export default function CampaignsView({ accountId, onSelect }) {
           </TR></THead>
           <TBody>
             {rows.map((c) => (
-              <TR key={c.id} className="cursor-pointer" onClick={() => onSelect?.(c.id)}>
+              <TR
+                key={c.id}
+                className="cursor-pointer"
+                onClick={() => onSelect?.(c.id)}
+                tabIndex={0}
+                role="button"
+                aria-label={c.title}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(c.id); } }}
+              >
                 <TD><span className="font-medium text-n-slate-12">{c.title}</span>
                   {c.template_name ? <span className="mt-0.5 block font-mono text-xs text-n-slate-10">{c.template_name}</span> : null}</TD>
                 <TD><Badge color={c.campaign_status === 1 ? 'slate' : c.campaign_status === 2 ? 'blue' : 'teal'}>{t(STATUS_LABEL[c.campaign_status] || 'st_active')}</Badge></TD>

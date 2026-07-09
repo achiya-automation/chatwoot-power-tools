@@ -65,10 +65,16 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   const cost = estimateCost({ category: campaign.category, sent: funnel.sent });
 
   // ייצוא CSV צד-לקוח: BOM (פתיחה תקינה בעברית ב-Excel) + ציטוט כל שדה + בריחת גרשיים כפולים.
+  // הגנה מפני הזרקת נוסחאות (CWE-1236): contact_name/phone מגיעים מפרופיל וואטסאפ (לא מהימנים) —
+  // תא שמתחיל ב-=/+/-/@/טאב מתפרש כנוסחה ב-Excel/Sheets, לכן מקדימים גרש בודד לפני הציטוט.
   const exportCsv = () => {
     const head = [t('name'), t('phone'), t('status'), t('when')];
     const body = recipients.map((r) => [r.contact_name || '', r.phone || '', t(STATUS_KEY[r.status] || 's_pending'), r.sent_at || '']);
-    const csv = '﻿' + [head, ...body].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const csv = '﻿' + [head, ...body].map((row) => row.map((c) => {
+      const s = String(c);
+      const safe = /^[=+\-@\t]/.test(s) ? "'" + s : s;
+      return `"${safe.replace(/"/g, '""')}"`;
+    }).join(',')).join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a'); a.href = url; a.download = `campaign-${campaign.id}.csv`; a.click();
     URL.revokeObjectURL(url);
