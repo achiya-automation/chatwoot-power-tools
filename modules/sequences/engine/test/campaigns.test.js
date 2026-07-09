@@ -149,3 +149,9 @@ test('handleAction: campaigns + campaign_detail', async () => {
   const detail = await handleAction(1, 'campaign_detail', { campaign_id: 30 });
   assert.equal(detail.data.campaign.title, 'רשימה');
 });
+
+test('getCampaignDetail: missing/non-numeric campaign_id → null (no DB error)', async () => {
+  assert.equal(await getCampaignDetail(query, 1, 'abc'), null);
+  assert.equal(await getCampaignDetail(query, 1, undefined), null);
+  assert.equal(await getCampaignDetail(query, 1, null), null);
+});

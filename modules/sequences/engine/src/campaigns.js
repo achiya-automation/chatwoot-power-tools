@@ -52,6 +52,7 @@ export async function listCampaigns(query, accountId) {
 // One campaign's full detail. campaignSel = exact jsonb containment (never a substring match).
 export async function getCampaignDetail(query, accountId, campaignId) {
   const id = parseInt(campaignId, 10);
+  if (Number.isNaN(id)) return null; // missing/non-numeric campaign_id → clean null, not a DB error
   const campaign = (await query(
     `SELECT c.id, c.title, c.message, c.campaign_type, c.campaign_status, c.audience,
             c.template_params ->> 'name'     AS template_name,
