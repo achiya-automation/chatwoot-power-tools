@@ -2,6 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
 import { runMigrations } from '../src/migrate.js';
+import { listCampaigns } from '../src/campaigns.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
@@ -29,4 +30,43 @@ test('scaffold: campaigns table is queryable', async () => {
                VALUES (1, 1, 10, 'בדיקה', 1, 1)`);
   const rows = await query(`SELECT title FROM public.campaigns WHERE account_id = $1`, [1]);
   assert.equal(rows[0].title, 'בדיקה');
+});
+
+// ── listCampaigns: per-campaign status aggregation ──
+
+async function seedCampaign({ id, account = 1, inbox = 10, type = 1, status = 1, title = 'קמפיין', tpl = { name: 'welcome', language: 'he', category: 'MARKETING' } }) {
+  await query(`INSERT INTO public.campaigns(id, display_id, account_id, inbox_id, title, campaign_type, campaign_status, template_params, created_at)
+               VALUES ($1,$1,$2,$3,$4,$5,$6,$7, now())`,
+    [id, account, inbox, title, type, status, JSON.stringify(tpl)]);
+  // WhatsApp inbox so the join filters it in
+  await query(`INSERT INTO public.inboxes(id, account_id, name, channel_type, channel_id) VALUES ($1,$2,'WA','Channel::Whatsapp',$1) ON CONFLICT (id) DO NOTHING`, [inbox, account]);
+}
+async function seedCampaignMessage({ id, account = 1, conv = 500, campaignId, status }) {
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
+               VALUES ($1,$2,$3,1,$4,$5, now())`,
+    [id, conv, account, status, JSON.stringify({ campaign_id: campaignId })]);
+}
+
+test('listCampaigns: aggregates status counts per campaign', async () => {
+  await seedCampaign({ id: 16, title: 'השקה' });
+  await seedCampaignMessage({ id: 1, campaignId: 16, status: 1 }); // delivered
+  await seedCampaignMessage({ id: 2, campaignId: 16, status: 2 }); // read
+  await seedCampaignMessage({ id: 3, campaignId: 16, status: 3 }); // failed
+  const list = await listCampaigns(query, 1);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].title, 'השקה');
+  assert.equal(list[0].sent, 3);
+  assert.equal(list[0].delivered, 2); // status 1 + 2
+  assert.equal(list[0].read, 1);
+  assert.equal(list[0].failed, 1);
+  assert.equal(list[0].template_name, 'welcome');
+});
+
+test('listCampaigns: campaign 16 does not swallow campaign 160 (no LIKE bug)', async () => {
+  await seedCampaign({ id: 16, title: 'A' });
+  await seedCampaign({ id: 160, title: 'B' });
+  await seedCampaignMessage({ id: 1, campaignId: 160, status: 1 });
+  const list = await listCampaigns(query, 1);
+  const c16 = list.find((c) => c.id === 16);
+  assert.equal(c16.sent, 0); // messages for 160 must NOT count toward 16
 });
