@@ -45,7 +45,8 @@ async function seedCampaign({ id, account = 1, inbox = 10, type = 1, status = 1,
 async function seedCampaignMessage({ id, account = 1, conv = 500, campaignId, status }) {
   await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
                VALUES ($1,$2,$3,1,$4,$5, now())`,
-    [id, conv, account, status, JSON.stringify({ campaign_id: campaignId })]);
+    // prod stores content_attributes DOUBLE-ENCODED (a JSON string, not an object) — mirror it
+    [id, conv, account, status, JSON.stringify(JSON.stringify({ campaign_id: campaignId }))]);
 }
 
 test('listCampaigns: aggregates status counts per campaign', async () => {
@@ -70,6 +71,16 @@ test('listCampaigns: campaign 16 does not swallow campaign 160 (no LIKE bug)', a
   const list = await listCampaigns(query, 1);
   const c16 = list.find((c) => c.id === 16);
   assert.equal(c16.sent, 0); // messages for 160 must NOT count toward 16
+});
+
+test('listCampaigns: normalizes a plain-object content_attributes too (not only double-encoded)', async () => {
+  await seedCampaign({ id: 50, title: 'obj' });
+  // single-encoded plain jsonb object — caObj must handle this shape as well as the prod string
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
+               VALUES (77, 500, 1, 1, 2, $1, now())`, [JSON.stringify({ campaign_id: 50 })]);
+  const c = (await listCampaigns(query, 1)).find((x) => x.id === 50);
+  assert.equal(c.sent, 1);
+  assert.equal(c.read, 1);
 });
 
 // ── getCampaignDetail: funnel + recipients + engagement + not_sent ──
@@ -108,12 +119,12 @@ test('getCampaignDetail: failed message carries error_title + conversation_id', 
   await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (502,502,1,3)`);
   await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
                VALUES (4, 502, 1, 1, 3, $1, now())`,
-    [JSON.stringify({ campaign_id: 23, external_error: { title: 'Recipient opted out' } })]);
+    [JSON.stringify(JSON.stringify({ campaign_id: 23, external_error: '131049: Recipient opted out' }))]);
 
   const d = await getCampaignDetail(query, 1, 23);
   assert.equal(d.funnel.failed, 1);
   const r = d.recipients[0];
-  assert.equal(r.error_title, 'Recipient opted out');
+  assert.equal(r.error_title, '131049: Recipient opted out');
   assert.equal(r.conversation_id, 502);
 });
 
@@ -178,7 +189,7 @@ test('campaignsTrend: separates messages into distinct day buckets, oldest → n
   await query(
     `INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
      VALUES (4, 500, 1, 1, 3, $1, now() - interval '2 days')`, // 2 days ago: failed
-    [JSON.stringify({ campaign_id: 41 })]
+    [JSON.stringify(JSON.stringify({ campaign_id: 41 }))]
   );
   const trend = await campaignsTrend(query, 1, 14);
   assert.equal(trend.length, 2); // two distinct day buckets, not merged into one
