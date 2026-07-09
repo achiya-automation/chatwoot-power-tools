@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
 import { runMigrations } from '../src/migrate.js';
 import { listCampaigns, getCampaignDetail } from '../src/campaigns.js';
+import { handleAction } from '../src/store.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
@@ -136,4 +137,15 @@ test('getCampaignDetail: not_sent = labeled audience minus recipients; excludes 
   assert.equal(d.not_sent.length, 1);
   assert.equal(d.not_sent[0].phone, '+972500000011'); // איתי — לא קיבל
   assert.equal(d.funnel.audience, 2); // sent(1) + not_sent(1)
+});
+
+// ── handleAction: campaigns + campaign_detail wiring (Task 4) ──
+
+test('handleAction: campaigns + campaign_detail', async () => {
+  await seedCampaign({ id: 30, title: 'רשימה' });
+  await seedCampaignMessage({ id: 1, campaignId: 30, status: 2 });
+  const list = await handleAction(1, 'campaigns', {});
+  assert.equal(list.data[0].title, 'רשימה');
+  const detail = await handleAction(1, 'campaign_detail', { campaign_id: 30 });
+  assert.equal(detail.data.campaign.title, 'רשימה');
 });
