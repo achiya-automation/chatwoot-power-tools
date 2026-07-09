@@ -265,3 +265,9 @@ export async function listCampaigns(accountId) {
 export async function getCampaignDetail(campaignId, accountId) {
   return call('campaign_detail', { campaign_id: campaignId }, accountId);
 }
+
+// campaigns_trend — הודעות קמפיין לפי יום (נשלחו/נמסרו/נכשלו) לגרף המגמה.
+export async function getCampaignsTrend(accountId) {
+  const data = await call('campaigns_trend', {}, accountId);
+  return data || [];
+}
