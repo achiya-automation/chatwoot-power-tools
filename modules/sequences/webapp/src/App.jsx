@@ -236,7 +236,7 @@ export default function App() {
   // ה-overlay (postMessage להורה) במקום לחזור לרשימת הקמפיינים הפנימית (שלא מוצגת במצב הזה).
   const solo = new URLSearchParams(window.location.search).get('solo') === '1';
   const handleCampaignBack = () => {
-    if (solo) { try { window.parent.postMessage({ type: 'drip-close' }, '*'); } catch { /* ignore */ } }
+    if (solo) { try { window.parent.postMessage({ type: 'drip-close' }, window.location.origin); } catch { /* ignore */ } }
     else setCampaignId(null);
   };
   // כותרת לפי הטאב הפעיל — בסגנון הכותרות הנייטיביות של Chatwoot (text-base font-medium)

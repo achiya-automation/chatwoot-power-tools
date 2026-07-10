@@ -19,6 +19,13 @@
 // production shape and a plain-object test/other shape identically).
 const caObj = (col) => `(${col}::jsonb #>> '{}')::jsonb`;
 
+// Chatwoot stores naive timestamps in UTC (Rails convention). For display we convert to the
+// operator's timezone: interpret the naive value as UTC, then shift. A single-step
+// `col AT TIME ZONE tz` would do the OPPOSITE (treat the naive value as local) and shift the
+// wrong way — hence the explicit two-step form.
+const TZ = 'Asia/Jerusalem';
+const localTs = (col) => `((${col}) AT TIME ZONE 'UTC' AT TIME ZONE '${TZ}')`;
+
 // Per-campaign status counts, aggregated in ONE pass over messages carrying a campaign_id.
 const AGG_CTE = `
   WITH msg AS (
@@ -43,8 +50,8 @@ export async function listCampaigns(query, accountId) {
             c.template_params ->> 'language' AS language,
             c.template_params ->> 'category' AS category,
             c.audience,
-            to_char(c.scheduled_at, 'YYYY-MM-DD HH24:MI') AS scheduled_at,
-            to_char(c.created_at,  'YYYY-MM-DD HH24:MI') AS created_at,
+            to_char(${localTs('c.scheduled_at')}, 'YYYY-MM-DD HH24:MI') AS scheduled_at,
+            to_char(${localTs('c.created_at')},  'YYYY-MM-DD HH24:MI') AS created_at,
             coalesce(a.sent, 0)      AS sent,
             coalesce(a.delivered, 0) AS delivered,
             coalesce(a.read, 0)      AS read,
@@ -68,7 +75,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
             c.template_params ->> 'name'     AS template_name,
             c.template_params ->> 'language' AS language,
             c.template_params ->> 'category' AS category,
-            to_char(c.created_at, 'YYYY-MM-DD HH24:MI') AS created_at
+            to_char(${localTs('c.created_at')}, 'YYYY-MM-DD HH24:MI') AS created_at
        FROM public.campaigns c
       WHERE c.account_id = $1 AND c.id = $2 LIMIT 1`,
     [accountId, id]
@@ -82,7 +89,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
             ct.phone_number AS phone,
             m.status,
             ${caObj('m.content_attributes')} ->> 'external_error' AS error_title,
-            to_char(m.created_at, 'YYYY-MM-DD HH24:MI') AS sent_at,
+            to_char(${localTs('m.created_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
             m.conversation_id
        FROM public.messages m
        LEFT JOIN public.conversations cv ON cv.id = m.conversation_id
@@ -129,7 +136,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
       `WITH aud AS (
          SELECT (a ->> 'id')::int AS label_id
            FROM public.campaigns c, jsonb_array_elements(c.audience) a
-          WHERE c.id = $2 AND a ->> 'type' = 'Label'
+          WHERE c.id = $2 AND c.account_id = $1 AND a ->> 'type' = 'Label'
        ), aud_contacts AS (
          SELECT DISTINCT tg.taggable_id AS contact_id
            FROM aud
@@ -159,19 +166,37 @@ export async function getCampaignDetail(query, accountId, campaignId) {
 }
 
 // Daily campaign-message trend (last `days`), Asia/Jerusalem, oldest → newest.
+// Zero-filled: every day in the range gets a row (generate_series), so quiet days show as
+// gaps in the chart instead of silently disappearing from the axis.
 export async function campaignsTrend(query, accountId, days = 14) {
-  const TZ = 'Asia/Jerusalem';
+  days = Math.min(90, Math.max(1, parseInt(days, 10) || 14)); // client-supplied — clamp
   return query(
-    `SELECT to_char(m.created_at AT TIME ZONE '${TZ}', 'DD/MM') AS day,
-            count(*)::int AS sent,
-            count(*) FILTER (WHERE m.status IN (1,2))::int AS delivered,
-            count(*) FILTER (WHERE m.status = 3)::int       AS failed
-       FROM public.messages m
-      WHERE m.account_id = $1
-        AND ${caObj('m.content_attributes')} ? 'campaign_id'
-        AND m.created_at >= (now() AT TIME ZONE '${TZ}')::date - ($2::int - 1) * interval '1 day'
-      GROUP BY 1, date_trunc('day', m.created_at AT TIME ZONE '${TZ}')
-      ORDER BY date_trunc('day', m.created_at AT TIME ZONE '${TZ}')`,
+    `WITH days AS (
+       SELECT d::date AS day
+         FROM generate_series(
+                (now() AT TIME ZONE '${TZ}')::date - ($2::int - 1) * interval '1 day',
+                (now() AT TIME ZONE '${TZ}')::date,
+                interval '1 day') d
+     ), agg AS (
+       SELECT ${localTs('m.created_at')}::date AS day,
+              count(*)::int AS sent,
+              count(*) FILTER (WHERE m.status IN (1,2))::int AS delivered,
+              count(*) FILTER (WHERE m.status = 3)::int       AS failed
+         FROM public.messages m
+        WHERE m.account_id = $1
+          AND ${caObj('m.content_attributes')} ? 'campaign_id'
+          -- naive-UTC range, one day wider than needed (index-friendly; no per-row TZ math in
+          -- the WHERE) — the JOIN against \`days\` drops the spillover bucket.
+          AND m.created_at >= (now() AT TIME ZONE '${TZ}')::date - $2::int * interval '1 day'
+        GROUP BY 1
+     )
+     SELECT to_char(days.day, 'DD/MM') AS day,
+            coalesce(a.sent, 0)      AS sent,
+            coalesce(a.delivered, 0) AS delivered,
+            coalesce(a.failed, 0)    AS failed
+       FROM days
+       LEFT JOIN agg a ON a.day = days.day
+      ORDER BY days.day`,
     [accountId, days]
   );
 }

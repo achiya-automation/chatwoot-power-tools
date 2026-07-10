@@ -44,11 +44,23 @@
     'stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 3v18h18"/>' +
     '<path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>';
 
-  // ── stats: one bulk fetch, cached as { title → row }. Re-fetched when the account changes. ──
-  var statsByTitle = {}, statsAcc = null, fetching = false;
+  // ── stats: one bulk fetch, cached as { title → row } + the full list (KPI aggregation).
+  // Re-fetched when the account changes; failures retry with exponential backoff (a broken
+  // engine must not be hammered every MutationObserver tick — documented Caddy↔Puma 502s). ──
+  var statsByTitle = {}, statsList = [], statsAcc = null, fetching = false;
+  var failCount = 0, retryAt = 0, warnedFetch = false;
+  function onFetchFail() {
+    fetching = false;
+    failCount += 1;
+    retryAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, failCount)); // 4s → 8s → … → 60s cap
+    if (!warnedFetch) {
+      warnedFetch = true;
+      console.warn('[cwpt] campaign stats fetch failing — retrying with backoff (engine down or route broken?)');
+    }
+  }
   function fetchStats() {
     var acc = accountId();
-    if (!acc || fetching) return;
+    if (!acc || fetching || Date.now() < retryAt) return;
     fetching = true;
     fetch(ADDONS_BASE + '/drip-api?account_id=' + encodeURIComponent(acc), {
       method: 'POST',
@@ -58,19 +70,30 @@
     })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
-        // failed / non-2xx response (j === null) → do NOT mark this account as done, so the next
-        // tick retries (this deployment has a documented history of transient Caddy↔Puma 502s).
-        if (!j) { fetching = false; return; }
-        var map = {};
-        // ponytail: last-wins on duplicate titles (two campaigns, same name) — rare; a per-title
-        // scheduled_at tiebreak isn't worth it (the card's date format differs from the API's).
-        (j.data || []).forEach(function (c) { map[(c.title || '').trim()] = c; });
+        if (!j) { onFetchFail(); return; }
+        failCount = 0; retryAt = 0; warnedFetch = false;
+        var map = {}, dup = {};
+        (j.data || []).forEach(function (c) {
+          var k = (c.title || '').trim();
+          if (map[k]) dup[k] = 1;
+          map[k] = c;
+        });
+        // Duplicate titles are ambiguous (the DOM card carries no campaign id) — showing one
+        // campaign's numbers on another's card is worse than showing nothing, so those cards
+        // get NO stats row. The KPI bar aggregates from the full list, so its totals stay right.
+        var dupKeys = Object.keys(dup);
+        dupKeys.forEach(function (k) { delete map[k]; });
+        if (dupKeys.length && !window.__cwptDupWarned) {
+          window.__cwptDupWarned = true;
+          console.warn('[cwpt] duplicate campaign titles — per-card stats hidden for: ' + dupKeys.join(', ') + ' (rename campaigns to distinguish them)');
+        }
+        statsList = j.data || [];
         statsByTitle = map;
         statsAcc = acc;
         fetching = false;
         renderCards();
       })
-      .catch(function () { fetching = false; });
+      .catch(function () { onFetchFail(); });
   }
 
   function metric(value, label, colorClass) {
@@ -142,11 +165,11 @@
   // webapp's KPI row. Idempotent (guarded by id + __sig).
   function renderKpiBar() {
     if (!onPage()) return;
-    var titles = Object.keys(statsByTitle);
-    if (!titles.length) return; // stats not loaded yet
-    var a = { count: titles.length, sent: 0, delivered: 0, read: 0, failed: 0 };
-    titles.forEach(function (k) {
-      var c = statsByTitle[k];
+    if (!statsList.length) return; // stats not loaded yet
+    // aggregate over the FULL list (not the title map — duplicate-titled campaigns are removed
+    // from the map but must still count in the totals)
+    var a = { count: statsList.length, sent: 0, delivered: 0, read: 0, failed: 0 };
+    statsList.forEach(function (c) {
       a.sent += c.sent || 0; a.delivered += c.delivered || 0; a.read += c.read || 0; a.failed += c.failed || 0;
     });
     var main = contentArea();
@@ -188,7 +211,7 @@
     return best || document.querySelector('div.overflow-auto.bg-n-surface-1') || document.body;
   }
 
-  var holder = null, frame = null, shown = false, loaded = false, loadedSolo = null;
+  var holder = null, frame = null, closeBtn = null, shown = false, loaded = false, loadedSolo = null;
   function buildOverlay() {
     holder = document.createElement('div');
     holder.id = 'cwpt-report-overlay';
@@ -206,6 +229,7 @@
     close.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
     close.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); hideReport(); });
     holder.appendChild(close);
+    closeBtn = close;
     document.body.appendChild(holder);
   }
   function positionOverlay() {
@@ -234,13 +258,14 @@
       frame.setAttribute('src', reportSrc(cid));
       loaded = true; loadedSolo = wantSolo;
     } else if (cid) {
-      try { frame.contentWindow.postMessage({ type: 'drip-open-campaign', id: parseInt(cid, 10) }, '*'); } catch (e) {}
+      try { frame.contentWindow.postMessage({ type: 'drip-open-campaign', id: parseInt(cid, 10) }, window.location.origin); } catch (e) {}
     } else {
-      try { frame.contentWindow.postMessage({ type: 'drip-nav', tab: 'campaigns' }, '*'); } catch (e) {}
+      try { frame.contentWindow.postMessage({ type: 'drip-nav', tab: 'campaigns' }, window.location.origin); } catch (e) {}
     }
     shown = true;
     holder.style.display = 'block';
     positionOverlay();
+    try { closeBtn.focus(); } catch (e) {} // keyboard users land on the close control
   }
   function hideReport() {
     if (!shown) return;
@@ -263,28 +288,45 @@
     if (e.origin !== window.location.origin) return; // same-origin embed only
     if (e.data && e.data.type === 'drip-close') hideReport();
   });
+  // Escape closes the overlay (parity with the × button)
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && shown) hideReport();
+  });
   window.addEventListener('resize', positionOverlay);
 
   // live theme/locale sync to the iframe (parity with sequences-nav)
   new MutationObserver(function () {
     if (shown && frame && frame.contentWindow) {
-      try { frame.contentWindow.postMessage({ type: 'drip-theme', theme: isDark() ? 'dark' : 'light' }, '*'); } catch (e) {}
+      try { frame.contentWindow.postMessage({ type: 'drip-theme', theme: isDark() ? 'dark' : 'light' }, window.location.origin); } catch (e) {}
     }
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   new MutationObserver(function () {
     if (shown && frame && frame.contentWindow) {
-      try { frame.contentWindow.postMessage({ type: 'drip-locale', locale: locale() }, '*'); } catch (e) {}
+      try { frame.contentWindow.postMessage({ type: 'drip-locale', locale: locale() }, window.location.origin); } catch (e) {}
     }
   }).observe(document.querySelector('#app') || document.documentElement, { attributes: true, attributeFilter: ['dir'] });
 
   // bootstrap: fetch on entering the page (or account change), render cards + header button as Vue
   // re-renders the list, and close the overlay when navigating away.
+  // Selector-drift telemetry: stats exist but ZERO cards match for many consecutive ticks →
+  // Chatwoot's DOM likely changed under us; without this warn the feature vanishes in total
+  // silence after an upgrade and nobody knows why.
+  var cardMissTicks = 0, warnedCards = false;
   function tick() {
     if (onPage()) {
       if (statsAcc !== accountId()) fetchStats();
       renderCards();
       renderHeader();
       renderKpiBar();
+      if (statsList.length && !document.querySelector('.group\\/cardLayout')) {
+        cardMissTicks += 1;
+        if (cardMissTicks > 20 && !warnedCards) {
+          warnedCards = true;
+          console.warn('[cwpt] campaign cards not found in the DOM — Chatwoot may have changed its campaign-card markup; update the selectors in campaign-stats.js');
+        }
+      } else {
+        cardMissTicks = 0;
+      }
     } else if (shown) {
       hideReport();
     }
