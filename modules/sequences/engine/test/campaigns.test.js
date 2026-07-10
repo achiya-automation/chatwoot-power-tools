@@ -251,13 +251,21 @@ test('getCampaignDetail: replies list carries name, first message, and display_i
   await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, content, status, created_at)
                VALUES (90, 504, 1, 0, 'מעוניינת בפרטים', 0, now() + interval '1 minute'),
                       (91, 504, 1, 0, 'עוד שאלה', 0, now() + interval '2 minutes')`);
+  // שיחה שנייה שהגיבה מאוחר יותר — חייבת להופיע ראשונה (טריות קודם, לידים חדשים למעלה)
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (8,1,'יואב','+972500000008')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (507,9507,1,8)`);
+  await seedCampaignMessage({ id: 9, conv: 507, campaignId: 46, status: 1 });
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, content, status, created_at)
+               VALUES (92, 507, 1, 0, 'מגיב מאוחר', 0, now() + interval '10 minutes')`);
+
   const d = await getCampaignDetail(query, 1, 46);
-  assert.equal(d.engagement.replied, 1);
-  assert.equal(d.engagement.replies.length, 1);
-  const r = d.engagement.replies[0];
+  assert.equal(d.engagement.replied, 2);
+  assert.equal(d.engagement.replies.length, 2);
+  assert.equal(d.engagement.replies[0].contact_name, 'יואב'); // האחרון להגיב — ראשון ברשימה
+  const r = d.engagement.replies[1];
   assert.equal(r.contact_name, 'הילה');
   assert.equal(r.conversation_display_id, 9504);
-  assert.equal(r.content, 'מעוניינת בפרטים');
+  assert.equal(r.content, 'מעוניינת בפרטים'); // הראשונה מבין שתי התגובות של אותה שיחה
   // ולנמענים יש כעת display_id לניווט
   assert.equal(d.recipients[0].conversation_display_id, 9504);
 });

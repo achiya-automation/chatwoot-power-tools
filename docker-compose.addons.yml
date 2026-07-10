@@ -16,6 +16,19 @@ services:
       dockerfile: engine/Dockerfile
     container_name: cwpt-engine
     restart: unless-stopped
+    # Liveness: restart:unless-stopped covers crashes, but a HUNG process (event-loop stuck,
+    # DB pool deadlock) stays "Up" forever without this. The public /drip-api/health route
+    # answers before the auth gate; wget ships in the node:alpine base image. The autoheal
+    # label opts the engine into willfarrell/autoheal restarts on Chatwoot stacks that run
+    # it (both target servers do); harmless where no autoheal container exists.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3100/drip-api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    labels:
+      - autoheal=true
     # No `depends_on: postgres`: install.sh always adds the engine to an ALREADY-RUNNING
     # Chatwoot (postgres is up before this runs), so start-ordering is moot — while a
     # hardcoded service name "postgres" would break stacks whose DB service is named

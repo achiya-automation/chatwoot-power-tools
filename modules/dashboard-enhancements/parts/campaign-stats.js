@@ -58,7 +58,13 @@
       body: JSON.stringify({ action: 'campaigns_tier', payload: {} }),
     })
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) { statsTier = (j && j.data) || null; renderKpiBar(); })
+      .then(function (j) {
+        // מעבר-חשבון תוך כדי הבקשה (SPA, ה-injector הוא singleton): תשובה של חשבון A
+        // אסור שתצבע את ה-KPI של חשבון B — זורקים תשובה שהגיעה מאוחר מדי.
+        if (acc !== accountId()) return;
+        statsTier = (j && j.data) || null;
+        renderKpiBar();
+      })
       .catch(function () { statsTier = null; });
   }
   function onFetchFail() {
