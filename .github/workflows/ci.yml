@@ -92,6 +92,17 @@ jobs:
         working-directory: modules/sequences/webapp
         run: npm test
 
+      # dist/ is committed (install.sh deploys it without building on the server). A src/ change
+      # that isn't followed by a rebuild+recommit silently ships stale JS — this gate rebuilds
+      # and fails when the committed dist no longer matches the source.
+      - name: Build (dist freshness gate)
+        working-directory: modules/sequences/webapp
+        run: npm run build
+      - name: Verify committed dist matches src
+        run: |
+          git diff --exit-code -- modules/sequences/webapp/dist
+          test -z "$(git status --porcelain modules/sequences/webapp/dist)"
+
   smart-import:
     name: smart-import (node --test)
     runs-on: ubuntu-latest

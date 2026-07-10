@@ -24,6 +24,8 @@ const LABELS = {
     '132012': 'פורמט הפרמטרים אינו תואם לתבנית המאושרת',
     '131008': 'פרמטר חובה חסר בבקשה',
     '131000': 'שגיאה כללית של Meta — אפשר לנסות שוב',
+    '131048': 'Meta הגבילה זמנית את השליחה מהמספר העסקי — יותר מדי הודעות סומנו כספאם או נחסמו',
+    '130472': 'המספר של הנמען משתתף בניסוי של Meta — הודעות שיווקיות אליו אינן נמסרות כרגע',
     '470': 'חלון ההודעות (24 שעות) נסגר',
     '100': 'בקשת API שגויה — בדקו את הפרמטרים',
   },
@@ -39,6 +41,8 @@ const LABELS = {
     '132012': 'The parameter format does not match the approved template',
     '131008': 'A required parameter is missing from the request',
     '131000': 'General Meta error — you can try again',
+    '131048': 'Meta temporarily limited sending from the business number — too many messages were flagged as spam or blocked',
+    '130472': "The recipient's number is part of a Meta experiment — marketing messages to it are currently not delivered",
     '470': 'The messaging window (24 hours) has closed',
     '100': 'Invalid API request — check the parameters',
   },
@@ -83,6 +87,8 @@ const ACTIONS = {
     '132005': 'התבנית נדחתה או הושעתה ב-Meta — בחרו תבנית אחרת.',
     '132012': 'פורמט המשתנים אינו תואם — תקנו את המשתנים בעורך הרצף.',
     '131008': 'חסר משתנה חובה — מלאו את כל המשתנים בעורך הרצף.',
+    '131048': 'הקטינו את קצב השליחה ושפרו את איכות הרשימה; בדקו את דירוג האיכות ב-WhatsApp Manager לפני שליחה נוספת.',
+    '130472': 'אין פעולה בצד שלכם — נסו מאוחר יותר, או שלחו תבנית שאינה שיווקית.',
   },
   en: {
     '131026': 'Make sure the phone number is correct and the recipient uses WhatsApp. If it is correct — remove them from the sequence.',
@@ -95,6 +101,8 @@ const ACTIONS = {
     '132005': 'The template was rejected or suspended by Meta — choose a different template.',
     '132012': 'The variable format does not match — fix the variables in the sequence editor.',
     '131008': 'A required variable is missing — fill in all variables in the sequence editor.',
+    '131048': 'Slow down the send rate and improve list quality; check the quality rating in WhatsApp Manager before sending again.',
+    '130472': 'Nothing to fix on your side — try again later, or send a non-marketing template.',
   },
 };
 

@@ -182,8 +182,9 @@ test('campaignsTrend: buckets campaign messages by day', async () => {
 });
 
 // Real day-bucketing (not just same-day aggregation): a message from 2 days ago must land
-// in its OWN bucket, distinct from today's, and ordered oldest → newest.
-test('campaignsTrend: separates messages into distinct day buckets, oldest → newest', async () => {
+// in its OWN bucket, distinct from today's, ordered oldest → newest — with the series
+// zero-filled so quiet days appear as explicit zero rows (chart gaps stay visible).
+test('campaignsTrend: separates messages into distinct day buckets, zero-filled, oldest → newest', async () => {
   await seedCampaign({ id: 41 });
   await seedCampaignMessage({ id: 3, campaignId: 41, status: 1 }); // today: delivered
   await query(
@@ -192,14 +193,48 @@ test('campaignsTrend: separates messages into distinct day buckets, oldest → n
     [JSON.stringify(JSON.stringify({ campaign_id: 41 }))]
   );
   const trend = await campaignsTrend(query, 1, 14);
-  assert.equal(trend.length, 2); // two distinct day buckets, not merged into one
-  const [older, newer] = trend;
+  assert.equal(trend.length, 14); // one row per day in the window, empty days included
+  const nonzero = trend.filter((r) => r.sent > 0);
+  assert.equal(nonzero.length, 2); // the two active days, still distinct buckets
+  const [older, newer] = nonzero; // series order is oldest → newest
   assert.equal(older.sent, 1);
   assert.equal(older.failed, 1);
   assert.equal(older.delivered, 0);
   assert.equal(newer.sent, 1);
   assert.equal(newer.delivered, 1);
   assert.equal(newer.failed, 0);
+  // the day between them exists as an explicit zero row
+  const between = trend[trend.indexOf(newer) - 1];
+  assert.equal(between.sent, 0);
+});
+
+test('campaignsTrend: clamps client-supplied days to 1..90', async () => {
+  await seedCampaign({ id: 43 });
+  const huge = await campaignsTrend(query, 1, 100000);
+  assert.equal(huge.length, 90);
+  const neg = await campaignsTrend(query, 1, -5);
+  assert.equal(neg.length, 1);
+});
+
+// Display timestamps are converted UTC → Asia/Jerusalem (Chatwoot stores naive UTC).
+// 2026-01-01 22:00 UTC = 2026-01-02 00:00 Israel (IST, +02:00 in January — no DST ambiguity).
+test('getCampaignDetail: sent_at renders in Asia/Jerusalem, not raw UTC', async () => {
+  await seedCampaign({ id: 44, title: 'שעון' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (5,1,'נועה','+972500000005')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (503,503,1,5)`);
+  await query(
+    `INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
+     VALUES (6, 503, 1, 1, 1, $1, '2026-01-01 22:00:00')`,
+    [JSON.stringify(JSON.stringify({ campaign_id: 44 }))]
+  );
+  const d = await getCampaignDetail(query, 1, 44);
+  assert.equal(d.recipients[0].sent_at, '2026-01-02 00:00');
+});
+
+// Base cross-account ownership: account 2 must not read account 1's campaign via a tampered id.
+test('getCampaignDetail: campaign of another account → null (IDOR)', async () => {
+  await seedCampaign({ id: 45, account: 1, title: 'פרטי' });
+  assert.equal(await getCampaignDetail(query, 2, 45), null);
 });
 
 test('handleAction: campaigns_trend wiring', async () => {
