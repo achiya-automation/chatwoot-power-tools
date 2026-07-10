@@ -32,6 +32,7 @@ _cwpt_module_parts() {
     enhancements)
       printf '%s\n' \
         "modules/dashboard-enhancements/parts/campaign-modal.js" \
+        "modules/dashboard-enhancements/parts/campaign-stats.js" \
         "modules/dashboard-enhancements/parts/video-compressor.js"
       ;;
     *)
