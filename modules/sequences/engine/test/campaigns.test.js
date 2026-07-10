@@ -2,7 +2,8 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
 import { runMigrations } from '../src/migrate.js';
-import { listCampaigns, getCampaignDetail, campaignsTrend } from '../src/campaigns.js';
+import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from '../src/campaigns.js';
+import { DEFAULT_CAP, _resetTierCache } from '../src/meta.js';
 import { handleAction } from '../src/store.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
@@ -23,7 +24,9 @@ beforeEach(async () => {
     CREATE TABLE IF NOT EXISTS public.tags (id int PRIMARY KEY, name text);
     CREATE TABLE IF NOT EXISTS public.taggings (id int PRIMARY KEY, tag_id int, taggable_type text, taggable_id int, context text);
   `);
-  await pool.query('TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations, public.inboxes, public.labels, public.tags, public.taggings');
+  // drip.sent_messages משתתפת בחישוב ה-tier (union) — מנקים גם אותה כדי שבדיקות מקבצים
+  // אחרים (delivery/send_cap) לא ידלפו לספירת ה-24h.
+  await pool.query('TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations, public.inboxes, public.labels, public.tags, public.taggings, drip.sent_messages');
 });
 
 test('scaffold: campaigns table is queryable', async () => {
@@ -235,6 +238,55 @@ test('getCampaignDetail: sent_at renders in Asia/Jerusalem, not raw UTC', async 
 test('getCampaignDetail: campaign of another account → null (IDOR)', async () => {
   await seedCampaign({ id: 45, account: 1, title: 'פרטי' });
   assert.equal(await getCampaignDetail(query, 2, 45), null);
+});
+
+// ── engagement.replies: the reply list (who answered, first message, conversation link) ──
+
+test('getCampaignDetail: replies list carries name, first message, and display_id', async () => {
+  await seedCampaign({ id: 46, title: 'שיחות' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (7,1,'הילה','+972500000007')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (504,9504,1,7)`);
+  await seedCampaignMessage({ id: 8, conv: 504, campaignId: 46, status: 2 });
+  // שתי תגובות נכנסות — הרשימה חייבת להחזיר את הראשונה בלבד (DISTINCT ON לפי שיחה)
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, content, status, created_at)
+               VALUES (90, 504, 1, 0, 'מעוניינת בפרטים', 0, now() + interval '1 minute'),
+                      (91, 504, 1, 0, 'עוד שאלה', 0, now() + interval '2 minutes')`);
+  const d = await getCampaignDetail(query, 1, 46);
+  assert.equal(d.engagement.replied, 1);
+  assert.equal(d.engagement.replies.length, 1);
+  const r = d.engagement.replies[0];
+  assert.equal(r.contact_name, 'הילה');
+  assert.equal(r.conversation_display_id, 9504);
+  assert.equal(r.content, 'מעוניינת בפרטים');
+  // ולנמענים יש כעת display_id לניווט
+  assert.equal(d.recipients[0].conversation_display_id, 9504);
+});
+
+// ── campaignsTierInfo: 24h budget preflight ──
+
+test('campaignsTierInfo: counts distinct 24h campaign conversations, failed excluded', async () => {
+  await seedCampaign({ id: 47 });
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (505,505,1,1),(506,506,1,2) ON CONFLICT (id) DO NOTHING`);
+  await seedCampaignMessage({ id: 20, conv: 505, campaignId: 47, status: 1 }); // נמסר — נספר
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
+               VALUES (21, 506, 1, 1, 3, $1, now())`, // נכשל — לא פתח שיחה, לא נספר
+    [JSON.stringify(JSON.stringify({ campaign_id: 47 }))]);
+  const info = await campaignsTierInfo(query, {}, 1, { getCap: async () => 1000 });
+  assert.deepEqual(info, { cap: 1000, unlimited: false, used_24h: 1, remaining: 999 });
+});
+
+test('campaignsTierInfo: unlimited tier → cap/remaining null, unlimited flag', async () => {
+  const info = await campaignsTierInfo(query, {}, 1, { getCap: async () => Infinity });
+  assert.equal(info.unlimited, true);
+  assert.equal(info.cap, null);
+  assert.equal(info.remaining, null);
+});
+
+test('handleAction: campaigns_tier wiring falls back to DEFAULT_CAP without creds (no network)', async () => {
+  _resetTierCache();
+  const res = await handleAction(1, 'campaigns_tier', {});
+  assert.equal(res.data.cap, DEFAULT_CAP); // scaffold has no WhatsApp channel → safe fallback
+  assert.equal(typeof res.data.used_24h, 'number');
 });
 
 test('handleAction: campaigns_trend wiring', async () => {

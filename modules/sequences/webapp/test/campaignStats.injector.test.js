@@ -26,10 +26,15 @@ function pageDom(cards) {
   return new JSDOM(html, { url: 'https://chatwoot.test/app/accounts/1/campaigns/whatsapp', runScripts: 'outside-only' });
 }
 
-async function runInjector(dom, apiData) {
+async function runInjector(dom, apiData, tierData = null) {
   const src = await readFile(SRC_URL, 'utf8');
   const w = dom.window;
-  w.fetch = async () => ({ ok: true, json: async () => ({ data: apiData }) });
+  // שתי פעולות על אותו endpoint — מבחינים לפי גוף הבקשה (כמו ה-engine האמיתי)
+  w.fetch = async (_url, opts) => {
+    const action = JSON.parse((opts && opts.body) || '{}').action;
+    const data = action === 'campaigns_tier' ? tierData : apiData;
+    return { ok: true, json: async () => ({ data }) };
+  };
   // מריצים את ה-IIFE בתוך חלון ה-jsdom — אותם globals שהדפדפן מספק ב-DASHBOARD_SCRIPTS
   w.eval(src);
   // bootstrap: setTimeout(tick, 500) ואז fetch אסינכרוני — מחכים שהשרשרת תסתיים
@@ -56,6 +61,19 @@ test('injector: KPI bar aggregates all campaigns and lands in .max-w-5xl', async
   const bar = dom.window.document.getElementById('cwpt-kpi-bar');
   assert.ok(bar, 'KPI bar should exist');
   assert.match(bar.textContent, /6/); // sent total = 2+4
+  assert.doesNotMatch(bar.textContent, /נותרו להיום/); // אין מידע tier → אין אריח
+});
+
+test('injector: tier preflight tile shows remaining daily budget', async () => {
+  const dom = pageDom(['א']);
+  await runInjector(
+    dom,
+    [{ id: 1, title: 'א', sent: 2, delivered: 2, read: 1, failed: 0 }],
+    { cap: 1000, unlimited: false, used_24h: 40, remaining: 960 }
+  );
+  const bar = dom.window.document.getElementById('cwpt-kpi-bar');
+  assert.match(bar.textContent, /נותרו להיום/);
+  assert.match(bar.textContent, /960/);
 });
 
 test('injector: duplicate titles → NO per-card stats (ambiguous), KPI still counts both', async () => {

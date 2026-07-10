@@ -1,3 +1,5 @@
+import { getDailyCap } from './meta.js';
+
 /**
  * campaigns.js — read-only campaign analytics from Chatwoot's own tables.
  *
@@ -90,7 +92,8 @@ export async function getCampaignDetail(query, accountId, campaignId) {
             m.status,
             ${caObj('m.content_attributes')} ->> 'external_error' AS error_title,
             to_char(${localTs('m.created_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
-            m.conversation_id
+            m.conversation_id,
+            cv.display_id AS conversation_display_id
        FROM public.messages m
        LEFT JOIN public.conversations cv ON cv.id = m.conversation_id
        LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
@@ -123,7 +126,33 @@ export async function getCampaignDetail(query, accountId, campaignId) {
         AND ${caObj('m_out.content_attributes')} @> jsonb_build_object('campaign_id', $2::int)`,
     [accountId, id]
   ))[0]?.c || 0);
-  const engagement = { replied, reply_rate: funnel.delivered ? Math.round((replied / funnel.delivered) * 100) : 0 };
+
+  // The replies themselves (first incoming message per conversation, capped): who replied,
+  // what they opened with, and the conversation display_id for a click-through into Chatwoot.
+  // Best-effort — the count above stays exact even when this list is capped or fails.
+  let replies = [];
+  try {
+    replies = await query(
+      `SELECT DISTINCT ON (m_in.conversation_id)
+              cv.display_id AS conversation_display_id,
+              ct.name AS contact_name,
+              left(m_in.content, 240) AS content,
+              to_char(${localTs('m_in.created_at')}, 'YYYY-MM-DD HH24:MI') AS replied_at
+         FROM public.messages m_out
+         JOIN public.messages m_in
+           ON m_in.conversation_id = m_out.conversation_id
+          AND m_in.message_type = 0
+          AND m_in.created_at > m_out.created_at
+         JOIN public.conversations cv ON cv.id = m_in.conversation_id
+         LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
+        WHERE m_out.account_id = $1
+          AND ${caObj('m_out.content_attributes')} @> jsonb_build_object('campaign_id', $2::int)
+        ORDER BY m_in.conversation_id, m_in.created_at
+        LIMIT 200`,
+      [accountId, id]
+    );
+  } catch { replies = []; }
+  const engagement = { replied, reply_rate: funnel.delivered ? Math.round((replied / funnel.delivered) * 100) : 0, replies };
 
   // "Not sent": audience labels → contacts (via acts-as-taggable) minus those who got a message.
   // Verified against real taggings schema: taggings/tags carry no account_id (shared across the
@@ -163,6 +192,43 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   funnel.audience = funnel.sent + not_sent.length;
 
   return { campaign, funnel, engagement, recipients, not_sent };
+}
+
+// Preflight: Meta's 24h send budget for the account — tier cap (live, cached ~6h via
+// meta.getDailyCap, NEVER throws), minus distinct conversations messaged in the rolling 24h
+// (drip sends + campaign sends; failed sends never opened a conversation so they don't count).
+// Advisory display only — the drip reconciler keeps enforcing its own budget. Best-effort:
+// returns null on any query failure so the UI simply hides the line.
+export async function campaignsTierInfo(query, reads, accountId, deps = {}) {
+  const { getCap = getDailyCap } = deps;
+  try {
+    const cap = await getCap(reads, accountId);
+    const used = Number((await query(
+      `SELECT count(DISTINCT cid)::int AS c FROM (
+         SELECT sm.conversation_id AS cid
+           FROM drip.sent_messages sm
+           LEFT JOIN public.messages m ON m.id = sm.message_id
+          WHERE sm.account_id = $1
+            AND sm.sent_at > now() - interval '24 hours'
+            AND (m.status IS NULL OR m.status <> 3)
+         UNION
+         SELECT m.conversation_id
+           FROM public.messages m
+          WHERE m.account_id = $1
+            AND m.created_at > now() - interval '24 hours'
+            AND ${caObj('m.content_attributes')} ? 'campaign_id'
+            AND m.status <> 3
+       ) u`,
+      [accountId]
+    ))[0]?.c || 0);
+    const unlimited = !Number.isFinite(cap);
+    return {
+      cap: unlimited ? null : cap,
+      unlimited,
+      used_24h: used,
+      remaining: unlimited ? null : Math.max(0, cap - used),
+    };
+  } catch { return null; }
 }
 
 // Daily campaign-message trend (last `days`), Asia/Jerusalem, oldest → newest.
