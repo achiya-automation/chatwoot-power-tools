@@ -28,8 +28,8 @@
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
   }
   var I18N = {
-    he: { sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו', report: 'דוח מלא', overview: 'סטטיסטיקה', close: 'סגירה', total: 'קמפיינים' },
-    en: { sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed', report: 'Full report', overview: 'Statistics', close: 'Close', total: 'Campaigns' },
+    he: { sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו', report: 'דוח מלא', overview: 'סטטיסטיקה', close: 'סגירה', total: 'קמפיינים', left: 'נותרו להיום', leftTitle: 'תקציב שליחה יומי מול תקרת ה-tier של Meta (משוער)', unlimited: 'ללא הגבלה' },
+    en: { sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed', report: 'Full report', overview: 'Statistics', close: 'Close', total: 'Campaigns', left: 'Left today', leftTitle: "Daily send budget vs Meta's tier cap (estimate)", unlimited: 'Unlimited' },
   };
   function t(k) { return (I18N[locale()] || I18N.en)[k] || I18N.en[k] || k; }
 
@@ -47,8 +47,20 @@
   // ── stats: one bulk fetch, cached as { title → row } + the full list (KPI aggregation).
   // Re-fetched when the account changes; failures retry with exponential backoff (a broken
   // engine must not be hammered every MutationObserver tick — documented Caddy↔Puma 502s). ──
-  var statsByTitle = {}, statsList = [], statsAcc = null, fetching = false;
+  var statsByTitle = {}, statsList = [], statsTier = null, statsAcc = null, fetching = false;
   var failCount = 0, retryAt = 0, warnedFetch = false;
+  // preflight tier (24h budget) — best-effort, piggybacks the stats refresh; null → tile hidden
+  function fetchTierInfo(acc) {
+    fetch(ADDONS_BASE + '/drip-api?account_id=' + encodeURIComponent(acc), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'campaigns_tier', payload: {} }),
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { statsTier = (j && j.data) || null; renderKpiBar(); })
+      .catch(function () { statsTier = null; });
+  }
   function onFetchFail() {
     fetching = false;
     failCount += 1;
@@ -92,6 +104,7 @@
         statsAcc = acc;
         fetching = false;
         renderCards();
+        fetchTierInfo(acc);
       })
       .catch(function () { onFetchFail(); });
   }
@@ -179,10 +192,10 @@
     if (!bar) {
       bar = document.createElement('div');
       bar.id = 'cwpt-kpi-bar';
-      bar.className = 'grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5';
       wrap.insertBefore(bar, wrap.firstChild);
     }
-    var sig = a.count + ':' + a.sent + '/' + a.delivered + '/' + a.read + '/' + a.failed + '|' + locale();
+    var tierSig = statsTier ? (statsTier.unlimited ? 'inf' : statsTier.remaining) : '-';
+    var sig = a.count + ':' + a.sent + '/' + a.delivered + '/' + a.read + '/' + a.failed + '|' + tierSig + '|' + locale();
     if (bar.__sig === sig) return;
     bar.__sig = sig;
     var KPIS = [
@@ -192,8 +205,18 @@
       { label: t('read'), value: pct(a.read, a.sent) + '%', cls: 'text-n-blue-11' },
       { label: t('failed'), value: pct(a.failed, a.sent) + '%', cls: 'text-n-ruby-11' },
     ];
+    if (statsTier) {
+      // preflight: תקציב 24h מול תקרת ה-tier — ערכים מספריים מהמנוע בלבד (אין קלט חופשי)
+      KPIS.push({
+        label: t('left'),
+        title: t('leftTitle'),
+        value: statsTier.unlimited ? t('unlimited') : statsTier.remaining,
+        cls: !statsTier.unlimited && statsTier.remaining === 0 ? 'text-n-ruby-11' : 'text-n-teal-11',
+      });
+    }
+    bar.className = 'grid grid-cols-2 gap-3 mb-5 ' + (KPIS.length > 5 ? 'sm:grid-cols-6' : 'sm:grid-cols-5');
     bar.innerHTML = KPIS.map(function (k) {
-      return '<div class="flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak">' +
+      return '<div class="flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak"' + (k.title ? ' title="' + k.title + '"' : '') + '>' +
                '<span class="text-2xl font-semibold leading-none ' + k.cls + '">' + k.value + '</span>' +
                '<span class="mt-1 text-xs text-n-slate-11">' + k.label + '</span>' +
              '</div>';
@@ -283,10 +306,17 @@
     if (btn) { e.preventDefault(); e.stopPropagation(); showReport(btn.getAttribute('data-cwpt-report')); }
   }, true);
 
-  // close when a solo detail view's Back button posts drip-close
+  // close when a solo detail view's Back button posts drip-close;
+  // navigate into a Chatwoot conversation when the report asks (recipient/reply click)
   window.addEventListener('message', function (e) {
     if (e.origin !== window.location.origin) return; // same-origin embed only
-    if (e.data && e.data.type === 'drip-close') hideReport();
+    if (!e.data) return;
+    if (e.data.type === 'drip-close') hideReport();
+    if (e.data.type === 'drip-open-conversation' && typeof e.data.display_id === 'number' && isFinite(e.data.display_id)) {
+      hideReport();
+      // full navigation (not SPA-router) — always lands correctly, at the cost of a reload
+      window.location.assign('/app/accounts/' + accountId() + '/conversations/' + Math.floor(e.data.display_id));
+    }
   });
   // Escape closes the overlay (parity with the × button)
   document.addEventListener('keydown', function (e) {

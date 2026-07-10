@@ -271,3 +271,8 @@ export async function getCampaignsTrend(accountId) {
   const data = await call('campaigns_trend', {}, accountId);
   return data || [];
 }
+
+// campaigns_tier — תקציב 24h מול תקרת ה-tier של Meta: { cap, unlimited, used_24h, remaining } | null.
+export async function getCampaignsTier(accountId) {
+  return call('campaigns_tier', {}, accountId);
+}

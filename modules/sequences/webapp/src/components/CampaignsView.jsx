@@ -4,7 +4,7 @@ import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
 import Skeleton, { SkeletonRows } from './ui/Skeleton.jsx';
 import { Table, THead, TBody, TR, TH, TD } from './ui/Table.jsx';
-import { listCampaigns, getCampaignsTrend } from '../api/sequencesApi.js';
+import { listCampaigns, getCampaignsTrend, getCampaignsTier } from '../api/sequencesApi.js';
 import useT from '../useT.js';
 import { translate } from '../i18n.js';
 
@@ -12,6 +12,7 @@ import { translate } from '../i18n.js';
 const M = {
   he: {
     kTotal: 'קמפיינים', kSent: 'נשלחו', kDelivered: 'נמסרו', kRead: 'נקראו', kFailed: 'נכשלו',
+    kLeft: 'נותרו להיום', kLeftTitle: 'תקציב שליחה יומי מול תקרת ה-tier של Meta (משוער)', unlimitedTier: 'ללא הגבלה',
     colName: 'קמפיין', colStatus: 'סטטוס', colDate: 'תאריך',
     colSent: 'נשלחו', colDelivered: 'נמסרו', colRead: 'נקראו', colReadRate: 'אחוז קריאה',
     refresh: 'רענון', empty: 'אין עדיין קמפייני WhatsApp.', errLoad: 'שגיאה בטעינת הקמפיינים',
@@ -21,6 +22,7 @@ const M = {
   },
   en: {
     kTotal: 'Campaigns', kSent: 'Sent', kDelivered: 'Delivered', kRead: 'Read', kFailed: 'Failed',
+    kLeft: 'Left today', kLeftTitle: "Daily send budget vs Meta's tier cap (estimate)", unlimitedTier: 'Unlimited',
     colName: 'Campaign', colStatus: 'Status', colDate: 'Date',
     colSent: 'Sent', colDelivered: 'Delivered', colRead: 'Read', colReadRate: 'Read rate',
     refresh: 'Refresh', empty: 'No WhatsApp campaigns yet.', errLoad: 'Failed to load campaigns',
@@ -43,6 +45,7 @@ export default function CampaignsView({ accountId, onSelect }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [trend, setTrend] = useState([]);
+  const [tier, setTier] = useState(null);
 
   const load = useCallback(() => {
     if (accountId == null) return;
@@ -51,8 +54,9 @@ export default function CampaignsView({ accountId, onSelect }) {
       .then(setRows)
       .catch((e) => setError(e.message || translate(M, 'errLoad')))
       .finally(() => setLoading(false));
-    // מקבילי לרשימה — לא חוסם ולא משפיע על מצב הטעינה/שגיאה שלה; נכשל בשקט ל-[].
+    // מקבילי לרשימה — לא חוסם ולא משפיע על מצב הטעינה/שגיאה שלה; נכשל בשקט ל-[]/null.
     getCampaignsTrend(accountId).then(setTrend).catch(() => setTrend([]));
+    getCampaignsTier(accountId).then(setTier).catch(() => setTier(null));
   }, [accountId]);
   useEffect(() => { load(); }, [load]);
 
@@ -79,16 +83,25 @@ export default function CampaignsView({ accountId, onSelect }) {
     { label: t('kRead'), value: `${pct(totals.read, totals.sent)}%`, text: 'text-n-blue-11' },
     { label: t('kFailed'), value: `${pct(totals.failed, totals.sent)}%`, text: 'text-n-ruby-11' },
   ];
+  // Preflight — תקציב 24h מול תקרת ה-tier: מונע קמפיין שינחת על 131049 המוני.
+  if (tier) {
+    KPIS.push({
+      label: t('kLeft'),
+      title: t('kLeftTitle'),
+      value: tier.unlimited ? t('unlimitedTier') : tier.remaining,
+      text: !tier.unlimited && tier.remaining === 0 ? 'text-n-ruby-11' : 'text-n-teal-11',
+    });
+  }
 
   // מחושב פעם אחת לכל הגרף (לא בכל איטרציה של ה-map) — הגובה המקסימלי לנרמול העמודות.
   const maxT = Math.max(1, ...trend.map((x) => x.sent || 0));
 
   return (
     <>
-      {/* KPI cards — דפוס זהה ל-TOTAL_CARDS ב-OverviewView */}
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
+      {/* KPI cards — דפוס זהה ל-TOTAL_CARDS ב-OverviewView; עמודה שישית כשמידע ה-tier זמין */}
+      <div className={`mb-5 grid grid-cols-2 gap-3 ${KPIS.length > 5 ? 'sm:grid-cols-6' : 'sm:grid-cols-5'}`}>
         {KPIS.map((c) => (
-          <div key={c.label} className="flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak">
+          <div key={c.label} title={c.title} className="flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak">
             <span className={`text-2xl font-semibold leading-none ${c.text}`}>{c.value}</span>
             <span className="mt-1 text-xs text-n-slate-11">{c.label}</span>
           </div>

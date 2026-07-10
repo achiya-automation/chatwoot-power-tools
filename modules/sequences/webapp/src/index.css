@@ -98,3 +98,16 @@
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ── הדפסה / PDF (דוח קמפיין ללקוח) ─────────────────────────────────────────
+   window.print() מתוך תצוגת הפירוט: מסתירים פקדים, כופים טקסט כהה על רקע לבן
+   (גם במצב כהה), פותחים אזורים נגללים, ומציגים חותמת "הופק ב־". */
+.print-only { display: none; }
+@media print {
+  .no-print { display: none !important; }
+  html, body { background: #fff !important; }
+  * { color: #000 !important; background: transparent !important; text-shadow: none !important; }
+  .print-only { display: block !important; }
+  [class*="max-h-"], [class*="overflow-"] { max-height: none !important; overflow: visible !important; }
+  tr { page-break-inside: avoid; }
+}
