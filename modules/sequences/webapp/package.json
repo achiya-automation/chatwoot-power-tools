@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "postbuild": "cd ../../smart-import && npm run build --silent && mkdir -p ../sequences/webapp/dist/smart-import && cp dist/import-tool.js vendor/xlsx.mini.min.js ../sequences/webapp/dist/smart-import/",
     "preview": "vite preview",
     "test": "node --test test/*.test.js"
   },
