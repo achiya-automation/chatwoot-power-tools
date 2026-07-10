@@ -1,3 +1,5 @@
 .superpowers/
 .preview/
 deploy/.decommission*.log
+docs/superpowers/
+.DS_Store
