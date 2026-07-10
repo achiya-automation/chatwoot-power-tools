@@ -191,7 +191,13 @@ export default function App() {
     return 'overview';
   });
 
-  const [campaignId, setCampaignId] = useState(null); // קמפיין נבחר לצלילה (null = רשימה)
+  // קמפיין נבחר לצלילה (null = רשימה). ?campaign=<id> ב-URL גובר — deep-link מעמוד הקמפיינים
+  // הנייטיבי (כפתור "דוח מלא"), כדי לנחות ישר על תצוגת הפירוט של אותו קמפיין.
+  const [campaignId, setCampaignId] = useState(() => {
+    const c = new URLSearchParams(window.location.search).get('campaign');
+    const n = c ? parseInt(c, 10) : NaN;
+    return Number.isInteger(n) ? n : null;
+  });
 
   // שמירת הטאב הפעיל — כדי שריענון לא יחזיר לסקירה
   useEffect(() => {
@@ -208,6 +214,11 @@ export default function App() {
         setView(d.tab);
         setCampaignId(null); // איפוס צלילת הקמפיין — לא לנחות על תצוגת פרטים ישנה (כמו TabButton הפנימי)
       }
+      // צלילה ישירה לקמפיין מעמוד הקמפיינים הנייטיבי (החלפת קמפיין כשה-overlay כבר טעון)
+      if (d && typeof d === 'object' && d.type === 'drip-open-campaign' && Number.isInteger(d.id)) {
+        setView('campaigns');
+        setCampaignId(d.id);
+      }
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
@@ -221,6 +232,13 @@ export default function App() {
   const embedded = isEmbedded();
   // ניווט מהסיידבר (?nav=side) — מסתירים את שורת הטאבים הפנימית; הניווט מגיע מ-Chatwoot
   const sideNav = isSideNav();
+  // צלילת-סולו (?solo=1) — נפתח כ-overlay מעל עמוד הקמפיינים הנייטיבי; "חזרה" מהפירוט סוגרת את
+  // ה-overlay (postMessage להורה) במקום לחזור לרשימת הקמפיינים הפנימית (שלא מוצגת במצב הזה).
+  const solo = new URLSearchParams(window.location.search).get('solo') === '1';
+  const handleCampaignBack = () => {
+    if (solo) { try { window.parent.postMessage({ type: 'drip-close' }, '*'); } catch { /* ignore */ } }
+    else setCampaignId(null);
+  };
   // כותרת לפי הטאב הפעיל — בסגנון הכותרות הנייטיביות של Chatwoot (text-base font-medium)
   const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : t('tab_overview');
 
@@ -456,7 +474,8 @@ export default function App() {
             </div>
           )}
           <div className="flex items-center gap-2">
-            {!noAccount ? (
+            {/* "שיוך לפי תווית" משייך רצף לאנשי קשר — לא רלוונטי בהקשר הקמפיינים, שם מסתירים אותו */}
+            {!noAccount && view !== 'campaigns' ? (
               <Button
                 variant="faded"
                 color="slate"
@@ -484,7 +503,7 @@ export default function App() {
           <OverviewView accountId={accountId} />
         ) : view === 'campaigns' ? (
           campaignId != null
-            ? <CampaignDetailView campaignId={campaignId} accountId={accountId} onBack={() => setCampaignId(null)} />
+            ? <CampaignDetailView campaignId={campaignId} accountId={accountId} onBack={handleCampaignBack} />
             : <CampaignsView accountId={accountId} onSelect={setCampaignId} />
         ) : view === 'contacts' ? (
           <EnrollmentsView accountId={accountId} />

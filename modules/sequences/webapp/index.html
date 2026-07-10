@@ -2,6 +2,19 @@
 <html lang="he" dir="rtl">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // מונע הבזק בהיר→כהה בטעינת ה-iframe: מוסיף את מחלקת `dark` על <html> *לפני* שה-CSS
+      // נצבע (main.jsx רץ רק אחרי טעינת ה-bundle, ~חצי שנייה). מקור הנושא: ?theme= (מוזרק ע"י
+      // ה-injector) → מחלקת dark של עמוד-האב (Chatwoot, same-origin) → העדפת מערכת ההפעלה.
+      (function () {
+        try {
+          var t = new URLSearchParams(location.search).get('theme');
+          if (!t) { try { t = window.parent !== window && window.parent.document.documentElement.classList.contains('dark') ? 'dark' : null; } catch (e) {} }
+          if (!t) { try { t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch (e) {} }
+          if (t === 'dark') document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ניהול רצפי WhatsApp</title>
     <meta name="description" content="ניהול רצפי הודעות תבנית אוטומטיים ב-WhatsApp" />

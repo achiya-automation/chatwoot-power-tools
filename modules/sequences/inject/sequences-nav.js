@@ -1,7 +1,7 @@
 // sequences-nav — injected as part of DASHBOARD_SCRIPTS (Chatwoot's InstallationConfig hook,
 // loaded last in <body> on every dashboard page except login). Adds "WhatsApp Sequences" as a
-// top-level nav group in the sidebar (after "Campaigns"), with 4 sub-items (overview /
-// sequences / contacts / campaigns) — exactly like Chatwoot's built-in features. Clicking a sub-item shows
+// top-level nav group in the sidebar (after "Campaigns"), with 3 sub-items (overview /
+// sequences / contacts) — exactly like Chatwoot's built-in features. Clicking a sub-item shows
 // the sequences dashboard inline (filling <main>) and swaps tabs smoothly (postMessage). State
 // persists in sessionStorage + the URL so a refresh stays on the same tab. Instance-wide.
 // DOM-dependent (sidebar components-next) — fails silently if the structure changes.
@@ -34,11 +34,11 @@
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
   }
   var NAV_I18N = {
-    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר', campaigns: 'קמפיינים' },
-    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts', campaigns: 'Campaigns' },
+    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר' },
+    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts' },
   };
   function navLabels() { return NAV_I18N[dripLocale()] || NAV_I18N.en; }
-  var TAB_KEYS = ['overview', 'sequences', 'contacts', 'campaigns'];
+  var TAB_KEYS = ['overview', 'sequences', 'contacts'];
   // exact classes lifted from Chatwoot's own DOM (components-next sidebar)
   var UL_CLASS = 'grid m-0 list-none sidebar-group-children min-w-0';
   var LI_CLASS = 'py-0.5 ltr:pl-2 rtl:pr-2 rtl:mr-3 ltr:ml-3 relative text-n-slate-11 child-item before:bg-n-slate-4 after:bg-transparent after:border-n-slate-4 before:left-0 rtl:before:right-0 min-w-0';
@@ -76,7 +76,7 @@
   function dripFromUrl() {
     try {
       var t = new URL(location.href).searchParams.get('drip');
-      return (t === 'overview' || t === 'sequences' || t === 'contacts' || t === 'campaigns') ? t : null;
+      return (t === 'overview' || t === 'sequences' || t === 'contacts') ? t : null;
     } catch (e) { return null; }
   }
   function urlWithDrip(tab) {
@@ -94,7 +94,7 @@
   function dripFromState() {
     try {
       var cur = history.state && history.state.current;
-      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts|campaigns)\b/);
+      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts)\b/);
       return m ? m[1] : null;
     } catch (e) { return null; }
   }
@@ -132,6 +132,7 @@
   function show(tab) {
     tab = tab || 'overview';
     curTab = tab;
+    if (window.__cwptReportHide) { try { window.__cwptReportHide(); } catch (e) {} } // close campaign-stats overlay if open
     if (!holder) build();
     if (!loaded) {
       var src = APP + '/?embed=1&nav=side&account_id=' + encodeURIComponent(accountId()) +
@@ -171,6 +172,7 @@
       try { _replaceState(history.state, '', urlWithoutDrip()); } catch (e) {}
     }
   }
+  window.__cwptSeqHide = hide; // let campaign-stats close this panel before opening its overlay
   // expand/collapse the sub-items (the "slider")
   function expand(open) {
     var item = document.getElementById('drip-nav-item'); if (!item) return;
@@ -243,7 +245,10 @@
       restored = true;
       try {
         // the URL (?drip=) is the source of truth for restore; sessionStorage is just a fallback.
-        var open = dripFromUrl() || sessionStorage.getItem('drip_open');
+        // Validate the stored value against TAB_KEYS too — an old session may still hold
+        // drip_open='campaigns' (no longer a tab here); parity with dripFromUrl().
+        var stored = sessionStorage.getItem('drip_open');
+        var open = dripFromUrl() || (TAB_KEYS.indexOf(stored) !== -1 ? stored : null);
         if (open) {
           restoreGuard = true;
           setTimeout(function () { restoreGuard = false; }, 4000);
