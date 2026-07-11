@@ -311,6 +311,76 @@
     return m ? m[1] : '';
   }
 
+  // ── template-media autofill: זכירת המדיה הקבועה לכל תבנית ──────────────────────
+  // הבעיה: לכל תבנית עם media header, שדה ה-media_url נפתח ריק בכל שליחה (בצ'אט ובקמפיינים
+  // כאחד — אותו WhatsAppTemplateParser.vue), אז צריך לבחור/להעלות מדיה מחדש כל פעם. הפתרון:
+  // מאגר מרכזי בצד השרת (drip.template_media) שממנו ממלאים אוטומטית, ואליו שומרים אוטומטית
+  // כל מדיה חדשה → מסונכרן בכל מקום, לכל agent, בלי localStorage. Meta מקבלת URL ציבורי
+  // (ה-example.header_handle אינו שמיש לשליחה חוזרת — 403/131053, ראה migration 006).
+  var TEMPLATE_MEDIA = {};              // { template_name: media_url } — נטען פעם אחת per account
+  var templateMediaLoaded = false;
+
+  // שם התבנית שנבחרה, יחסית לשדה ה-media: ה-parser מציג אותו ב-<h3> בתוך כרטיס התצוגה
+  // המקדימה (.bg-n-alpha-black2), שהוא sibling של בלוק המדיה תחת אותו root. מטפסים מה-input
+  // כלפי מעלה עד שמוצאים את הכרטיס. (enhancePreviewCard מסתיר את ה-h3 אך textContent נשאר גולמי.)
+  function templateNameForInput(inp) {
+    var node = inp;
+    for (var i = 0; i < 10 && node; i++) {
+      if (node.querySelector) {
+        var h3 = node.querySelector('.bg-n-alpha-black2 h3');
+        if (h3) return (h3.textContent || '').trim();
+      }
+      node = node.parentElement;
+    }
+    return '';
+  }
+
+  function loadTemplateMedia() {
+    var base = window.__CW_ADDONS_BASE || '/chatwoot-addons';
+    var acc = accountIdFromPath();
+    if (!acc) return;
+    fetch(base + '/drip-api?account_id=' + encodeURIComponent(acc), {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'template_media', payload: {} }),
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (j && j.ok !== false && j.data) { TEMPLATE_MEDIA = j.data; templateMediaLoaded = true; autofillAllMedia(); }
+      })
+      .catch(function () {});
+  }
+
+  function saveTemplateMedia(name, url) {
+    var base = window.__CW_ADDONS_BASE || '/chatwoot-addons';
+    var acc = accountIdFromPath();
+    if (!acc || !name || !/^https?:\/\//i.test(url)) return;
+    fetch(base + '/drip-api?account_id=' + encodeURIComponent(acc), {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_template_media', payload: { template_name: name, media_url: url } }),
+    }).catch(function () {});
+  }
+
+  // ממלא את שדה ה-URL מהמאגר — רק כשריק וטרם מולא לתבנית הנוכחית. data-drip-autofill זוכר
+  // לאיזו תבנית מילאנו, כדי לא לדרוס מחיקה/עריכה ידנית של המשתמש בכל tick של ה-observer.
+  function autofillMediaInput(inp) {
+    var name = templateNameForInput(inp);
+    if (!name) return;
+    var url = TEMPLATE_MEDIA[name];
+    if (!url) return;
+    if ((inp.value || '').trim() === '' && inp.getAttribute('data-drip-autofill') !== name) {
+      inp.setAttribute('data-drip-autofill', name);
+      setNativeValue(inp, url);       // מפעיל @update:model-value של Vue → נכנס ל-processedParams.header
+    }
+  }
+
+  function autofillAllMedia() {
+    if (!templateMediaLoaded) return;
+    var inputs = document.querySelectorAll('input[data-drip-media="1"]');
+    for (var i = 0; i < inputs.length; i++) autofillMediaInput(inputs[i]);
+  }
+
   function uploadCampaignMedia(file, format, urlInput, btn) {
     var base = window.__CW_ADDONS_BASE || '/chatwoot-addons';
     var acc = accountIdFromPath();
@@ -372,6 +442,16 @@
       uploadCampaignMedia(f, fmt, urlInput, btn);
     });
 
+    // שמירה אוטומטית למאגר: כל URL חדש בשדה (העלאה דרך הכפתור, הדבקה ידנית, או setNativeValue)
+    // → נשמר. שומרים רק כשהערך שונה ממה שכבר במאגר, כך שה-autofill עצמו לא יוצר save מיותר —
+    // רק שינוי אמיתי (upload/paste) נכתב, וה-cache המקומי מתעדכן מיד לזמינות בכל שדה אחר.
+    urlInput.addEventListener('change', function () {
+      var v = (urlInput.value || '').trim();
+      if (!/^https?:\/\//i.test(v)) return;
+      var name = templateNameForInput(urlInput);
+      if (name && TEMPLATE_MEDIA[name] !== v) { TEMPLATE_MEDIA[name] = v; saveTemplateMedia(name, v); }
+    });
+
     holder.appendChild(btn);
     holder.appendChild(file);
     mount.insertBefore(holder, row.nextSibling);
@@ -394,8 +474,9 @@
   // installed on its own) — when both are installed together, the combined effect is
   // identical to the original single-IIFE version, just via two observers instead of one.
   loadCustomFields();
+  loadTemplateMedia();
   var enhanceTimer;
-  new MutationObserver(function () { clearTimeout(enhanceTimer); enhanceTimer = setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); }, 150); })
+  new MutationObserver(function () { clearTimeout(enhanceTimer); enhanceTimer = setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); autofillAllMedia(); }, 150); })
     .observe(document.documentElement, { childList: true, subtree: true });
-  setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); }, 500);
+  setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); autofillAllMedia(); }, 500);
 })();
