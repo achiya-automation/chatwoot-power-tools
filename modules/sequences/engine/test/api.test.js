@@ -18,7 +18,7 @@ initStore(cfg);
 
 beforeEach(async () => {
   await runMigrations(pool);
-  await query('TRUNCATE drip.enrollments, drip.sequence_steps, drip.sequences CASCADE');
+  await query('TRUNCATE drip.enrollments, drip.sequence_steps, drip.sequences, drip.template_media CASCADE');
 });
 
 // ── Test from brief: save then list returns the sequence ──
@@ -226,4 +226,33 @@ test('createApp: /media + /health public, /drip-api requires a Chatwoot session'
     await new Promise((resolve) => server.close(resolve));
     initStore(cfg); // restore global store config for any subsequent test
   }
+});
+
+// ── template_media: מאגר "מדיה קבועה לכל תבנית" (migration 019) ──────────────────
+// מקור-אמת יחיד שממנו הצ'אט/הקמפיינים ממלאים אוטומטית את שדה ה-media_url של תבנית עם
+// media header, במקום לבחור מדיה בכל שליחה.
+test('save_template_media then template_media returns the map', async () => {
+  await handleAction(7, 'save_template_media', { template_name: 'bb_new_16', media_url: 'https://ex.com/a.jpg' });
+  const r = await handleAction(7, 'template_media', {});
+  assert.equal(r.data.bb_new_16, 'https://ex.com/a.jpg');
+});
+
+test('save_template_media upserts — last write wins', async () => {
+  await handleAction(7, 'save_template_media', { template_name: 'bb_new_16', media_url: 'https://ex.com/a.jpg' });
+  await handleAction(7, 'save_template_media', { template_name: 'bb_new_16', media_url: 'https://ex.com/b.jpg' });
+  const r = await handleAction(7, 'template_media', {});
+  assert.equal(r.data.bb_new_16, 'https://ex.com/b.jpg');
+});
+
+test('template_media is scoped per account', async () => {
+  await handleAction(7, 'save_template_media', { template_name: 't', media_url: 'https://ex.com/7.jpg' });
+  const other = await handleAction(8, 'template_media', {});
+  assert.equal(other.data.t, undefined, 'account 8 must not see account 7 media');
+});
+
+test('save_template_media rejects a non-http url', async () => {
+  await assert.rejects(
+    () => handleAction(7, 'save_template_media', { template_name: 't', media_url: 'javascript:alert(1)' }),
+    /http/i
+  );
 });

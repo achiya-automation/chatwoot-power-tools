@@ -132,6 +132,10 @@ export async function handleAction(accountId, action, payload) {
       return { data: await campaignsTierInfo(query, makeDbReads(query), accId) };
     case 'contacts':
       return actionContacts(accId, payload);
+    case 'template_media':
+      return actionTemplateMedia(accId);
+    case 'save_template_media':
+      return actionSaveTemplateMedia(accId, payload);
     default:
       throw new Error(`Unknown action: ${action}`);
   }
@@ -682,4 +686,38 @@ async function actionDeliveryStats(accountId) {
   ));
 
   return { data: { today, byTemplate, retryWaiting, trend } };
+}
+
+// ── template_media ──────────────────────────────────────────────────────────────
+// מאגר "מדיה קבועה לכל תבנית" (migration 019). מקור-אמת יחיד שכל מקום ששולח תבנית
+// קורא ממנו — הצ'אט, מודאל הקמפיינים, והרצפים. list מחזיר map { template_name: media_url }
+// שה-dashboard-script טוען פעם אחת וממלא ממנו את שדה ה-media_url אוטומטית כשבוחרים תבנית
+// עם media header, במקום לבחור/להעלות מדיה בכל שליחה.
+async function actionTemplateMedia(accountId) {
+  let rows = [];
+  try {
+    rows = await query(
+      `SELECT template_name, media_url FROM drip.template_media WHERE account_id = $1`,
+      [accountId]
+    );
+  } catch { /* טבלה חסרה (pre-migration) → map ריק, ה-UI פשוט לא ממלא אוטומטית */ }
+  const map = {};
+  for (const r of rows) map[r.template_name] = r.media_url;
+  return { data: map };
+}
+
+// upsert: כשמעלים/מדביקים מדיה חדשה לתבנית — נשמרת למאגר → זמינה בכל מקום מיד (מסונכרן).
+async function actionSaveTemplateMedia(accountId, payload) {
+  const name = String(payload?.template_name || '').trim();
+  const url = String(payload?.media_url || '').trim();
+  if (!name) throw new Error('template_name required');
+  if (!/^https?:\/\//i.test(url)) throw new Error('media_url must be an http(s) URL');
+  await query(
+    `INSERT INTO drip.template_media (account_id, template_name, media_url, updated_at)
+     VALUES ($1, $2, $3, now())
+     ON CONFLICT (account_id, template_name)
+     DO UPDATE SET media_url = excluded.media_url, updated_at = now()`,
+    [accountId, name, url]
+  );
+  return { data: { template_name: name, media_url: url } };
 }
