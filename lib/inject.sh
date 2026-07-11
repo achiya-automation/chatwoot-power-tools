@@ -63,7 +63,15 @@ _CWPT_DASHBOARD_MARK_END='<!-- CWPT:END -->'
 #   inject_dashboard_script/remove_dashboard_script. Keep it if you touch this string.
 _cwpt_fetch_dashboard_scripts() {
   local rails_container="$1"
-  docker exec "$rails_container" bundle exec rails runner "
+  # -e RAILS_LOG_TO_STDOUT=false: Chatwoot production streams its Rails log to STDOUT, and
+  # those boot-time log lines print BEFORE the runner body — a bare read interleaves them
+  # into the returned value (2>/dev/null drops only stderr, not stdout). Silencing stdout
+  # logging for this one read keeps the fetched value exactly the stored string, never a log
+  # line — otherwise every inject appends the boot log to DASHBOARD_SCRIPTS, and (worse) an
+  # unmarked legacy block never gets recognised, so a second block is appended and its
+  # __dripCampaignEnhance guard blocks the real one from running. (&.value kept verbatim —
+  # test/mocks/docker keys the READ path on it; a leading -e is transparent to that match.)
+  docker exec -e RAILS_LOG_TO_STDOUT=false "$rails_container" bundle exec rails runner "
     print InstallationConfig.find_by(name: 'DASHBOARD_SCRIPTS')&.value
   " 2>/dev/null
 }
