@@ -20,12 +20,14 @@
           remove: 'הסר', addField: 'הוסף שדה:',
           lang_he: 'עברית', lang_en: 'אנגלית', lang_ar: 'ערבית',
           cat_MARKETING: 'שיווקי', cat_UTILITY: 'שירותי', cat_AUTHENTICATION: 'אימות',
-          uploadBtn: '📎 העלה קובץ', uploading: 'מעלה…', uploaded: '✓ הועלה', uploadFailed: '✗ נכשל' },
+          uploadBtn: '📎 העלה קובץ', uploading: 'מעלה…', uploaded: '✓ הועלה', uploadFailed: '✗ נכשל',
+          mediaSaved: 'המדיה הועלתה ונזכרה ✓', replace: 'החלפה' },
     en: { firstName: 'First name', fullName: 'Full name', phone: 'Phone', email: 'Email',
           remove: 'Remove', addField: 'Add field:',
           lang_he: 'Hebrew', lang_en: 'English', lang_ar: 'Arabic',
           cat_MARKETING: 'Marketing', cat_UTILITY: 'Utility', cat_AUTHENTICATION: 'Authentication',
-          uploadBtn: '📎 Upload', uploading: 'Uploading…', uploaded: '✓ Uploaded', uploadFailed: '✗ Failed' },
+          uploadBtn: '📎 Upload', uploading: 'Uploading…', uploaded: '✓ Uploaded', uploadFailed: '✗ Failed',
+          mediaSaved: 'Media uploaded & remembered ✓', replace: 'Replace' },
   };
   function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
 
@@ -55,6 +57,17 @@
       '.drip-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:2px 9px;border-radius:9999px;background:var(--n-alpha-2,rgba(0,0,0,.06));color:var(--n-slate-11,#64748b);white-space:nowrap}',
       // media upload button (sits below the campaign form's media_url field)
       '.drip-media-upload{margin:2px 0 10px;display:flex}',
+      // media "uploaded" badge overlay — hides the raw URL, shows ✓ + replace/remove (like the sequences UI)
+      '.drip-media-wrap{position:relative;width:100%;display:block}',
+      '.drip-media-wrap.has-media > input{color:transparent!important;caret-color:transparent;pointer-events:none;user-select:none}',
+      '.drip-media-badge{position:absolute;inset:0;display:none;align-items:center;justify-content:space-between;gap:8px;padding:0 10px;border-radius:8px;background:var(--n-teal-3,#d3f1e8);border:1px solid var(--n-teal-7,#7dd0b6)}',
+      '.drip-media-wrap.has-media > .drip-media-badge{display:flex}',
+      '.drip-media-badge .lbl{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;color:var(--n-teal-11,#0d9488);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}',
+      '.drip-media-badge .acts{display:flex;align-items:center;gap:12px;flex-shrink:0}',
+      '.drip-media-badge .rep{font-size:12px;font-weight:500;color:var(--n-blue-11,#1d4ed8);cursor:pointer;background:none;border:none;padding:0}',
+      '.drip-media-badge .rep:hover{text-decoration:underline}',
+      '.drip-media-badge .rm{cursor:pointer;color:var(--n-slate-10,#94a3b8);font-size:14px;line-height:1;background:none;border:none;padding:0;display:flex}',
+      '.drip-media-badge .rm:hover{color:var(--n-ruby-11,#e5484d)}',
     ].join('');
     (document.head || document.documentElement).appendChild(st);
   })();
@@ -376,16 +389,20 @@
   }
 
   function autofillAllMedia() {
-    if (!templateMediaLoaded) return;
     var inputs = document.querySelectorAll('input[data-drip-media="1"]');
-    for (var i = 0; i < inputs.length; i++) autofillMediaInput(inputs[i]);
+    for (var i = 0; i < inputs.length; i++) {
+      if (templateMediaLoaded) autofillMediaInput(inputs[i]);
+      var wrap = inputs[i].parentNode; // ה-input עטוף ב-.drip-media-wrap
+      if (wrap && wrap.classList && wrap.classList.contains('drip-media-wrap')) syncMedia(wrap, inputs[i]);
+    }
   }
 
-  function uploadCampaignMedia(file, format, urlInput, btn) {
+  function uploadCampaignMedia(file, format, urlInput, btn, lbl) {
     var base = window.__CW_ADDONS_BASE || '/chatwoot-addons';
     var acc = accountIdFromPath();
     btn.disabled = true;
     btn.textContent = t('uploading');
+    if (lbl) lbl.textContent = t('uploading'); // feedback גם ב-badge (בהחלפה ה-btn מוסתר)
     fetch(base + '/drip-api/media?account_id=' + encodeURIComponent(acc) +
           '&format=' + encodeURIComponent(format) + '&locale=' + DRIP_LOCALE, {
       method: 'POST',
@@ -398,63 +415,80 @@
         if (!res.ok || !res.j || res.j.ok === false) throw new Error((res.j && res.j.error) || 'upload failed');
         setNativeValue(urlInput, res.j.data.url); // Vue picks up the public URL through the normal v-model path
         btn.textContent = t('uploaded');
+        if (lbl) lbl.textContent = t('mediaSaved');
       })
-      .catch(function (e) { btn.textContent = t('uploadFailed'); btn.title = e.message || ''; })
-      .finally(function () { btn.disabled = false; setTimeout(function () { btn.textContent = t('uploadBtn'); }, 2500); });
+      .catch(function (e) { btn.textContent = t('uploadFailed'); btn.title = e.message || ''; if (lbl) lbl.textContent = t('uploadFailed'); })
+      .finally(function () { btn.disabled = false; setTimeout(function () { btn.textContent = t('uploadBtn'); if (lbl) lbl.textContent = t('mediaSaved'); }, 2500); });
   }
 
   function augmentMediaInput(urlInput) {
-    // Chatwoot's <Input> SFC (components-next/input/Input.vue) always renders a single
-    // wrapping <div> around the native <input> — one parentElement hop is stable across
-    // Tailwind class changes. One more hop reaches the "flex items-center" row that lays
-    // the field out, so the button lands next to it instead of inside its own flex-col
-    // wrapper (which would stack it awkwardly). Falls back to the inner wrapper if
-    // Chatwoot's markup ever nests differently — never throws either way.
-    var inputWrap = urlInput.parentElement;
-    if (!inputWrap) return;
-    var row = inputWrap.parentElement || inputWrap;
-    var mount = row.parentNode;
-    if (!mount) return;
-
-    var holder = document.createElement('div');
-    holder.className = 'drip-media-upload';
+    // ה-input נשאר אותו element (ה-Vue ref תקף, שורד re-render) — עוטפים אותו ב-overlay
+    // container: כשיש מדיה מסתירים את ה-URL הגולמי ומציגים במקומו badge "✓ הועלה" +
+    // החלפה/הסרה (בדיוק כמו MediaUrlField של הרצפים); כשאין — כפתור העלאה רגיל מתחת ל-input.
+    var wrap = document.createElement('div');
+    wrap.className = 'drip-media-wrap';
+    urlInput.parentNode.insertBefore(wrap, urlInput);
+    wrap.appendChild(urlInput);
 
     var file = document.createElement('input');
     file.type = 'file';
     file.style.display = 'none';
-    file.accept = MEDIA_ACCEPT[urlInput.getAttribute('data-drip-media-format')] || '';
 
+    // ── badge overlay (מוצג רק כשיש מדיה) — ה-URL עצמו לא נראה ──
+    var badge = document.createElement('div');
+    badge.className = 'drip-media-badge';
+    var lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = t('mediaSaved');
+    var acts = document.createElement('span'); acts.className = 'acts';
+    var rep = document.createElement('button'); rep.type = 'button'; rep.className = 'rep'; rep.textContent = t('replace');
+    var rm = document.createElement('button'); rm.type = 'button'; rm.className = 'rm'; rm.textContent = '✕'; rm.title = t('remove');
+    acts.appendChild(rep); acts.appendChild(rm);
+    badge.appendChild(lbl); badge.appendChild(acts);
+    wrap.appendChild(badge);
+
+    // ── כפתור העלאה (מוצג רק כשאין מדיה), מתחת ל-wrap ──
+    var holder = document.createElement('div');
+    holder.className = 'drip-media-upload';
     var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'drip-chip';
-    btn.textContent = t('uploadBtn');
-    btn.addEventListener('click', function (e) {
-      e.preventDefault(); e.stopPropagation();
+    btn.type = 'button'; btn.className = 'drip-chip'; btn.textContent = t('uploadBtn');
+    holder.appendChild(btn); holder.appendChild(file);
+    wrap.parentNode.insertBefore(holder, wrap.nextSibling);
+
+    function pickFile() {
       var fmt = mediaFormatFromPlaceholder(urlInput) || urlInput.getAttribute('data-drip-media-format') || '';
       file.accept = MEDIA_ACCEPT[fmt] || '';
       file.click();
-    });
+    }
+    btn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); pickFile(); });
+    rep.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); pickFile(); });
+    rm.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); setNativeValue(urlInput, ''); syncMedia(wrap, urlInput); });
     file.addEventListener('change', function () {
       var f = file.files && file.files[0];
       file.value = ''; // allow re-picking the same filename on a retry
       if (!f) return;
       var fmt = mediaFormatFromPlaceholder(urlInput) || urlInput.getAttribute('data-drip-media-format') || '';
-      uploadCampaignMedia(f, fmt, urlInput, btn);
+      uploadCampaignMedia(f, fmt, urlInput, btn, lbl);
     });
 
-    // שמירה אוטומטית למאגר: כל URL חדש בשדה (העלאה דרך הכפתור, הדבקה ידנית, או setNativeValue)
-    // → נשמר. שומרים רק כשהערך שונה ממה שכבר במאגר, כך שה-autofill עצמו לא יוצר save מיותר —
-    // רק שינוי אמיתי (upload/paste) נכתב, וה-cache המקומי מתעדכן מיד לזמינות בכל שדה אחר.
+    // שמירה אוטומטית למאגר: כל URL חדש בשדה (העלאה, הדבקה ידנית, או setNativeValue) → נשמר.
+    // שומרים רק כשהערך שונה ממה שכבר במאגר, כך שה-autofill עצמו לא יוצר save מיותר.
     urlInput.addEventListener('change', function () {
       var v = (urlInput.value || '').trim();
       if (!/^https?:\/\//i.test(v)) return;
       var name = templateNameForInput(urlInput);
       if (name && TEMPLATE_MEDIA[name] !== v) { TEMPLATE_MEDIA[name] = v; saveTemplateMedia(name, v); }
     });
+    // סנכרון ה-overlay עם ערך השדה (הסתרת URL + badge כשיש מדיה; כפתור העלאה כשאין)
+    urlInput.addEventListener('input', function () { syncMedia(wrap, urlInput); });
+    syncMedia(wrap, urlInput);
+  }
 
-    holder.appendChild(btn);
-    holder.appendChild(file);
-    mount.insertBefore(holder, row.nextSibling);
+  // מציג/מסתיר את ה-overlay לפי האם יש URL תקין בשדה — idempotent, בטוח לקריאה חוזרת בכל
+  // ריצת observer (Vue מעדכן את ה-input; אנחנו רק קוראים ממנו ומחליפים class).
+  function syncMedia(wrap, inp) {
+    var has = /^https?:\/\//i.test((inp.value || '').trim());
+    wrap.classList.toggle('has-media', has);
+    var holder = wrap.nextElementSibling; // ה-holder הוא ה-sibling שמיד אחרי ה-wrap
+    if (holder && holder.classList.contains('drip-media-upload')) holder.style.display = has ? 'none' : '';
   }
 
   function enhanceCampaignMedia() {
