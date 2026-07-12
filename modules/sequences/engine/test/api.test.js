@@ -6,18 +6,18 @@
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { setupDb } from './helpers.js';
 import http from 'node:http';
 import { handleAction, initStore, resolveDisplayId } from '../src/store.js';
 import { createApp } from '../src/api.js';
 import { getPool, query } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
 initStore(cfg);
 
 beforeEach(async () => {
-  await runMigrations(pool);
+  await setupDb(pool);
   await query('TRUNCATE drip.enrollments, drip.sequence_steps, drip.sequences, drip.template_media CASCADE');
 });
 

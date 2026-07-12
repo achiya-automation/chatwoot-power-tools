@@ -53,11 +53,38 @@ export function createApp(config) {
     (_req, res) => res.status(404).json({ ok: false, error: 'not found' })
   );
 
+  // ── built SPA assets (PUBLIC — registered BEFORE the auth gate) ────────────
+  // /assets/* is Vite's content-hashed output: the same JavaScript and CSS for every tenant,
+  // carrying no customer data. Gating it bought nothing (the app is inert without an API
+  // session) and cost two real problems:
+  //
+  //   1. Latency — the gate verifies every request against Chatwoot's /api/v1/profile, so
+  //      each asset paid a Rails round-trip. Measured in production: 10.8 s for one bundle.
+  //   2. A cacheable 401 — an asset request without a session got a 401, and a proxy that
+  //      stamps `Cache-Control: max-age` on anything ending in .js then pinned that 401 to
+  //      the bundle's URL at the CDN. Every logged-in user got the cached 401 instead of the
+  //      JavaScript, and the dashboard rendered as a blank white page for a full day.
+  //
+  // Serving them publicly removes the failure mode at its root: there is no 401 left to cache.
+  // The API below stays gated — that is where the tenant data actually lives.
+  if (config.webappDist) {
+    app.use(
+      '/assets',
+      express.static(`${config.webappDist}/assets`, {
+        index: false,
+        fallthrough: true,
+        immutable: true,      // the filename IS the content hash — safe forever
+        maxAge: '1y',
+      }),
+      (_req, res) => res.status(404).json({ ok: false, error: 'not found' })
+    );
+  }
+
   // ── auth gate ──────────────────────────────────────────────────────────────
   // The panel + API are reachable on the open web (Caddy /drip/ → engine). Everything
   // below this line requires a valid Chatwoot session cookie (verified against
-  // GET /api/v1/profile). This guards both the JSON API (incl. `enrollments`, which
-  // returns real customer phone numbers) and the static SPA shell.
+  // GET /api/v1/profile). This guards the JSON API (incl. `enrollments`, which returns real
+  // customer phone numbers) and the SPA shell.
   app.use(authGate(config));
 
   // ── media upload (AUTHED) ──────────────────────────────────────────────────
@@ -142,8 +169,27 @@ export function createApp(config) {
   // ── static serving of webapp (LAST — catch-all) ───────────────────────────
   // Caddy serves /drip/ → engine; express serves the built webapp from webappDist.
   // Must be registered after all API routes so API paths take priority.
+  //
+  // Cache policy is set HERE rather than left to the proxy, because getting it wrong is
+  // invisible and lethal: assets pass through the auth gate, so any blanket "cache every .js
+  // for a day" rule at the proxy also caches the gate's 401 — and a single unauthenticated
+  // request for a freshly-deployed bundle pins that 401 at the CDN edge, blanking the
+  // dashboard for everyone (see the `deny` comment in auth.js).
+  //   /assets/*  — Vite content-hashes these, so the URL changes whenever the bytes do.
+  //                Immutable is safe and correct.
+  //   everything else (index.html, the SPA shell) — must be revalidated, or a deploy would
+  //                keep serving an index.html that points at bundles that no longer exist.
   if (config.webappDist) {
-    app.use(express.static(config.webappDist));
+    app.use(express.static(config.webappDist, {
+      setHeaders: (res, filePath) => {
+        res.set(
+          'Cache-Control',
+          /[\\/]assets[\\/]/.test(filePath)
+            ? 'public, max-age=31536000, immutable'
+            : 'no-cache'
+        );
+      },
+    }));
   }
 
   return app;

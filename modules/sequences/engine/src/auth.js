@@ -153,9 +153,25 @@ export function authGate(config) {
   // runs and the rest await its result.
   const inflight = new Map();
 
+  // An auth failure must NEVER be cacheable.
+  //
+  // The SPA's assets are served through this gate, and a reverse proxy / CDN in front of it
+  // will happily stamp `Cache-Control: public, max-age=…` on anything ending in .js or .css —
+  // including this 401. One unauthenticated request for a bundle (a crawler, a logged-out tab,
+  // a curl) is then enough to pin a 401 at the edge for that exact filename, and every
+  // logged-in user gets the cached 401 instead of the bundle: the dashboard renders blank
+  // until the cache expires. Because Vite hashes the filename, a fresh deploy is exactly when
+  // a never-before-requested asset URL exists to be poisoned — so it breaks right after every
+  // release, which is the worst possible time. Deny responses are marked no-store here, and
+  // the proxy snippet no longer blanket-stamps this route (see lib/proxy-caddy.sh).
+  const deny = (res, status, error) => {
+    res.set('Cache-Control', 'no-store');
+    return res.status(status).json({ ok: false, error });
+  };
+
   return async function gate(req, res, next) {
     const cookie = req.headers.cookie || '';
-    if (!cookie) return res.status(401).json({ ok: false, error: 'unauthorized' });
+    if (!cookie) return deny(res, 401, 'unauthorized');
 
     const key = createHash('sha256').update(cookie).digest('hex');
     let access = null;
@@ -170,7 +186,7 @@ export function authGate(config) {
       try { access = await p; } finally { inflight.delete(key); }
       if (access && access.ok) cache.set(key, { access, expiry: Date.now() + TTL_MS });
     }
-    if (!access || !access.ok) return res.status(401).json({ ok: false, error: 'unauthorized' });
+    if (!access || !access.ok) return deny(res, 401, 'unauthorized');
 
     req.dripAccess = access;
 
@@ -178,7 +194,7 @@ export function authGate(config) {
     // super-admin on any). Stops ?account_id=N from reading another tenant's leads.
     const acc = parseInt(req.query?.account_id || '0', 10);
     if (acc && !canAccessAccount(access, acc)) {
-      return res.status(403).json({ ok: false, error: 'forbidden' });
+      return deny(res, 403, 'forbidden');
     }
     return next();
   };

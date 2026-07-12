@@ -8,16 +8,16 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { setupDb } from './helpers.js';
 import { handleAction, initStore } from '../src/store.js';
 import { getPool } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
 initStore(cfg);
 
 beforeEach(async () => {
-  await runMigrations(pool);
+  await setupDb(pool);
   // Stand-ins for the Chatwoot public tables the actions read (production has the real ones).
   await pool.query(`CREATE TABLE IF NOT EXISTS public.contacts (
     id int PRIMARY KEY, account_id int, name text, phone_number text, email text,

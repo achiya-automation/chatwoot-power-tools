@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
+import { setupDb, relaxCompliance } from './helpers.js';
 
 /*
  * enrollment_info.test.js — dashboard wiring:
@@ -15,9 +15,10 @@ const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
 
 beforeEach(async () => {
-  await runMigrations(pool);
+  await setupDb(pool);
   await query('TRUNCATE drip.enrollments, drip.sequence_steps, drip.sequences CASCADE');
   await pool.query('TRUNCATE public.conversations, public.contacts');
+  await relaxCompliance(pool);
 });
 
 async function seedSeq(key) {

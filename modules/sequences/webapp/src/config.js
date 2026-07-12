@@ -10,11 +10,32 @@
  *   2. conversation.account_id מתוך ה-Dashboard App context של Chatwoot
  */
 
-// ברירת מחדל יחסית = same-origin (route יחיד /chatwoot-addons/*, engine מוגש תחתיו
-// ב-production, vite proxy ב-dev) → אפס CORS. `?.` על import.meta.env כי הוא לא מוגדר
-// כשהקובץ נטען דרך node:test רגיל (לא Vite) — תחת Vite הוא תמיד object מוגדר.
-export const API_BASE =
-  (import.meta.env?.VITE_ADDONS_BASE || '/chatwoot-addons') + '/drip-api';
+// ה-base נגזר בזמן *ריצה* מהכתובת של המודול עצמו — לא מוטבע ב-build.
+//
+// קודם הוא הגיע מ-VITE_ADDONS_BASE בזמן build, עם ברירת מחדל '/chatwoot-addons'. אבל
+// ההתקנה בפועל בוחרת את ה-base שלה (כאן: '/drip'), ושום דבר לא אכף שה-build ידע עליו:
+// מי שבנה לפי ההוראות בריפו (`npm run build`, בלי משתנה סביבה) קיבל bundle שמצביע על
+// '/chatwoot-addons' — נתיב שלא קיים אצלו. התוצאה: ה-script לא נטען, ה-API מחזיר 404,
+// והדשבורד נשאר לבן בלי שום שגיאה. מלכודת שקטה שתפגע בכל לקוח חדש.
+//
+// המודול הזה נארז לתוך `<base>/assets/main-<hash>.js`, ולכן הוא יודע בעצמו איפה הוא
+// מוגש. אפס קונפיגורציה, אפס דרך לטעות.
+function addonsBase() {
+  const fallback = import.meta.env?.VITE_ADDONS_BASE || '/chatwoot-addons';
+  try {
+    if (typeof window === 'undefined') return fallback;          // node:test
+    const u = new URL(import.meta.url, window.location.href);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return fallback;
+    // ‎<base>/assets/main-<hash>.js → <base>‎. ב-dev (vite serve) אין /assets/, ואז
+    // נופלים לברירת המחדל — שם ה-proxy של vite כבר מטפל בנתיב.
+    const m = u.pathname.match(/^(.*)\/assets\/[^/]+$/);
+    return m ? m[1] : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export const API_BASE = `${addonsBase()}/drip-api`;
 
 export function accountIdFromUrl() {
   try {

@@ -13,14 +13,14 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
+import { setupDb, relaxCompliance } from './helpers.js';
 import { reconcileAccount } from '../src/reconcile.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
 
 beforeEach(async () => {
-  await runMigrations(pool);
+  await setupDb(pool);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.contacts (
     id int PRIMARY KEY, account_id int, name text, phone_number text, email text,
     custom_attributes jsonb DEFAULT '{}'::jsonb)`);
@@ -33,6 +33,7 @@ beforeEach(async () => {
     id int PRIMARY KEY, contact_id int, inbox_id int, source_id text)`);
   await pool.query('TRUNCATE public.contacts, public.conversations, public.inboxes, public.contact_inboxes');
   await query('TRUNCATE drip.enrollments, drip.sequence_steps, drip.sequences, drip.no_send_windows, drip.sent_messages CASCADE');
+  await relaxCompliance(pool);
 });
 
 const SUNDAY = new Date('2026-06-21T10:00:00Z'); // weekday daytime, not shabbat

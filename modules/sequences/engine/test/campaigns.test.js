@@ -1,9 +1,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
 import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from '../src/campaigns.js';
-import { DEFAULT_CAP, _resetTierCache } from '../src/meta.js';
+import { DEFAULT_CAP, _resetHealthCache } from '../src/meta.js';
 import { handleAction } from '../src/store.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
@@ -13,7 +13,7 @@ const pool = getPool(cfg);
 // content_attributes is `json` (matches ci.yml + delivery.test.js); all campaign queries cast ::jsonb,
 // which works on json here and on prod's jsonb column alike.
 beforeEach(async () => {
-  await runMigrations(pool); // schema drip
+  await setupDb(pool); // schema drip
   await pool.query(`
     CREATE TABLE IF NOT EXISTS public.campaigns (id int PRIMARY KEY, display_id int, account_id int, inbox_id int, title text, message text, campaign_type int, campaign_status int, audience jsonb DEFAULT '[]'::jsonb, template_params jsonb DEFAULT '{}'::jsonb, scheduled_at timestamp, created_at timestamp);
     CREATE TABLE IF NOT EXISTS public.messages (id int, conversation_id int, account_id int, message_type int, content text, status int, content_attributes json, created_at timestamp);
@@ -291,7 +291,7 @@ test('campaignsTierInfo: unlimited tier → cap/remaining null, unlimited flag',
 });
 
 test('handleAction: campaigns_tier wiring falls back to DEFAULT_CAP without creds (no network)', async () => {
-  _resetTierCache();
+  _resetHealthCache();
   const res = await handleAction(1, 'campaigns_tier', {});
   assert.equal(res.data.cap, DEFAULT_CAP); // scaffold has no WhatsApp channel → safe fallback
   assert.equal(typeof res.data.used_24h, 'number');

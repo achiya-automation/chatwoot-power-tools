@@ -16,12 +16,28 @@ import { makeDbReads } from '../src/reads.js';
 const pool = getPool({ databaseUrl: process.env.DATABASE_URL_TEST });
 const reads = makeDbReads(query);
 
+// Every test FILE scaffolds the Chatwoot tables it needs with CREATE TABLE IF NOT EXISTS,
+// against one shared database — so whichever file `node --test` happens to run FIRST defines
+// the shape for the whole run, and that order is readdir order (not alphabetical, and not
+// stable across filesystems). A scaffold that omits a column another file (or a migration)
+// relies on is therefore a landmine: it only explodes on the machines where this file wins
+// the race. Migration 013's function reads public.contacts.custom_attributes, so a contacts
+// table without it fails the migration and cascades into every later file.
+//
+// Fix: scaffold the SUPERSET here — the columns the real Chatwoot schema has and the rest of
+// the suite assumes. Cheap, and makes the run order irrelevant.
 beforeEach(async () => {
   await pool.query(`CREATE TABLE IF NOT EXISTS public.inboxes (id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int)`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS public.channel_whatsapp (id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb)`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS public.conversations (id int PRIMARY KEY, display_id int, account_id int, contact_id int)`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS public.contacts (id int PRIMARY KEY, account_id int, name text, phone_number text, email text)`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS public.messages (id int, conversation_id int, message_type int, created_at timestamp)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.channel_whatsapp (id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb, provider_config jsonb DEFAULT '{}'::jsonb)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.conversations (
+    id int PRIMARY KEY, display_id int, account_id int, contact_id int,
+    custom_attributes jsonb DEFAULT '{}'::jsonb, cached_label_list text)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.contacts (
+    id int PRIMARY KEY, account_id int, name text, phone_number text, email text,
+    custom_attributes jsonb DEFAULT '{}'::jsonb)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.messages (
+    id int, conversation_id int, account_id int, message_type int, content text,
+    status int, content_attributes json, created_at timestamp)`);
   await pool.query('TRUNCATE public.inboxes, public.channel_whatsapp, public.conversations, public.contacts, public.messages');
 });
 

@@ -1,4 +1,16 @@
-import { getDailyCap } from './meta.js';
+import { DEFAULT_CAP } from './meta.js';
+
+/**
+ * The account's 24h cap, as last refreshed from Meta by the reconcile loop.
+ * -1 in the column means the unlimited tier. Falls back to the conservative DEFAULT_CAP
+ * when the account has no health row yet (first boot, before the first Graph read).
+ */
+async function readCapFromHealth(query, accountId) {
+  const rows = await query('SELECT cap FROM drip.account_health WHERE account_id = $1', [accountId]);
+  const cap = rows[0]?.cap;
+  if (cap == null) return DEFAULT_CAP;
+  return Number(cap) < 0 ? Infinity : Number(cap);
+}
 
 /**
  * campaigns.js — read-only campaign analytics from Chatwoot's own tables.
@@ -200,15 +212,22 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   return { campaign, funnel, engagement, recipients, not_sent };
 }
 
-// Preflight: Meta's 24h send budget for the account — tier cap (live, cached ~6h via
-// meta.getDailyCap, NEVER throws), minus distinct conversations messaged in the rolling 24h
-// (drip sends + campaign sends; failed sends never opened a conversation so they don't count).
+// Preflight: Meta's 24h send budget for the account — the tier cap, minus distinct
+// conversations messaged in the rolling 24h (drip sends + campaign sends; failed sends never
+// opened a conversation so they don't count).
+//
+// The cap is read from drip.account_health, which the reconcile loop refreshes from the Graph
+// API every ~30 minutes. A dashboard read must not trigger its own Graph call: it would be a
+// second source of truth, and it would hit Meta once per page view.
+//
 // Advisory display only — the drip reconciler keeps enforcing its own budget. Best-effort:
 // returns null on any query failure so the UI simply hides the line.
-export async function campaignsTierInfo(query, reads, accountId, deps = {}) {
-  const { getCap = getDailyCap } = deps;
+// _reads is kept in the signature (unused) so the store.js call site and the existing tests
+// stay untouched — the cap now comes from drip.account_health, not from a Graph read.
+export async function campaignsTierInfo(query, _reads, accountId, deps = {}) {
+  const { getCap = readCapFromHealth } = deps;
   try {
-    const cap = await getCap(reads, accountId);
+    const cap = await getCap(query, accountId);
     const used = Number((await query(
       `SELECT count(DISTINCT cid)::int AS c FROM (
          SELECT sm.conversation_id AS cid

@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
 
 /*
  * media.test.js — header-media support: media_url round-trips through
@@ -12,7 +12,7 @@ const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
 
 beforeEach(async () => {
-  await runMigrations(pool);
+  await setupDb(pool);
   await query('TRUNCATE drip.enrollments, drip.sequence_steps, drip.sequences CASCADE');
 });
 

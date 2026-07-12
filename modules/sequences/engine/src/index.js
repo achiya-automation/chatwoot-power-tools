@@ -3,10 +3,11 @@ import { createApp } from './api.js';
 import { getPool, query } from './db.js';
 import { runMigrations } from './migrate.js';
 import { reconcileAccount } from './reconcile.js';
-import { getDailyCap } from './meta.js';
+import { refreshHealth } from './meta.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
+import * as compliance from './compliance.js';
 
 const config = loadConfig();
 const pool = getPool(config);
@@ -77,9 +78,27 @@ async function tick() {
       reads,
     });
     try {
-      // Read Meta's live messaging tier for this account (cached ~6h) so the reconciler sends
-      // exactly up to what Meta allows — and follows the tier up automatically as it grows.
-      const tierCap = await getDailyCap(reads, a.account_id, now);
+      // ── Phase 0: inbound scan ────────────────────────────────────────────────
+      // Detects opt-out requests ("הסר") and records engagement, WITHOUT a webhook: the
+      // engine already reads Chatwoot's Postgres and already wakes every 60s, so an
+      // incremental scan on a message-id watermark gives the same answer within a minute
+      // — and needs zero per-client setup. For a product sold to many clients that is the
+      // difference between "works" and "needs an install step".
+      //
+      // Runs BEFORE the reconciler on purpose: someone who wrote "הסר" a minute ago must
+      // be suppressed before this tick can send to them.
+      try {
+        const { optOuts } = await compliance.scanInbound(pool, a.account_id, now);
+        if (optOuts) console.log(`[drip] acct ${a.account_id}: ${optOuts} opt-out(s) suppressed`);
+        await compliance.reconcileEngagement(pool, a.account_id, now);
+      } catch (e) {
+        console.error(`[drip] inbound scan acct ${a.account_id} (non-fatal):`, e.message);
+      }
+
+      // Live tier + quality rating from Meta (cached ~30m). Fails safe: a Graph outage can
+      // only keep the last known cap, never raise it. A RED quality rating halts the account.
+      const { cap: tierCap } = await refreshHealth(pool, reads, a.account_id, now, { compliance });
+
       // Attribute definitions are provisioned once at onboarding (the AgentBot token can't
       // manage them), so the per-tick ensureAttributes call is gone — reconcile only.
       await reconcileAccount(pool, client, a.account_id, now, windows, {

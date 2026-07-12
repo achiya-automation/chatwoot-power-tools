@@ -5,6 +5,10 @@ import { ToastProvider } from './components/ui/Toast.jsx';
 import { applyDocumentDir, setLocale } from './i18n.js';
 import './index.css';
 
+// מזהה ה-build, מוטבע ע"י vite.config (define). מסומן על <html> כדי שאפשר יהיה לענות
+// על "איזו גרסה רצה אצלך?" בלי לנחש — ומכריח hash חדש לקבצים בכל פריסה (ראה vite.config).
+try { document.documentElement.setAttribute('data-build', __BUILD_ID__); } catch { /* noop */ }
+
 /*
  * נושא (theme) כהה/בהיר — מתאים את עצמו אוטומטית לממשק Chatwoot.
  * האפליקציה מוטמעת ב-iframe same-origin בתוך Chatwoot, ולכן יכולה לקרוא את

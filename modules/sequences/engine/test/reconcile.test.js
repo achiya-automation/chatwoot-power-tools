@@ -1,13 +1,13 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
+import { setupDb, relaxCompliance } from './helpers.js';
 import { reconcileAccount, paramsResolve } from '../src/reconcile.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
 beforeEach(async () => {
-  await runMigrations(pool);
+  await setupDb(pool);
   // Scaffold a minimal public.conversations table so enroll-phase tests can run.
   // Production uses the real Chatwoot table; this is test-only scaffolding.
   await pool.query(`
@@ -20,6 +20,7 @@ beforeEach(async () => {
   `);
   await pool.query('TRUNCATE public.conversations');
   await query('TRUNCATE drip.enrollments, drip.sequence_steps, drip.sequences, drip.no_send_windows, drip.sent_messages CASCADE');
+  await relaxCompliance(pool);
 });
 
 

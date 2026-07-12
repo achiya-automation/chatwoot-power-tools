@@ -1,8 +1,8 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { setupDb } from './helpers.js';
 import { parseHebcal, inNoSendWindow, refreshCalendar, loadWindows } from '../src/calendar.js';
 import { getPool } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
 
 // ── parseHebcal (pure) ──────────────────────────────────────────────────────
 
@@ -96,7 +96,7 @@ test('inNoSendWindow: empty windows → false', () => {
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
 beforeEach(async () => {
-  await runMigrations(pool);
+  await setupDb(pool);
   await pool.query('TRUNCATE drip.no_send_windows');
 });
 
