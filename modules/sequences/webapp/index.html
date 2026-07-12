@@ -31,6 +31,50 @@
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
     <script>
+      // ── רשת ביטחון: bundle שלא נטען ──────────────────────────────────────────────────
+      // כשקובץ ה-JS לא נטען, ‎<div id="root">‎ נשאר ריק והמסך לבן לגמרי — בלי שגיאה, בלי רמז,
+      // בלי שום דרך למשתמש להבין מה קרה. זה בדיוק מה שקרה כאשר ה-proxy הטביע
+      // ‎Cache-Control: max-age‎ גם על תשובת ה-401 של שער האימות: ה-CDN והדפדפן שמרו את
+      // ה-401 לאותו קובץ, והדשבורד נעלם עד שפג המטמון (24 שעות).
+      //
+      // המקור תוקן (השער מחזיר no-store, וה-proxy לא מטביע headers על הנתיב הזה), אבל
+      // דפדפן שכבר שמר 401 ימשיך להגיש אותו. מטמון ה-HTTP לא ניתן למחיקה מ-JS —
+      // ‎caches.delete‎ נוגע רק ב-CacheStorage. מה שכן עובד: לטעון את אותו קובץ בדיוק עם
+      // מחרוזת שאילתה, כי היא חלק ממפתח המטמון — כתובת חדשה, בקשה אמיתית לשרת.
+      // תיקון עצמי, שקוף, ופעם אחת.
+      setTimeout(function () {
+        var root = document.getElementById('root');
+        if (!root || root.children.length) return;                 // נטען כרגיל
+
+        var s = document.querySelector('script[type=module][src]');
+        if (!s || /[?&]cb=/.test(s.src)) return fail();            // כבר ניסינו — לא לולאה
+
+        var retry = document.createElement('script');
+        retry.type = 'module';
+        retry.src = s.src + (s.src.indexOf('?') === -1 ? '?' : '&') + 'cb=' + Date.now();
+        retry.onerror = fail;
+        document.body.appendChild(retry);
+
+        // ה-bundle שוקל מאות KB ומייבא chunks נוספים; טיימר קצוב היה מכריז על כישלון
+        // בזמן שהטעינה עוד רצה. במקום זה בודקים אם ה-app באמת עלה, ומוותרים רק אחרי
+        // 20 שניות של שקט.
+        var waited = 0;
+        var poll = setInterval(function () {
+          if (root.children.length) return clearInterval(poll);    // עלה — הכל טוב
+          if ((waited += 500) >= 20000) { clearInterval(poll); fail(); }
+        }, 500);
+
+        function fail() {
+          if (root.children.length) return;
+          root.setAttribute('dir', 'rtl');
+          root.style.cssText = 'font-family:system-ui,sans-serif;padding:2rem;text-align:center;color:#475569;line-height:1.7';
+          root.innerHTML =
+            '<h2 style="margin:0 0 .5rem;font-size:1.1rem;color:#0f172a">טעינת הלוח נכשלה</h2>' +
+            '<p style="margin:0">קובץ האפליקציה לא נטען מהשרת. נסו לרענן; אם זה חוזר — בדקו שהשרת פעיל.</p>';
+        }
+      }, 6000);
+    </script>
+    <script>
       // אין רישום Service Worker: הדשבורד מוטמע ב-iframe של Chatwoot ב-scope '/',
       // ורישום '/sw.js' רשם בטעות את ה-SW של Chatwoot עצמו (push) מתוך הקשר ה-drip.
       // ה-PWA מיותר לפאנל מוטמע. מבטלים SW רשום ישן (פעם אחת) כדי לנקות מצב תקול.

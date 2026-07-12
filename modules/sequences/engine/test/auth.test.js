@@ -35,20 +35,23 @@ function sessionCookie(fields = {}) {
 }
 
 // Minimal express-style req/res doubles so the gate can be unit-tested without a
-// live server or DB. status()/json() chain like express; next() flags pass-through.
+// live server or DB. status()/json()/set() chain like express; next() flags pass-through.
 function runGate(gate, headers, query = {}) {
   const req = { headers, query };
   const res = {
     statusCode: 200,
     body: undefined,
+    headers: {},
     status(c) { this.statusCode = c; return this; },
     json(b) { this.body = b; return this; },
+    set(k, v) { this.headers[k] = v; return this; },
   };
   let nexted = false;
   return gate(req, res, () => { nexted = true; }).then(() => ({
     passed: nexted,
     status: res.statusCode,
     body: res.body,
+    headers: res.headers,
   }));
 }
 
@@ -127,6 +130,25 @@ test('authGate denies a request with no cookie (401, no pass-through)', async ()
   assert.equal(r.passed, false);
   assert.equal(r.status, 401);
   assert.deepEqual(r.body, { ok: false, error: 'unauthorized' });
+});
+
+// ── a denial must never be cacheable ──
+// A proxy or CDN that stamps `Cache-Control: max-age` on every .js/.css response will also
+// cache this 401 — pinning it to a bundle's URL and serving it to logged-in users, who then
+// get a blank dashboard until the cache expires. Marking denials no-store closes that door
+// even when the proxy in front is misconfigured.
+test('authGate marks every denial no-store (a cached 401 would blank the dashboard)', async () => {
+  const gate = authGate({
+    chatwootBaseUrl: BASE,
+    fetchImpl: async () => ({ status: 401 }),
+    masterAccountId: 1,
+  });
+  const noCookie = await runGate(gate, {});
+  assert.equal(noCookie.headers['Cache-Control'], 'no-store');
+
+  const badCookie = await runGate(gate, { cookie: sessionCookie() });
+  assert.equal(badCookie.status, 401);
+  assert.equal(badCookie.headers['Cache-Control'], 'no-store');
 });
 
 // ── valid cookie passes, and a repeat is served from cache (one Chatwoot call) ──

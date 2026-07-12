@@ -1,5 +1,6 @@
-import { isNoSendNow, nextSendAt, atJerusalemHour, addInterval, skipNoSendWindows } from './schedule.js';
+import { isNoSendNow, nextSendAt, atJerusalemHour, addInterval, skipNoSendWindows, quietWindowEnd } from './schedule.js';
 import { withTx } from './db.js';
+import * as compliance from './compliance.js';
 
 /**
  * Clean a contact name for use as a template parameter. WAHA-synced contacts can
@@ -67,11 +68,10 @@ export function parseExternalError(attrsText) {
 // surfaces in the dashboard instead of looping once a minute forever.
 const MAX_SEND_ATTEMPTS = 3;
 
-// Meta delivery-failure codes that are TRANSIENT — the per-user marketing-message
-// frequency cap (Meta limits how many marketing templates a user gets per window).
-// These lift as the user's window resets, so we retry the step after a backoff instead
-// of abandoning the lead. Everything else (e.g. 131026 "undeliverable") is permanent.
-const TRANSIENT_DELIVERY_CODES = new Set(['131049', '130472']);
+// כמה זמן לדחות רצף שנחסם ע"י מטא ברמת התבנית או הפורטפוליו (132015 / 135000).
+// השהיית תבנית היא 3 שעות בפעם הראשונה — בדיקה כל 20 דקות מחזירה את הרצף לחיים
+// כמעט מיד כשהיא משתחררת, בלי להטריד את מטא בינתיים.
+const TEMPLATE_HOLD_MS = 20 * 60 * 1000;
 
 /**
  * Pure send-budget calc: how many due steps may go out THIS tick.
@@ -285,6 +285,11 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   // opened a conversation, so it must not count against the tier (drip-initiated sends only;
   // ponytail: manual Chatwoot campaigns on the same number aren't counted — add them if that
   // ever becomes a real mixed-use case). Only needed for a finite tier.
+  //
+  // in_session sends are EXCLUDED. Meta defines the messaging limit as the number of users you
+  // deliver to "outside of a customer service window" — a message sent to someone who replied
+  // within the last 24h does not consume the limit at all. Counting them (as we did) throttled
+  // the account below what Meta actually allows.
   let used24h = 0;
   if (Number.isFinite(opts.tierCap)) {
     used24h = Number((await q(
@@ -293,6 +298,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
          LEFT JOIN public.messages m ON m.id = sm.message_id
         WHERE sm.account_id = $1
           AND sm.sent_at > $2::timestamptz - interval '24 hours'
+          AND sm.in_session = false
           AND (m.status IS NULL OR m.status <> 3)`,
       [accountId, now]
     ))[0].c);
@@ -306,6 +312,31 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
     staticCap:      opts.maxSendsPerTick,
   });
   const toSend = Number.isFinite(budget) ? dueIds.slice(0, budget) : dueIds;
+
+  // ── Compliance context for this tick ────────────────────────────────────────
+  // Loaded once, outside the per-enrollment loop: the same settings/health/template map
+  // govern every send in this cycle, and re-reading them per lead would be N round-trips
+  // for identical rows. Contact state IS per-lead, so it is fetched as one batched read.
+  const cSettings  = await compliance.loadSettings(pool, accountId);
+  const cHealth    = await compliance.loadHealth(pool, accountId);
+  const cTemplates = await compliance.loadTemplateHealth(pool, accountId);
+
+  // The phone comes from public.contacts, NOT from drip.enrollments.phone — that column
+  // exists but is never written at enroll time, so reading it gave the US-number guard a
+  // NULL and the guard silently never fired.
+  const dueRows = toSend.length
+    ? await q(
+        `SELECT e.contact_id, c.phone_number AS phone
+           FROM drip.enrollments e
+           LEFT JOIN public.contacts c ON c.id = e.contact_id AND c.account_id = e.account_id
+          WHERE e.id = ANY($1::uuid[]) AND e.contact_id IS NOT NULL`,
+        [toSend]
+      )
+    : [];
+  const dueContactIds = dueRows.map((r) => r.contact_id);
+  const cPhones    = new Map(dueRows.map((r) => [r.contact_id, r.phone]));
+  const cStates    = await compliance.loadContactStates(pool, accountId, dueContactIds);
+  const cSentToday = await compliance.marketingSentToday(pool, accountId, dueContactIds, now);
 
   for (const enrollmentId of toSend) {
     try {
@@ -355,16 +386,30 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         // which would drop the lead permanently — so re-enabling resumes from here.
         if (!seq.send_enabled) return;
 
-        // Respect quiet hours / Shabbat / yom-tov (exact Hebcal windows)
-        if (
-          isNoSendNow({
-            now,
-            windows,
-            skipShabbat: seq.skip_shabbat,
-            quietStart:  seq.quiet_start,
-            quietEnd:    seq.quiet_end,
-          })
-        ) return;
+        // ── Quiet hours / Shabbat / yom-tov ───────────────────────────────────
+        // RESCHEDULE to the window edge rather than just returning. Returning left
+        // next_send_at in the past, so every lead blocked overnight stayed due and they
+        // all fired together the moment the window opened — a synchronised burst, exactly
+        // what Meta reads as spam. The jitter spreads them over the first spreadWindowMs
+        // (default 1h) instead, which is also when the tier budget can absorb them.
+        const gateArgs = {
+          now,
+          windows,
+          skipShabbat: seq.skip_shabbat,
+          quietStart:  seq.quiet_start,
+          quietEnd:    seq.quiet_end,
+        };
+        if (isNoSendNow(gateArgs)) {
+          const edge = quietWindowEnd(gateArgs);
+          if (edge) {
+            const jitter = Math.floor(Math.random() * (opts.spreadWindowMs || 3600000));
+            await c.query(
+              `UPDATE drip.enrollments SET next_send_at = $2 WHERE id = $1`,
+              [e.id, new Date(edge.getTime() + jitter)]
+            );
+          }
+          return;
+        }
 
         // Load the step to send
         const step = (await c.query(
@@ -427,6 +472,59 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
             }
             return;
           }
+        }
+
+        // ── COMPLIANCE GATE ──────────────────────────────────────────────────
+        // Every one of Meta's rules is enforced here, in one place, before anything
+        // irreversible happens (no conversation opened, no message sent, no cost).
+        // Runs BEFORE lazy conversation creation on purpose: a blocked lead must not
+        // leave a stray empty conversation behind.
+        const cState = cStates.get(e.contact_id) || {};
+        const session = compliance.inSession(cState, now);
+        const verdict = compliance.canSend({
+          category:  step.category,
+          contact:   cState,
+          phone:     cPhones.get(e.contact_id) || e.phone,
+          settings:  cSettings,
+          health:    cHealth,
+          template:  cTemplates.get(`${step.template_name}|${step.language}`)
+                     || cTemplates.get(step.template_name)
+                     || null,
+          sentToday: cSentToday.get(e.contact_id) || 0,
+          inSession: session,
+        });
+
+        if (!verdict.ok) {
+          if (verdict.action === 'drop') {
+            // The lead is gone for good — opted out, saturated, or unreachable. Stop the
+            // enrollment and clear the attribute so a later bulk enroll can't resurrect it.
+            await c.query(`UPDATE drip.enrollments SET status = 'stopped' WHERE id = $1`, [e.id]);
+            await c.query(
+              `UPDATE public.contacts SET custom_attributes = custom_attributes - 'sequence'
+                WHERE account_id = $1 AND id = $2`,
+              [accountId, e.contact_id]
+            );
+            if (e.conversation_id) {
+              try { await client.patchAttrs(e.conversation_id, { seq_state: 'stopped' }); }
+              catch (pe) { console.error(`[drip] patchAttrs(gate-drop) conv ${e.conversation_id}:`, pe.message); }
+            }
+            console.log(`[drip] gate DROP acct ${accountId} contact ${e.contact_id}: ${verdict.reason} ${verdict.detail || ''}`);
+            return;
+          }
+
+          // 'defer' — not now, but the lead keeps its exact place in the sequence.
+          // A paused template lifts in 3h, a daily cap in 24h, an account halt when a
+          // human clears it. Re-arm and check again; never burn the lead over a wait.
+          const waitMs =
+            verdict.reason === 'daily_cap'      ? 24 * 3600 * 1000 :
+            verdict.reason === 'account_halted' ? 60 * 60 * 1000
+                                                : TEMPLATE_HOLD_MS;
+          await c.query(
+            `UPDATE drip.enrollments SET next_send_at = $2 WHERE id = $1`,
+            [e.id, new Date(now.getTime() + waitMs)]
+          );
+          console.log(`[drip] gate DEFER acct ${accountId} contact ${e.contact_id}: ${verdict.reason}`);
+          return;
         }
 
         // ── Lazy conversation creation ───────────────────────────────────────
@@ -497,13 +595,19 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           sendResult && typeof sendResult === 'object' && Number.isFinite(Number(sendResult.id))
             ? Number(sendResult.id)
             : null;
+        // category + in_session + contact_id are what make the caps work: Meta counts a
+        // marketing template against the daily tier and the per-user limit ONLY when it is
+        // sent outside an open customer-service window. Without these three columns the
+        // budget and the per-contact frequency cap are both blind.
         await c.query('SAVEPOINT hist');
         try {
           await c.query(
             `INSERT INTO drip.sent_messages
-                   (account_id, conversation_id, enrollment_id, sequence_id, step_order, template_name, content, message_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [accountId, conversationId, e.id, e.sequence_id, e.current_step, step.template_name, sentContent, sentMessageId]
+                   (account_id, conversation_id, enrollment_id, sequence_id, step_order,
+                    template_name, content, message_id, category, in_session, contact_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [accountId, conversationId, e.id, e.sequence_id, e.current_step, step.template_name,
+             sentContent, sentMessageId, step.category, session, e.contact_id]
           );
           await c.query('RELEASE SAVEPOINT hist');
         } catch (histErr) {
@@ -649,10 +753,15 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
   try {
     pending = (await pool.query(
       `SELECT sm.id AS sent_id, sm.enrollment_id, sm.conversation_id, sm.step_order,
+              sm.template_name,
+              COALESCE(sm.contact_id, e.contact_id, cv.contact_id) AS contact_id,
               m.status AS msg_status,
               m.content_attributes::text AS attrs_text
          FROM drip.sent_messages sm
          JOIN public.messages m ON m.id = sm.message_id
+         LEFT JOIN drip.enrollments e ON e.id = sm.enrollment_id
+         LEFT JOIN public.conversations cv
+                ON cv.account_id = sm.account_id AND cv.display_id = sm.conversation_id
         WHERE sm.account_id      = $1
           AND sm.delivery_status = 'pending'
           AND sm.message_id IS NOT NULL
@@ -668,61 +777,179 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
     throw err;
   }
 
+  const settings = await compliance.loadSettings(pool, accountId);
+
+  // Re-arm the SAME step at now + hours, keeping the lead exactly where it is.
+  const rearm = (enrollmentId, stepOrder, hours) =>
+    pool.query(
+      `UPDATE drip.enrollments
+          SET status = 'active', current_step = $2,
+              next_send_at = $3::timestamptz + make_interval(hours => $4)
+        WHERE id = $1 AND status IN ('active', 'completed', 'failed')`,
+      [enrollmentId, stepOrder, now, hours]
+    );
+
+  const failEnrollment = async (enrollmentId, conversationId) => {
+    const upd = await pool.query(
+      `UPDATE drip.enrollments SET status = 'failed'
+        WHERE id = $1 AND status IN ('active', 'completed')`,
+      [enrollmentId]
+    );
+    if (upd.rowCount > 0 && conversationId) {
+      try { await client.patchAttrs(conversationId, { seq_state: 'failed' }); }
+      catch (e) { console.error('[drip] patchAttrs(failed) error:', e.message); }
+    }
+  };
+
   for (const row of pending) {
     const s = Number(row.msg_status);
-    if (s === 3) {
-      // FAILED — record the error first (history truth + retry counting).
-      const parsed = parseExternalError(row.attrs_text);
-      const code = parsed?.code || null;
+
+    if (s === 1 || s === 2) {
       await pool.query(
-        `UPDATE drip.sent_messages
-            SET delivery_status = 'failed', error_code = $2, error_title = $3
-          WHERE id = $1`,
-        [row.sent_id, code, parsed?.title || null]
+        `UPDATE drip.sent_messages SET delivery_status = 'delivered' WHERE id = $1`,
+        [row.sent_id]
       );
+      continue;
+    }
+    if (s !== 3) continue;   // 0 = sent, not yet confirmed → re-check next tick
 
-      // No enrollment to act on (re-assigned/deleted) → history only.
-      if (!row.enrollment_id) continue;
+    // FAILED — record the error first (history truth + retry counting).
+    const parsed = parseExternalError(row.attrs_text);
+    const code = parsed?.code || null;
+    await pool.query(
+      `UPDATE drip.sent_messages
+          SET delivery_status = 'failed', error_code = $2, error_title = $3
+        WHERE id = $1`,
+      [row.sent_id, code, parsed?.title || null]
+    );
 
-      // ── TRANSIENT per-user marketing cap (131049/130472) → retry, don't abandon ──
-      if (TRANSIENT_DELIVERY_CODES.has(code)) {
+    const kind = compliance.classifyError(code);
+
+    // ── Account-level: nothing will send until a human fixes it ────────────────
+    // 368 (policy block) / 133xxx (registration). Previously these silently failed one
+    // lead at a time while the engine kept hammering at full pace — the fastest way to
+    // turn a temporary block into a permanent ban.
+    if (kind === 'policy') {
+      const h = await compliance.loadHealth(pool, accountId);
+      if (!h.halted) {
+        await compliance.haltAccount(pool, accountId, `מטא החזירה קוד ${code}: ${parsed?.title || ''}`);
+      }
+      if (row.enrollment_id) await rearm(row.enrollment_id, row.step_order, 1);
+      continue;
+    }
+
+    if (!row.enrollment_id) continue;   // re-assigned/deleted → history only
+
+    // Suppression is keyed by contact_id. Without one there is nobody to suppress, so the
+    // lead is failed instead — it still surfaces in the dashboard rather than vanishing.
+    // A CAP failure is deliberately NOT in this list: the back-off is about the recipient's
+    // window, not about our bookkeeping, so it must still retry even when we cannot count it.
+    if (!row.contact_id && ['optout', 'invalid'].includes(kind)) {
+      await failEnrollment(row.enrollment_id, row.conversation_id);
+      continue;
+    }
+
+    switch (kind) {
+      // ── Meta paused the template, or portfolio pacing dropped the message ────
+      // Both are TEMPORARY (a pause is 3h, then 6h). Meta's own instruction is to halt
+      // campaigns that rely on a paused template and resume when it goes Active — not to
+      // throw the lead away. We re-arm the same step; the compliance gate will keep
+      // deferring it until template_health shows APPROVED again.
+      case 'template_paused':
+      case 'pacing':
+        if (code === '132015') {
+          await pool.query(
+            `UPDATE drip.template_health SET status = 'PAUSED', checked_at = now()
+              WHERE account_id = $1 AND template_name = $2`,
+            [accountId, row.template_name]
+          );
+          await compliance.raiseAlert(
+            pool, accountId, 'warn', 'template_paused',
+            `התבנית "${row.template_name}" הושהתה ע"י מטא. הרצף ממתין ויימשך אוטומטית כשהיא תחזור.`
+          );
+        }
+        await rearm(row.enrollment_id, row.step_order, 1);
+        continue;
+
+      // ── The user told Meta they don't want marketing ─────────────────────────
+      case 'optout':
+        await compliance.suppressContact(
+          pool, accountId, row.contact_id, 'meta_131050',
+          'מטא: המשתמש אינו מקבל הודעות שיווקיות', 'marketing'
+        );
+        continue;
+
+      // ── Not a reachable WhatsApp number ──────────────────────────────────────
+      // Suppress the contact (nothing will ever reach them) AND fail the enrollment, so the
+      // lead surfaces in the dashboard as stuck instead of silently sitting at 'completed'.
+      case 'invalid':
+        if (row.contact_id) {
+          await compliance.suppressContact(
+            pool, accountId, row.contact_id, 'invalid',
+            parsed?.title || 'לא ניתן למסירה', 'all'
+          );
+        }
+        await failEnrollment(row.enrollment_id, row.conversation_id);
+        continue;
+
+      // ── Per-user marketing cap (131049) — the Banana Book failure ────────────
+      // Meta: "wait at least 24 hours before attempting to resend ... excessive retry
+      // attempts [make] further delivery attempts unavailable for up to 24 hours."
+      // So: never retry sooner than deliveryRetryHours, and after max_cap_failures the
+      // contact is saturated — Meta's cap is cross-business and adaptive, they will not
+      // receive marketing from anyone. Chasing them costs money, produces nothing, and
+      // drags the list's read rate down, which shrinks the cap for everyone else.
+      case 'cap': {
+        // Two independent counters, because they answer two different questions.
+        //
+        // cap_failures (per CONTACT) — is this person saturated? Meta's per-user marketing
+        // limit is cross-business and adaptive: after a couple of 131049s they will not be
+        // receiving marketing from anyone. Chasing them costs money, produces nothing, and
+        // drags the list's read rate down, which shrinks the cap for every other contact.
+        if (row.contact_id) {
+          const st = (await pool.query(
+            `INSERT INTO drip.contact_state (account_id, contact_id, cap_failures)
+             VALUES ($1, $2, 1)
+             ON CONFLICT (account_id, contact_id) DO UPDATE
+               SET cap_failures = drip.contact_state.cap_failures + 1, updated_at = now()
+             RETURNING cap_failures`,
+            [accountId, row.contact_id]
+          )).rows[0];
+          const failures = Number(st?.cap_failures || 1);
+          if (failures >= Number(settings.max_cap_failures)) {
+            await compliance.suppressContact(
+              pool, accountId, row.contact_id, 'saturated',
+              `${failures} כשלי מכסה אישית (${code}) ברצף`, 'marketing'
+            );
+            continue;
+          }
+        }
+
+        // tries (per STEP) — how many times have we already attempted THIS step? This is the
+        // retry budget, and it comes from the send history so it survives a restart.
+        // Meta requires ≥24h between attempts (deliveryRetryHours); production runs with
+        // maxDeliveryRetries=0, i.e. no retries at all.
         const tries = Number((await pool.query(
           `SELECT count(*)::int AS c FROM drip.sent_messages
             WHERE enrollment_id = $1 AND step_order = $2 AND delivery_status = 'failed'`,
           [row.enrollment_id, row.step_order]
         )).rows[0].c);
-        if (tries < maxDeliveryRetries) {
-          // Re-send the SAME step after a backoff (escalating per attempt) — by then the
-          // user's marketing window has likely reset. Keeps the lead in the sequence.
-          await pool.query(
-            `UPDATE drip.enrollments
-                SET status = 'active', current_step = $2,
-                    next_send_at = $3::timestamptz + make_interval(hours => $4)
-              WHERE id = $1 AND status IN ('active', 'completed', 'failed')`,
-            [row.enrollment_id, row.step_order, now, deliveryRetryHours * tries]
-          );
-          continue; // retrying — not stuck
+
+        if (maxDeliveryRetries > 0 && tries < maxDeliveryRetries) {
+          await rearm(row.enrollment_id, row.step_order, deliveryRetryHours * tries);
+          continue;
         }
-        // retries exhausted → fall through to permanent fail
+        await failEnrollment(row.enrollment_id, row.conversation_id);
+        continue;
       }
 
-      // PERMANENT failure (131026 etc.) or transient retries exhausted → flag stuck.
-      const upd = await pool.query(
-        `UPDATE drip.enrollments SET status = 'failed'
-          WHERE id = $1 AND status IN ('active', 'completed')`,
-        [row.enrollment_id]
-      );
-      if (upd.rowCount > 0) {
-        try { await client.patchAttrs(row.conversation_id, { seq_state: 'failed' }); }
-        catch (e) { console.error('[drip] patchAttrs(failed) error:', e.message); }
-      }
-    } else if (s === 1 || s === 2) {
-      // DELIVERED / READ
-      await pool.query(
-        `UPDATE drip.sent_messages SET delivery_status = 'delivered' WHERE id = $1`,
-        [row.sent_id]
-      );
+      // ── Transient Meta hiccup ────────────────────────────────────────────────
+      case 'transient':
+        await rearm(row.enrollment_id, row.step_order, 1);
+        continue;
+
+      default:
+        await failEnrollment(row.enrollment_id, row.conversation_id);
     }
-    // s === 0 (sent, not yet confirmed) → leave pending for the next tick
   }
 }

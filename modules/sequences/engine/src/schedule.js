@@ -76,6 +76,51 @@ export function atJerusalemHour(ref, hour) {
   return new Date(Date.UTC(+p.year, +p.month - 1, +p.day, hour, 0, 0) - offsetMs);
 }
 
+/**
+ * The instant a no-send period that is open at `now` ends — quiet hours and/or the
+ * shabbat/yom-tov window, whichever ends LAST. null when nothing is blocking now.
+ *
+ * The reconciler used to just `return` from a blocked send, leaving next_send_at in the
+ * past. Every blocked lead therefore stayed due and they ALL fired together the moment
+ * the window closed — a synchronised burst at 08:00, which is exactly the shape Meta reads
+ * as spam. Rescheduling to the window edge (plus jitter, at the call site) spreads them.
+ *
+ * @param {object}  opts            - same shape as isNoSendNow
+ * @param {Date}    opts.now
+ * @param {Array}   [opts.windows]
+ * @param {boolean} [opts.skipShabbat]
+ * @param {string}  [opts.quietStart] - HH:MM
+ * @param {string}  [opts.quietEnd]   - HH:MM
+ * @returns {Date|null}
+ */
+export function quietWindowEnd({ now, windows, skipShabbat = false, quietStart, quietEnd } = {}) {
+  const ends = [];
+
+  if (quietStart && quietEnd) {
+    const { hm } = parts(now);
+    if (inQuiet(hm, quietStart, quietEnd)) {
+      // quietEnd is a Jerusalem wall-clock HH:MM. It is today's instance when it still
+      // lies ahead of us today, otherwise tomorrow's (the cross-midnight 22:00→08:00 case).
+      const [h, m] = String(quietEnd).split(':').map(Number);
+      let end = atJerusalemHour(now, h);
+      if (m) end = new Date(end.getTime() + m * 60_000);
+      if (end <= now) end = new Date(end.getTime() + 86_400_000);
+      ends.push(end);
+    }
+  }
+
+  if (skipShabbat && Array.isArray(windows)) {
+    for (const w of windows) {
+      const s = new Date(w.starts_at).getTime();
+      const e = new Date(w.ends_at).getTime();
+      if (now.getTime() >= s && now.getTime() < e) ends.push(new Date(e));
+    }
+  }
+
+  if (!ends.length) return null;
+  return new Date(Math.max(...ends.map((d) => d.getTime())));
+}
+
 // JS getDay()-style weekday (0=Sun .. 6=Sat) in Jerusalem.
 const DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 export const jerusalemDow = (date) =>

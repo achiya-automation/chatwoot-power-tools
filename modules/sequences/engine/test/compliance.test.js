@@ -1,0 +1,276 @@
+/**
+ * compliance.test.js — one test per Meta rule.
+ *
+ * Pure logic only (no DB): isOptOut / isUsNumber / classifyError / inSession / canSend.
+ * Each block names the Meta rule it enforces, so a future change that breaks a rule fails
+ * a test that says which rule.
+ *
+ * Run: node --test test/compliance.test.js
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  isOptOut, isMarketing, isUsNumber, classifyError, inSession, canSend, DEFAULT_SETTINGS,
+} from '../src/compliance.js';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Meta: "provide a clear way to opt-out in the message"
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('isOptOut: Hebrew removal words are detected', () => {
+  for (const t of ['הסר', 'הסירו אותי', 'תסיר אותי בבקשה', 'להסיר', 'הסרה מהרשימה']) {
+    assert.ok(isOptOut(t), `expected opt-out for "${t}"`);
+  }
+});
+
+test('isOptOut: Hebrew removal phrases are detected inside a longer message', () => {
+  assert.ok(isOptOut('שלום, אני לא מעוניין בהודעות האלה יותר, תודה'));
+  assert.ok(isOptOut('אל תשלחו לי יותר הודעות בבקשה'));
+  assert.ok(isOptOut('תורידו אותי מהרשימה שלכם'));
+});
+
+test('isOptOut: English removal words are detected', () => {
+  for (const t of ['STOP', 'unsubscribe', 'please remove me from this list', 'opt out']) {
+    assert.ok(isOptOut(t), `expected opt-out for "${t}"`);
+  }
+});
+
+test('isOptOut: matches whole WORDS, not substrings — "הסרטון" is not "הסר"', () => {
+  assert.equal(isOptOut('הסרטון שלכם היה מעולה'), null);
+  assert.equal(isOptOut('ראיתי את הסרט אתמול'), null);
+});
+
+test('isOptOut: ambiguous words only count when they are the whole message', () => {
+  assert.ok(isOptOut('די'));                       // one word → clearly "enough"
+  assert.equal(isOptOut('די טוב, תודה רבה לכם'), null);   // "quite good" → not an opt-out
+  assert.ok(isOptOut('stop'));
+  assert.equal(isOptOut('please stop by the store tomorrow to pick it up'), null);
+});
+
+test('isOptOut: punctuation and niqqud do not defeat the match', () => {
+  assert.ok(isOptOut('הסר!!!'));
+  assert.ok(isOptOut('  הסר, בבקשה.  '));
+});
+
+test('isOptOut: a normal reply is not an opt-out', () => {
+  assert.equal(isOptOut('כן, מעוניין! מתי אפשר לדבר?'), null);
+  assert.equal(isOptOut('תודה רבה'), null);
+  assert.equal(isOptOut(''), null);
+  assert.equal(isOptOut(null), null);
+});
+
+test('isOptOut: per-client extra keywords are honoured', () => {
+  assert.equal(isOptOut('נא להסירני מהדיוור'), null);          // not in the default list...
+  assert.ok(isOptOut('נא להסירני מהדיוור', ['להסירני']));      // ...until the client adds it
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Meta: marketing templates are NOT delivered to US phone numbers
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('isUsNumber: a US number is detected, Canada (+1 too) is not', () => {
+  assert.ok(isUsNumber('+1 212 555 0123'));      // New York
+  assert.ok(isUsNumber('13105550123'));          // Los Angeles
+  assert.equal(isUsNumber('+1 416 555 0123'), false);  // Toronto — Canada shares +1
+  assert.equal(isUsNumber('+1 604 555 0123'), false);  // Vancouver
+});
+
+test('isUsNumber: non-+1 numbers are never US', () => {
+  assert.equal(isUsNumber('+972547200266'), false);
+  assert.equal(isUsNumber('+442071234567'), false);
+  assert.equal(isUsNumber(''), false);
+  assert.equal(isUsNumber(null), false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Meta error codes → the action the engine must take
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('classifyError: per-user marketing cap codes are a CAP, not a permanent failure', () => {
+  assert.equal(classifyError('131049'), 'cap');   // "healthy ecosystem engagement"
+  assert.equal(classifyError('130472'), 'cap');
+  assert.equal(classifyError('131056'), 'cap');
+});
+
+test('classifyError: a paused template is TEMPORARY — the lead must not be burned', () => {
+  // Meta pauses a low-quality template for 3h, then 6h. Treating 132015 as permanent
+  // (the old behaviour) threw the lead away over a three-hour wait.
+  assert.equal(classifyError('132015'), 'template_paused');
+});
+
+test('classifyError: portfolio pacing drop is temporary', () => {
+  assert.equal(classifyError('135000'), 'pacing');
+});
+
+test('classifyError: an explicit marketing opt-out suppresses the contact', () => {
+  assert.equal(classifyError('131050'), 'optout');
+});
+
+test('classifyError: a policy block halts the whole account', () => {
+  assert.equal(classifyError('368'), 'policy');      // temporarily blocked for policy violations
+  assert.equal(classifyError('131031'), 'policy');   // account locked
+  assert.equal(classifyError('133010'), 'policy');   // phone number not registered
+  assert.equal(classifyError('133016'), 'policy');
+});
+
+test('classifyError: 133004 is a server hiccup, NOT a policy halt', () => {
+  assert.equal(classifyError('133004'), 'transient');
+});
+
+test('classifyError: an unreachable number is invalid, and unknown codes stay permanent', () => {
+  assert.equal(classifyError('131026'), 'invalid');
+  assert.equal(classifyError('999999'), 'permanent');
+  assert.equal(classifyError(null), 'permanent');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Meta: "marketing messages sent within [the 24h] window do not count towards the limit"
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('inSession: a reply within 24h opens the window; older does not', () => {
+  const now = new Date('2026-07-12T12:00:00Z');
+  assert.ok(inSession({ last_inbound_at: '2026-07-12T02:00:00Z' }, now));       // 10h ago
+  assert.equal(inSession({ last_inbound_at: '2026-07-11T02:00:00Z' }, now), false); // 34h ago
+  assert.equal(inSession({}, now), false);
+  assert.equal(inSession(null, now), false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// canSend — the gate
+// ═══════════════════════════════════════════════════════════════════════════
+
+const base = {
+  category: 'MARKETING',
+  contact:  { consent_at: '2026-07-01T00:00:00Z', consent_source: 'lead_ad' },
+  phone:    '+972541234567',
+  settings: DEFAULT_SETTINGS,
+  health:   {},
+  template: { status: 'APPROVED', quality: 'GREEN' },
+  sentToday: 0,
+  inSession: false,
+};
+
+test('canSend: a consented contact with an approved template passes', () => {
+  assert.deepEqual(canSend(base), { ok: true });
+});
+
+test('canSend: Meta rule #1 "Expected" — no consent record, no marketing', () => {
+  const v = canSend({ ...base, contact: {} });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'no_consent');
+  assert.equal(v.action, 'defer');   // the lead waits for consent, it is not destroyed
+});
+
+test('canSend: UTILITY is exempt from the consent gate and the per-user cap', () => {
+  // Meta's per-user marketing limit applies to MARKETING only. An order update must
+  // still reach the customer.
+  assert.deepEqual(canSend({ ...base, category: 'UTILITY', contact: {} }), { ok: true });
+  assert.deepEqual(canSend({ ...base, category: 'AUTHENTICATION', contact: {}, sentToday: 99 }), { ok: true });
+});
+
+test('canSend: an open 24h session bypasses consent AND the daily cap', () => {
+  // Inside a customer-service window Meta counts nothing against either limit, so the
+  // gate must not invent a restriction Meta does not impose.
+  const v = canSend({ ...base, contact: {}, sentToday: 5, inSession: true });
+  assert.equal(v.ok, true);
+  assert.equal(v.reason, 'in_session');
+});
+
+test('canSend: a suppressed contact is dropped, not deferred', () => {
+  const v = canSend({ ...base, contact: { ...base.contact, suppressed_at: new Date(), suppressed_reason: 'keyword' } });
+  assert.equal(v.ok, false);
+  assert.equal(v.action, 'drop');
+  assert.equal(v.detail, 'keyword');
+});
+
+test('canSend: a keyword opt-out (scope=all) blocks UTILITY too', () => {
+  const contact = { suppressed_at: new Date(), suppressed_reason: 'keyword', suppressed_scope: 'all' };
+  assert.equal(canSend({ ...base, category: 'UTILITY', contact }).ok, false);
+});
+
+test('canSend: a marketing-scoped suppression still lets UTILITY through', () => {
+  const contact = { suppressed_at: new Date(), suppressed_reason: 'meta_131050', suppressed_scope: 'marketing' };
+  assert.equal(canSend({ ...base, category: 'MARKETING', contact }).ok, false);
+  assert.equal(canSend({ ...base, category: 'UTILITY', contact }).ok, true);
+});
+
+test('canSend: a paused template DEFERS the lead — it does not fail it', () => {
+  const v = canSend({ ...base, template: { status: 'PAUSED' } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'template_paused');
+  assert.equal(v.action, 'defer');
+});
+
+test('canSend: an unknown template is allowed (fail-open) — a Graph outage must not mute a client', () => {
+  assert.equal(canSend({ ...base, template: null }).ok, true);
+});
+
+test('canSend: a halted account sends nothing, but keeps every lead in place', () => {
+  const v = canSend({ ...base, health: { halted: true, halt_reason: 'RED' } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'account_halted');
+  assert.equal(v.action, 'defer');
+});
+
+test('canSend: Meta "be mindful of how frequently you send" — the per-contact daily cap', () => {
+  assert.equal(canSend({ ...base, sentToday: 0 }).ok, true);
+  const v = canSend({ ...base, sentToday: 1 });   // default max_marketing_per_day = 1
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'daily_cap');
+  assert.equal(v.action, 'defer');
+});
+
+test('canSend: the daily cap is configurable per client', () => {
+  const settings = { ...DEFAULT_SETTINGS, max_marketing_per_day: 3 };
+  assert.equal(canSend({ ...base, settings, sentToday: 2 }).ok, true);
+  assert.equal(canSend({ ...base, settings, sentToday: 3 }).ok, false);
+});
+
+test('canSend: marketing to a US number is dropped (Meta never delivers it)', () => {
+  const v = canSend({ ...base, phone: '+12125550123' });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'us_number');
+  assert.equal(v.action, 'drop');
+});
+
+test('canSend: a saturated contact (repeated 131049) is dropped', () => {
+  const v = canSend({ ...base, contact: { ...base.contact, cap_failures: 2 } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'saturated');
+  assert.equal(v.action, 'drop');
+});
+
+test('canSend: a contact who never opens marketing is dropped before Meta punishes the list', () => {
+  // Meta's per-user cap is driven by the recipient's recent marketing READ RATE. Every
+  // send to someone who never opens drags the list's rate down — which shrinks the cap
+  // for every other contact too.
+  const v = canSend({ ...base, contact: { ...base.contact, unengaged_streak: 3 } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'unengaged');
+  assert.equal(v.action, 'drop');
+});
+
+test('canSend: consent can be turned off per client (opt-in enforced elsewhere)', () => {
+  const settings = { ...DEFAULT_SETTINGS, require_consent: false };
+  assert.equal(canSend({ ...base, settings, contact: {} }).ok, true);
+});
+
+test('canSend: the order of checks — a halt beats everything, a drop beats a defer', () => {
+  // A halted account with a suppressed contact and a paused template must report the halt:
+  // it is the fact the operator needs to see.
+  const v = canSend({
+    ...base,
+    health:   { halted: true },
+    template: { status: 'PAUSED' },
+    contact:  { suppressed_at: new Date() },
+  });
+  assert.equal(v.reason, 'account_halted');
+});
+
+test('isMarketing: defaults to marketing when the category is missing', () => {
+  // Safer default: an uncategorised step is treated as marketing, so it gets the caps
+  // rather than slipping past them.
+  assert.equal(isMarketing(undefined), true);
+  assert.equal(isMarketing('marketing'), true);
+  assert.equal(isMarketing('UTILITY'), false);
+});

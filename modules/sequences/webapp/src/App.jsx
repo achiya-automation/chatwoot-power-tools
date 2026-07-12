@@ -13,6 +13,7 @@ import {
   BarChart3,
   Tag,
   Megaphone,
+  ShieldCheck,
 } from 'lucide-react';
 import Button from './components/ui/Button.jsx';
 import Switch from './components/ui/Switch.jsx';
@@ -35,6 +36,7 @@ import ConversationStatus from './components/ConversationStatus.jsx';
 import BulkEnrollModal from './components/BulkEnrollModal.jsx';
 import CampaignsView from './components/CampaignsView.jsx';
 import CampaignDetailView from './components/CampaignDetailView.jsx';
+import ComplianceView from './components/ComplianceView.jsx';
 import useChatwootContext from './useChatwootContext.js';
 import {
   listSequences,
@@ -62,6 +64,7 @@ const M = {
     tab_sequences: 'רצפים',
     tab_contacts: 'אנשי קשר',
     tab_campaigns: 'קמפיינים',
+    tab_compliance: 'ציות',
     appTitle: 'רצפי WhatsApp',
     subtitle: 'ניהול רצפי הודעות אוטומטיים (drip)',
     subtitleFull: 'ניהול רצפי הודעות אוטומטיים (drip) ללקוחות',
@@ -110,6 +113,7 @@ const M = {
     tab_sequences: 'Sequences',
     tab_contacts: 'Contacts',
     tab_campaigns: 'Campaigns',
+    tab_compliance: 'Compliance',
     appTitle: 'WhatsApp Sequences',
     subtitle: 'Manage automated (drip) message sequences',
     subtitleFull: 'Manage automated (drip) message sequences for your customers',
@@ -181,7 +185,7 @@ export default function App() {
   // טאב פעיל: סקירה (ברירת מחדל) / רצפים / אנשי קשר.
   // נשמר ב-localStorage כדי שריענון העמוד יישאר באותו טאב; ?tab= גובר (deep-link).
   const [view, setView] = useState(() => {
-    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview' || v === 'campaigns';
+    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview' || v === 'campaigns' || v === 'compliance';
     const t = new URLSearchParams(window.location.search).get('tab');
     if (valid(t)) return t;
     try {
@@ -210,7 +214,7 @@ export default function App() {
       if (e.origin !== window.location.origin) return; // same-origin embed בלבד
       const d = e?.data;
       if (d && typeof d === 'object' && d.type === 'drip-nav'
-          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns')) {
+          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns' || d.tab === 'compliance')) {
         setView(d.tab);
         setCampaignId(null); // איפוס צלילת הקמפיין — לא לנחות על תצוגת פרטים ישנה (כמו TabButton הפנימי)
       }
@@ -240,7 +244,7 @@ export default function App() {
     else setCampaignId(null);
   };
   // כותרת לפי הטאב הפעיל — בסגנון הכותרות הנייטיביות של Chatwoot (text-base font-medium)
-  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : t('tab_overview');
+  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : view === 'compliance' ? t('tab_compliance') : t('tab_overview');
 
   // מצב "שיחה" — האפליקציה רצה כ-Dashboard App בתוך שיחה (סרגל צד צר).
   // אז מציגים תצוגת מצב קומפקטית לקריאה-בלבד של הליד הזה בלבד (בלי ניהול).
@@ -471,11 +475,16 @@ export default function App() {
               <TabButton active={view === 'campaigns'} onClick={() => { setView('campaigns'); setCampaignId(null); }} icon={Megaphone}>
                 {t('tab_campaigns')}
               </TabButton>
+              <TabButton active={view === 'compliance'} onClick={() => setView('compliance')} icon={ShieldCheck}>
+                {t('tab_compliance')}
+              </TabButton>
             </div>
           )}
           <div className="flex items-center gap-2">
-            {/* "שיוך לפי תווית" משייך רצף לאנשי קשר — לא רלוונטי בהקשר הקמפיינים, שם מסתירים אותו */}
-            {!noAccount && view !== 'campaigns' ? (
+            {/* "שיוך לפי תווית" משייך רצף לאנשי קשר — לא רלוונטי בהקשר הקמפיינים, שם מסתירים אותו.
+                גם בטאב הציות מסתירים: שם יש "רישום הסכמה לפי תווית" — שתי פעולות-לפי-תווית שונות
+                באותו מסך הן מלכודת. */}
+            {!noAccount && view !== 'campaigns' && view !== 'compliance' ? (
               <Button
                 variant="faded"
                 color="slate"
@@ -505,6 +514,8 @@ export default function App() {
           campaignId != null
             ? <CampaignDetailView campaignId={campaignId} accountId={accountId} onBack={handleCampaignBack} />
             : <CampaignsView accountId={accountId} onSelect={setCampaignId} />
+        ) : view === 'compliance' ? (
+          <ComplianceView accountId={accountId} />
         ) : view === 'contacts' ? (
           <EnrollmentsView accountId={accountId} />
         ) : loading ? (

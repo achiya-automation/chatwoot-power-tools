@@ -276,3 +276,48 @@ export async function getCampaignsTrend(accountId) {
 export async function getCampaignsTier(accountId) {
   return call('campaigns_tier', {}, accountId);
 }
+
+// ── ציות (מטא) ──
+// compliance — תמונת הציות המלאה של החשבון:
+// { health:{tier,cap,quality,halted,halt_reason,halted_at,checked_at}, settings, templates[],
+//   alerts[], contacts:{known,with_consent,suppressed,stale}, missing_consent, suppressed_by_reason }.
+// ⚠️ settings יכול לחזור {} כשאין שורה לחשבון — ה-UI נופל לברירות המחדל (DEFAULT_SETTINGS).
+// health.cap = -1 → ללא הגבלה.
+export async function getCompliance(accountId) {
+  return call('compliance', {}, accountId);
+}
+
+// suppressed — אנשי הקשר החסומים לשיווק: [{ contact_id, name, phone, suppressed_at,
+// suppressed_reason, suppressed_detail, suppressed_scope, unengaged_streak, cap_failures,
+// consent_source, consent_at }].
+export async function listSuppressed(accountId, limit = 100) {
+  const data = await call('suppressed', { limit }, accountId);
+  return data || [];
+}
+
+// save_compliance — שמירת מדיניות הציות של החשבון (כל השדות ביחד). מחזיר { ok:true }.
+export async function saveCompliance(settings, accountId) {
+  return call('save_compliance', settings, accountId);
+}
+
+// set_suppression — חסימה/שחרור של איש קשר לשיווק. מחזיר { ok:true }.
+export async function setSuppression(contactId, suppressed, accountId) {
+  return call('set_suppression', { contact_id: contactId, suppressed }, accountId);
+}
+
+// consent_by_label — רישום הסכמה לכל אנשי הקשר שנושאים תווית Chatwoot מסוימת.
+// source: lead_ad | ctwa | website_form | purchase | phone | manual | import.
+// מחזיר { ok:true, count } — כמה אנשי קשר נרשמו.
+export async function consentByLabel(label, source, detail, accountId) {
+  return call('consent_by_label', { label, source, detail }, accountId);
+}
+
+// resume_account — ניקוי עצירה אוטומטית (halt) וחידוש השליחה. מחזיר { ok:true }.
+export async function resumeAccount(accountId) {
+  return call('resume_account', {}, accountId);
+}
+
+// ack_alert — סימון התראת ציות כטופלה (נעלמת מרשימת ההתראות הפתוחות). מחזיר { ok:true }.
+export async function ackAlert(id, accountId) {
+  return call('ack_alert', { id }, accountId);
+}

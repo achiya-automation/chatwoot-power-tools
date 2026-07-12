@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
+import { setupDb, relaxCompliance } from './helpers.js';
 import { parseExternalError, reconcileDeliveries } from '../src/reconcile.js';
 
 /*
@@ -23,9 +23,10 @@ function fakeClient() {
 }
 
 beforeEach(async () => {
-  await runMigrations(pool);
+  await setupDb(pool);
   await query('TRUNCATE drip.enrollments, drip.sequence_steps, drip.sequences, drip.sent_messages CASCADE');
   await pool.query('TRUNCATE public.conversations, public.contacts, public.messages');
+  await relaxCompliance(pool);
 });
 
 async function seed({ status = 'completed', step = 2 } = {}) {

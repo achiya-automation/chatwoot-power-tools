@@ -34,11 +34,15 @@
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
   }
   var NAV_I18N = {
-    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר' },
-    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts' },
+    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר', compliance: 'ציות' },
+    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts', compliance: 'Compliance' },
   };
   function navLabels() { return NAV_I18N[dripLocale()] || NAV_I18N.en; }
-  var TAB_KEYS = ['overview', 'sequences', 'contacts'];
+  // With nav=side the web app hides its own tab bar, so a tab that is missing here is a tab
+  // the user cannot reach at all. 'compliance' surfaces Meta's quality rating, template
+  // status, opt-outs and consent coverage — the screen an operator needs BEFORE a send goes
+  // wrong, so it must be one click away.
+  var TAB_KEYS = ['overview', 'sequences', 'contacts', 'compliance'];
   // exact classes lifted from Chatwoot's own DOM (components-next sidebar)
   var UL_CLASS = 'grid m-0 list-none sidebar-group-children min-w-0';
   var LI_CLASS = 'py-0.5 ltr:pl-2 rtl:pr-2 rtl:mr-3 ltr:ml-3 relative text-n-slate-11 child-item before:bg-n-slate-4 after:bg-transparent after:border-n-slate-4 before:left-0 rtl:before:right-0 min-w-0';
@@ -76,7 +80,7 @@
   function dripFromUrl() {
     try {
       var t = new URL(location.href).searchParams.get('drip');
-      return (t === 'overview' || t === 'sequences' || t === 'contacts') ? t : null;
+      return TAB_KEYS.indexOf(t) !== -1 ? t : null;
     } catch (e) { return null; }
   }
   function urlWithDrip(tab) {
@@ -94,7 +98,7 @@
   function dripFromState() {
     try {
       var cur = history.state && history.state.current;
-      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts)\b/);
+      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts|compliance)\b/);
       return m ? m[1] : null;
     } catch (e) { return null; }
   }

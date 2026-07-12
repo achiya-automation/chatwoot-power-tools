@@ -136,9 +136,58 @@ export async function handleAction(accountId, action, payload) {
       return actionTemplateMedia(accId);
     case 'save_template_media':
       return actionSaveTemplateMedia(accId, payload);
+    // ── ציות (מטא) ──────────────────────────────────────────────────────────
+    case 'compliance':
+      return { data: await rpc('drip.compliance_overview', accId) };
+    case 'save_compliance':
+      return { data: await rpcJson('drip.save_compliance', { ...payload, account_id: accId }) };
+    case 'record_consent':
+      return { data: await rpcJson('drip.record_consent', { ...payload, account_id: accId }) };
+    case 'consent_by_label':
+      return { data: await rpcJson('drip.consent_by_label', { ...payload, account_id: accId }) };
+    case 'set_suppression':
+      return { data: await rpcJson('drip.set_suppression', { ...payload, account_id: accId }) };
+    case 'resume_account':
+      return { data: await rpcJson('drip.resume_account', { account_id: accId }) };
+    case 'ack_alert':
+      return { data: await rpcJson('drip.ack_alert', { ...payload, account_id: accId }) };
+    case 'suppressed':
+      return actionSuppressed(accId, payload);
     default:
       throw new Error(`Unknown action: ${action}`);
   }
+}
+
+// RPC helpers — the compliance surface is entirely SQL functions, so the JS side is a
+// thin pass-through. Keeps tenant isolation in one place: account_id is always taken from
+// the authenticated session (accId), never from the client payload.
+const rpc = async (fn, accountId) => {
+  const rows = await query(`SELECT ${fn}($1) AS j`, [accountId]);
+  return rows[0]?.j ?? {};
+};
+const rpcJson = async (fn, obj) => {
+  const rows = await query(`SELECT ${fn}($1::jsonb) AS j`, [JSON.stringify(obj)]);
+  return rows[0]?.j ?? {};
+};
+
+// ── suppressed ────────────────────────────────────────────────────────────────
+// The opt-out / blocked list, with the contact's name and phone so the client can see
+// exactly who stopped receiving and why — and un-block a false positive in one click.
+async function actionSuppressed(accountId, payload) {
+  const limit = Math.min(Number(payload?.limit) || 200, 1000);
+  const rows = await query(
+    `SELECT cs.contact_id, cs.suppressed_at, cs.suppressed_reason, cs.suppressed_detail,
+            cs.suppressed_scope, cs.unengaged_streak, cs.cap_failures,
+            cs.consent_source, cs.consent_at,
+            c.name, c.phone_number AS phone
+       FROM drip.contact_state cs
+       LEFT JOIN public.contacts c ON c.id = cs.contact_id AND c.account_id = cs.account_id
+      WHERE cs.account_id = $1 AND cs.suppressed_at IS NOT NULL
+      ORDER BY cs.suppressed_at DESC
+      LIMIT $2`,
+    [accountId, limit]
+  );
+  return { data: rows };
 }
 
 // ── list ──────────────────────────────────────────────────────────────────────
@@ -370,6 +419,37 @@ async function actionSetSequence(accountId, payload) {
     if (!contactId) throw new Error('could not resolve a contact for this conversation');
   }
 
+  // A suppressed contact cannot be (re)assigned to a sequence. Removing from a sequence
+  // (key=null) is always allowed. `force` lets an agent deliberately override — the
+  // dashboard asks for confirmation and the un-suppress is recorded — because a false
+  // positive on an opt-out keyword must be recoverable without editing the DB by hand.
+  if (key) {
+    try {
+      const sup = await query(
+        `SELECT suppressed_reason FROM drip.contact_state
+          WHERE account_id=$1 AND contact_id=$2 AND suppressed_at IS NOT NULL`,
+        [accountId, contactId]
+      );
+      if (sup.length && !payload.force) {
+        const err = new Error(`איש הקשר חסום (${sup[0].suppressed_reason}) ולא ניתן לשייך אותו לרצף`);
+        err.code = 'SUPPRESSED';
+        throw err;
+      }
+      if (sup.length && payload.force) {
+        await query(
+          `UPDATE drip.contact_state
+              SET suppressed_at = NULL, suppressed_reason = NULL, suppressed_detail = NULL,
+                  cap_failures = 0, unengaged_streak = 0, updated_at = now()
+            WHERE account_id=$1 AND contact_id=$2`,
+          [accountId, contactId]
+        );
+      }
+    } catch (e) {
+      if (e.code === 'SUPPRESSED') throw e;
+      /* drip.contact_state absent (test env) → no suppression to honour */
+    }
+  }
+
   // Write the `sequence` attribute on the CONTACT directly in Chatwoot's DB. The per-account
   // AgentBot token can't PUT /contacts, and this is the single attribute the engine owns.
   await setContactSequenceAttr(accountId, contactId, key);
@@ -440,12 +520,33 @@ async function actionBulkEnroll(accountId, payload) {
   if (seqRows.length === 0) throw new Error('sequence not found');
 
   // Conversations carrying the label → their CONTACTS (assignment is contact-level now).
+  //
+  // SUPPRESSED CONTACTS ARE EXCLUDED. This was the hole that made every other protection
+  // pointless: someone who wrote "הסר", whom Meta told us opted out (131050), or whom we
+  // suppressed as saturated, would be silently re-added by the next bulk enroll — and start
+  // receiving again. A suppression that a later action can undo is not a suppression.
   const convs = await query(
-    `SELECT DISTINCT contact_id FROM public.conversations
+    `SELECT DISTINCT cv.contact_id
+       FROM public.conversations cv
+      WHERE cv.account_id = $1
+        AND string_to_array(cv.cached_label_list, ', ') @> ARRAY[$2]
+        AND cv.contact_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM drip.contact_state cs
+           WHERE cs.account_id = $1 AND cs.contact_id = cv.contact_id
+             AND cs.suppressed_at IS NOT NULL)`,
+    [accountId, label]
+  );
+
+  // How many the label DID cover — so the dashboard can say "42 enrolled, 8 skipped
+  // (blocked)" instead of quietly showing a smaller number than the client expects.
+  const totalRows = await query(
+    `SELECT count(DISTINCT contact_id)::int AS n FROM public.conversations
       WHERE account_id = $1 AND string_to_array(cached_label_list, ', ') @> ARRAY[$2]
         AND contact_id IS NOT NULL`,
     [accountId, label]
   );
+  const labelled = Number(totalRows[0]?.n || convs.length);
 
   let ok = 0;
   const BATCH = 5; // a few concurrent writes — keeps a large label responsive
@@ -462,7 +563,15 @@ async function actionBulkEnroll(accountId, payload) {
     );
     ok += results.filter((r) => r.status === 'fulfilled').length;
   }
-  return { data: { count: ok, total: convs.length, label, sequence: key } };
+  return {
+    data: {
+      count: ok,
+      total: convs.length,
+      skipped_suppressed: Math.max(0, labelled - convs.length),
+      label,
+      sequence: key,
+    },
+  };
 }
 
 // ── contacts ──────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, query } from '../src/db.js';
-import { runMigrations } from '../src/migrate.js';
+import { setupDb, relaxCompliance } from './helpers.js';
 import { reconcileAccount } from '../src/reconcile.js';
 
 /*
@@ -14,8 +14,9 @@ const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
 
 beforeEach(async () => {
-  await runMigrations(pool);
+  await setupDb(pool);
   await query('TRUNCATE drip.enrollments, drip.sequence_steps, drip.sequences, drip.no_send_windows, drip.sent_messages CASCADE');
+  await relaxCompliance(pool);
 });
 
 // A client whose sendTemplate returns { id, content } like the real chatwoot.js.

@@ -66,13 +66,17 @@ export function makeDbReads(query) {
       return rows.length > 0;
     },
 
-    // Meta creds (token + phone_number_id) for an account's WhatsApp channel, so the engine
-    // can read the number's messaging_limit_tier from the Graph API — the same channel token
-    // Chatwoot already stores and sends through. Returns null if the account has no WA channel.
+    // Meta creds for an account's WhatsApp channel — the same channel token Chatwoot already
+    // stores and sends through. phoneId → the number's messaging limit + quality rating;
+    // wabaId → the WhatsApp Business Account, whose /message_templates edge is the only place
+    // a template's live status (PAUSED!) and quality_score can be read. Chatwoot's own copy of
+    // the templates is synced too slowly to catch a 3-hour pause and carries no quality score.
+    // Returns null if the account has no WhatsApp channel.
     getWhatsappCreds: async (accountId) => {
       const rows = await query(
-        `SELECT cw.provider_config->>'api_key'         AS token,
-                cw.provider_config->>'phone_number_id' AS "phoneId"
+        `SELECT cw.provider_config->>'api_key'            AS token,
+                cw.provider_config->>'phone_number_id'    AS "phoneId",
+                cw.provider_config->>'business_account_id' AS "wabaId"
            FROM public.inboxes i
            JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
           WHERE i.account_id = $1 AND i.channel_type = 'Channel::Whatsapp'
