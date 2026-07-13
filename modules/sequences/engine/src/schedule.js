@@ -93,6 +93,34 @@ export function atJerusalemHour(ref, hour) {
  * @param {string}  [opts.quietEnd]   - HH:MM
  * @returns {Date|null}
  */
+/**
+ * The gate arguments for one enrollment — and the one place that decides whether quiet
+ * hours apply to it at all.
+ *
+ * ⭐ THE FIRST MESSAGE IGNORES QUIET HOURS. It is not a broadcast: it is the reply to the
+ * form the lead filled in a minute ago, which is the purest "Timely" Meta defines — the
+ * person is waiting for an answer RIGHT NOW. A 21:12 lead held until 08:00 the next morning
+ * is a lead who already called someone else.
+ *
+ * And the quiet window was buying nothing there: every later step carries its own
+ * `send_hour` (9:00–19:00), so it can't land at night anyway. Quiet hours were paying their
+ * whole cost on the one message that must never wait, and protecting no one.
+ *
+ * ⛔ SHABBAT IS NEVER BYPASSED — not even for the first message. A marketing message on
+ * shabbat is not a delivery statistic, it is an insult, and this audience keeps shabbat.
+ *
+ * @param {{skip_shabbat:boolean, quiet_start:string, quiet_end:string}} seq
+ * @param {number} currentStep - the step about to be sent (1 = the lead's first message)
+ */
+export const gateFor = (seq, currentStep, now, windows) => ({
+  now,
+  windows,
+  skipShabbat: seq.skip_shabbat,
+  ...(Number(currentStep) === 1
+    ? {}
+    : { quietStart: seq.quiet_start, quietEnd: seq.quiet_end }),
+});
+
 export function quietWindowEnd({ now, windows, skipShabbat = false, quietStart, quietEnd } = {}) {
   const ends = [];
 
