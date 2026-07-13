@@ -5,6 +5,7 @@ import { runMigrations } from './migrate.js';
 import { reconcileAccount } from './reconcile.js';
 import { refreshHealth } from './meta.js';
 import { rotateSpentTemplates, uploadToMeta } from './rotate.js';
+import { notifyNewLeads } from './notify.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
@@ -189,6 +190,16 @@ async function tick() {
         deliveryRetryHours: config.deliveryRetryHours,
         mmLiteExperiment: config.mmLiteExperiment,
       });
+
+      // ── Phase 3: התראה על כל ליד חדש שנסגר ────────────────────────────────────
+      // רץ אחרי ה-reconcile כי הוא זה שקרא ממטא את סטטוס המסירה. עטוף לגמרי: התראה
+      // שנופלת לא תעצור שליחה — היא תישלח שוב בטיק הבא (alerted_at נחתם רק אחרי 2xx).
+      try {
+        const n = await notifyNewLeads(pool, a.account_id, { webhookUrl: config.notifyWebhookUrl });
+        if (n) console.log(`[drip] acct ${a.account_id}: ${n} התראות ליד נשלחו`);
+      } catch (e) {
+        console.error(`[drip] notify acct ${a.account_id} (non-fatal):`, e.message);
+      }
     } catch (e) {
       console.error(`[drip] reconcile acct ${a.account_id}:`, e.message);
       // חשבון עם רצף ובלי ערוץ וואטסאפ נכשל כאן בשקט, בלוג בלבד. זו בדיוק אותה משפחה

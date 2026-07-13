@@ -25,6 +25,9 @@ export function loadConfig(env = process.env) {
     // Meta app id — needed to open a resumable upload session when the engine re-creates a
     // worn-out template (POST /{app-id}/uploads). Empty = template rotation is off.
     metaAppId: String(env.META_APP_ID || ''),
+    // Webhook that turns "Meta answered about a new lead" into a WhatsApp ping to the operator.
+    // The URL's path IS the secret (n8n webhook, no credential). Empty = alerts off.
+    notifyWebhookUrl: String(env.NOTIFY_WEBHOOK_URL || ''),
     // The "master" Chatwoot account whose administrators are super-admins of the drip
     // dashboard: they can pick and manage ANY drip-managed account. Everyone else is
     // limited to the accounts they're a member of (tenant isolation in the auth gate).
