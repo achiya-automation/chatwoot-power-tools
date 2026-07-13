@@ -606,14 +606,18 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           if (existing) {
             conversationId = existing.display_id;
           } else {
+            // ⚠️ התיבה שנבחרה גוברת. בלי הסינון הזה, בחשבון עם כמה מספרי וואטסאפ השיחה
+            // נפתחת מהמספר שהליד *במקרה* מקושר אליו — כלומר ההודעה יוצאת ממספר אחר מזה
+            // שקראנו ממנו את הבריאות והתבניות. opts.inboxId=null ⇒ תיבה יחידה, כמו קודם.
             const ci = (await c.query(
               `SELECT ci.source_id, ci.inbox_id
                  FROM public.contact_inboxes ci
                  JOIN public.inboxes i ON i.id = ci.inbox_id
                 WHERE ci.contact_id = $1 AND i.channel_type = 'Channel::Whatsapp'
+                  AND ($2::int IS NULL OR ci.inbox_id = $2)
                 ORDER BY ci.id
                 LIMIT 1`,
-              [e.contact_id]
+              [e.contact_id, opts.inboxId ?? null]
             )).rows[0];
             if (!ci) throw new Error(`no WhatsApp contact_inbox for contact ${e.contact_id}`);
             const conv = await client.createConversation({

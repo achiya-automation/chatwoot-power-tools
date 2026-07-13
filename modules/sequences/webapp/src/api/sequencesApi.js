@@ -287,6 +287,18 @@ export async function getCompliance(accountId) {
   return call('compliance', {}, accountId);
 }
 
+// whatsapp_inboxes — מספרי הוואטסאפ של החשבון: { inboxes: [{id, name, phone_number_id,
+// chosen}], count, needs_choice }. needs_choice=true ⇒ יש כמה מספרים ולא נבחר אחד,
+// והמנוע **עוצר** עד שיבחרו (הוא לא מנחש ממי לשלוח).
+export async function getWhatsappInboxes(accountId) {
+  return call('whatsapp_inboxes', {}, accountId);
+}
+
+// set_whatsapp_inbox — בחירת המספר שהרצפים יוצאים ממנו. null מנקה את הבחירה.
+export async function setWhatsappInbox(inboxId, accountId) {
+  return call('set_whatsapp_inbox', { inbox_id: inboxId }, accountId);
+}
+
 // suppressed — אנשי הקשר החסומים לשיווק: [{ contact_id, name, phone, suppressed_at,
 // suppressed_reason, suppressed_detail, suppressed_scope, unengaged_streak, cap_failures,
 // consent_source, consent_at }].

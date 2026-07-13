@@ -128,6 +128,27 @@ async function tick() {
         console.error(`[drip] inbound scan acct ${a.account_id} (non-fatal):`, e.message);
       }
 
+      // ── איזה מספר וואטסאפ ─────────────────────────────────────────────────
+      // חשבון עם כמה מספרים ובלי בחירה: לא מנחשים. שליחה מהמספר הלא נכון היא טעות
+      // שהלקוח רואה ואי אפשר לבטל — עדיף לעצור ולצעוק.
+      const inbox = await reads.resolveInbox(a.account_id);
+      if (inbox.ambiguous) {
+        // מתריעים רק למי שבאמת יש לו רצף. חשבון עם כמה מספרים ובלי רצפים עדיין לא צריך
+        // להחליט כלום — התראה שם היא זאב-זאב, והיא מרעישה דווקא את מי שאין לו בעיה.
+        const [{ n }] = await query(
+          'SELECT count(*)::int AS n FROM drip.sequences WHERE account_id = $1', [a.account_id]
+        );
+        if (n > 0) {
+          await compliance.raiseAlert(
+            pool, a.account_id, 'error', 'whatsapp_inbox_not_chosen',
+            `לחשבון יש ${inbox.count} מספרי וואטסאפ ולא נבחר מספר לרצפים. ` +
+            `שום הודעה לא תישלח עד שתבחר — בהגדרות ← מספר הוואטסאפ.`
+          );
+          console.error(`[drip] acct ${a.account_id}: ${inbox.count} WhatsApp inboxes, none chosen — skipping`);
+        }
+        continue;   // בשום מקרה לא מנחשים ממי לשלוח
+      }
+
       // Live tier + quality rating from Meta (cached ~30m). Fails safe: a Graph outage can
       // only keep the last known cap, never raise it. A RED quality rating halts the account.
       const { cap: tierCap } = await refreshHealth(pool, reads, a.account_id, now, { compliance });
@@ -136,6 +157,7 @@ async function tick() {
       // manage them), so the per-tick ensureAttributes call is gone — reconcile only.
       await reconcileAccount(pool, client, a.account_id, now, windows, {
         tierCap,
+        inboxId: inbox.inboxId,
         intervalMs: config.reconcileIntervalMs,
         spreadWindowMs: config.spreadWindowMs,
         maxSendsPerTick: config.maxSendsPerTick,
