@@ -163,12 +163,16 @@ export async function rotateSpentTemplates(pool, accountId, deps) {
     //    template would block the whole step.
     if (twin.status !== 'APPROVED') continue;
 
+    // ⚠️ `language` is part of the PRIMARY KEY (account_id, template_name, language). Inserting
+    // without it writes a row keyed on '' — and Meta's own sync later writes the SAME template
+    // keyed on 'he'. Two rows for one template, and loadTemplateHealth's Map silently keeps
+    // whichever came last, failure counter included. Always carry the step's language.
     await pool.query(
-      `INSERT INTO drip.template_health (account_id, template_name, status, quality, checked_at)
-       SELECT $1, $2, 'APPROVED', 'UNKNOWN', now()
-        WHERE NOT EXISTS (SELECT 1 FROM drip.template_health
-                           WHERE account_id = $1 AND template_name = $2)`,
-      [accountId, target]
+      `INSERT INTO drip.template_health (account_id, template_name, language, status, quality, checked_at)
+       VALUES ($1, $2, $3, 'APPROVED', 'UNKNOWN', now())
+       ON CONFLICT (account_id, template_name, language) DO UPDATE
+         SET status = 'APPROVED', checked_at = now()`,
+      [accountId, target, row.language || 'he']
     );
     await pool.query(
       `UPDATE drip.sequence_steps SET ${row.field === 'template_burn' ? 'template_burn' : 'template_name'} = $2
