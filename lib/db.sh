@@ -150,6 +150,24 @@ SQL
   fi
   echo "grants_applied"
 
+  # ── Auto-onboarding of new accounts ──────────────────────────────────────────
+  # The engine's loop iterates drip.account_tokens. Registering an account there used to be
+  # a MANUAL step, and forgetting it is the worst kind of failure: the sequence is built, the
+  # leads are enrolled, the switches are on — and nothing sends, with no error anywhere.
+  #
+  # So the engine now asks "who has a sequence?" and onboards whoever is missing, by calling
+  # this function. It is SECURITY DEFINER and created HERE, by the superuser, on purpose:
+  # minting a Chatwoot API token is the one thing the engine must be able to do without
+  # holding INSERT on public.access_tokens (which would let it mint tokens for anything).
+  # Idempotent, and applied on every provision run, so an existing install gains it too.
+  if ! "${psql[@]}" -v ON_ERROR_STOP=1 >/dev/null 2>&1 \
+       -f /dev/stdin < "$(dirname "${BASH_SOURCE[0]}")/../modules/sequences/engine/migrations/024_auto_onboard_role_grants.sql"
+  then
+    echo "provision_db: auto-onboard function failed (חשבונות חדשים לא יתחברו לבד)" >&2
+    return 1
+  fi
+  echo "auto_onboard_ready"
+
   # Verify (informational only — no secrets in either query). `|| true`: a hiccup on this
   # purely cosmetic final check must never abort the script after grants already applied.
   "${psql[@]}" -tAc "SELECT 'role=' || rolname FROM pg_roles WHERE rolname='drip_engine'" 2>/dev/null || true
