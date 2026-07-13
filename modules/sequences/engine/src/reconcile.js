@@ -356,6 +356,32 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   const cHealth    = await compliance.loadHealth(pool, accountId);
   const cTemplates = await compliance.loadTemplateHealth(pool, accountId);
 
+  // ── EARLY WARNING — a degrading template must be replaced BEFORE it stops delivering ──
+  // The brake (max_template_failures) only fires once the template is already spent, and by
+  // then the client has been losing leads for hours. The decay is steep and it is measured:
+  //
+  //   failures on the template │ delivery to a fresh lead │ delivery to a capped lead
+  //   ────────────────────────┼──────────────────────────┼──────────────────────────
+  //   0                       │          83%             │          69%
+  //   1-10                    │          85%             │          15%   ← already gone
+  //   11-50                   │          72%             │          11%
+  //   50+                     │          18%             │           1%
+  //
+  // So we warn at 70% of the budget, while a twin still costs two minutes and nothing else.
+  // Alerts are idempotent (ON CONFLICT DO NOTHING) — one per template, not one per tick.
+  const warnAt = Math.max(1, Math.floor(Number(cSettings.max_template_failures) * 0.7));
+  for (const [key, t] of cTemplates) {
+    if (key.includes('|')) continue;                       // the "<name>|<lang>" alias — skip
+    const fails = Number(t.failures || 0);
+    if (fails >= warnAt && fails < Number(cSettings.max_template_failures)) {
+      await compliance.raiseAlert(
+        pool, accountId, 'warn', `template_degrading:${t.template_name}`,
+        `⚠️ התבנית "${t.template_name}" צברה ${fails} כישלוני מסירה (הבלם ב-${cSettings.max_template_failures}). ` +
+        `המסירה שלה כבר יורדת — ליצור תאומה ולהחליף את השלב לפני שהיא נעצרת.`
+      ).catch(() => {});                                   // התראה לעולם לא מפילה שליחה
+    }
+  }
+
   // The phone comes from public.contacts, NOT from drip.enrollments.phone — that column
   // exists but is never written at enroll time, so reading it gave the US-number guard a
   // NULL and the guard silently never fired.
@@ -682,9 +708,9 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           // מיידית (סורק ה-inbound מקדים אותה בחזרה). עד אז — לא רודפים.
           if (verdict.reason === 'template_burned') {
             await compliance.raiseAlert(
-              pool, accountId, 'warn', `template_burned:${step.template_name}`,
-              `התבנית "${step.template_name}" הגיעה ל-${cSettings.max_template_failures} כישלוני מסירה ` +
-              `והשליחה בה נעצרה. צריך ליצור תאומה (_v3) ולהחליף את השלב, אחרת הרצף תקוע כאן.`
+              pool, accountId, 'error', `template_burned:${step.template_name}`,
+              `🔴 התבנית "${step.template_name}" הגיעה ל-${cSettings.max_template_failures} כישלוני מסירה ` +
+              `והשליחה בה נעצרה. צריך ליצור תאומה ולהחליף את השלב עכשיו — הרצף תקוע כאן.`
             );
           }
           const waitMs =
