@@ -64,6 +64,38 @@ createApp(config).listen(config.port, '0.0.0.0', () =>
 async function tick() {
   const now = new Date();
   await refreshCalendarIfDue(now);
+
+  // ── Phase −1: AUTO-ONBOARD ────────────────────────────────────────────────
+  // A drip account used to have to be registered in drip.account_tokens BY HAND. Miss that
+  // step and the account is simply not in this loop: the sequence is built, the leads are
+  // enrolled, the switches are on — and nothing ever sends, with no error anywhere. Silent,
+  // and indistinguishable from "no leads are due".
+  //
+  // So the loop no longer asks "who is registered?" but "who has a sequence?". An account
+  // that has one and lacks a token onboards itself on the next tick: drip.ensure_account_bot
+  // (SECURITY DEFINER — the engine holds no write grant on access_tokens) creates its
+  // AgentBot, mints the token, and registers it. Idempotent; the token never comes back here.
+  const unregistered = await query(
+    `SELECT DISTINCT s.account_id
+       FROM drip.sequences s
+      WHERE NOT EXISTS (SELECT 1 FROM drip.account_tokens t WHERE t.account_id = s.account_id)`
+  );
+  for (const u of unregistered) {
+    try {
+      const [{ created }] = await query('SELECT drip.ensure_account_bot($1) AS created', [u.account_id]);
+      if (created) console.log(`[drip] חשבון ${u.account_id} חובר אוטומטית למנוע`);
+    } catch (e) {
+      // Loud on purpose: this is the difference between "works" and "silently does nothing".
+      console.error(`[drip] auto-onboard acct ${u.account_id} FAILED:`, e.message);
+      try {
+        await compliance.raiseAlert(
+          pool, u.account_id, 'error', 'auto_onboard_failed',
+          `החשבון לא חובר למנוע אוטומטית (${e.message}). הרצפים בו לא ישלחו כלום עד שזה ייפתר.`
+        );
+      } catch { /* alert is best-effort */ }
+    }
+  }
+
   const accts = await query(
     'SELECT account_id, chatwoot_token, base_url FROM drip.account_tokens'
   );
@@ -113,6 +145,16 @@ async function tick() {
       });
     } catch (e) {
       console.error(`[drip] reconcile acct ${a.account_id}:`, e.message);
+      // חשבון עם רצף ובלי ערוץ וואטסאפ נכשל כאן בשקט, בלוג בלבד. זו בדיוק אותה משפחה
+      // של תקלות "נראה שהכל מוגדר ושום דבר לא נשלח" — ולכן היא עולה להתראה בדשבורד.
+      if (/no WhatsApp channel creds/i.test(e.message)) {
+        try {
+          await compliance.raiseAlert(
+            pool, a.account_id, 'error', 'no_whatsapp_channel',
+            'לחשבון יש רצף אבל אין ערוץ וואטסאפ מחובר (phone_number_id / api_key). שום הודעה לא תישלח.'
+          );
+        } catch { /* alert is best-effort */ }
+      }
     }
   }
 }
