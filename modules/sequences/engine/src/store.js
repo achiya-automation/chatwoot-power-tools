@@ -136,6 +136,14 @@ export async function handleAction(accountId, action, payload) {
       return actionTemplateMedia(accId);
     case 'save_template_media':
       return actionSaveTemplateMedia(accId, payload);
+    // ── מספר הוואטסאפ שהמנוע עובד מולו ──────────────────────────────────────
+    // לחשבון יכולים להיות כמה מספרים. יש לבחור אחד — אחרת המנוע היה מנחש, ושולח
+    // ממספר אחד בזמן שהוא קורא תבניות ובריאות ממספר אחר.
+    case 'whatsapp_inboxes':
+      return { data: await rpc('drip.whatsapp_inboxes', accId) };
+    case 'set_whatsapp_inbox':
+      return { data: await rpcJson('drip.set_whatsapp_inbox', { ...payload, account_id: accId }) };
+
     // ── ציות (מטא) ──────────────────────────────────────────────────────────
     case 'compliance':
       return { data: await rpc('drip.compliance_overview', accId) };

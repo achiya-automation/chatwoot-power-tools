@@ -13,6 +13,7 @@ import {
   Save,
   Tag,
   Activity,
+  Smartphone,
 } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
@@ -33,6 +34,8 @@ import {
   resumeAccount,
   ackAlert,
   listLabels,
+  getWhatsappInboxes,
+  setWhatsappInbox,
 } from '../api/sequencesApi.js';
 import useT, { useLocale } from '../useT.js';
 import { translate } from '../i18n.js';
@@ -48,6 +51,11 @@ import { translate } from '../i18n.js';
 // מילון co-located (he/en) — כל הטקסטים הגלויים של תצוגת הציות.
 const M = {
   he: {
+    inboxTitle: 'מספר הוואטסאפ של הרצפים',
+    inboxHelp: 'לחשבון יש כמה מספרי וואטסאפ. הרצפים יוצאים מהמספר המסומן.',
+    inboxNeedsChoice: 'לא נבחר מספר — והמנוע לא ינחש. שום הודעה לא תישלח עד שתבחרו מאיזה מספר לשלוח.',
+    inboxActive: 'פעיל',
+    inboxSaved: 'המספר נשמר',
     errLoad: 'שגיאה בטעינת נתוני הציות',
     errSave: 'שמירת המדיניות נכשלה',
     errResume: 'חידוש השליחה נכשל',
@@ -183,6 +191,11 @@ const M = {
     rs_manual: 'ידני',
   },
   en: {
+    inboxTitle: 'WhatsApp number for sequences',
+    inboxHelp: 'This account has several WhatsApp numbers. Sequences are sent from the selected one.',
+    inboxNeedsChoice: 'No number selected — and the engine will not guess. Nothing will be sent until you choose which number to send from.',
+    inboxActive: 'Active',
+    inboxSaved: 'Number saved',
     errLoad: 'Failed to load compliance data',
     errSave: 'Failed to save policy',
     errResume: 'Failed to resume sending',
@@ -355,6 +368,26 @@ export default function ComplianceView({ accountId }) {
   const [keywordsText, setKeywordsText] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // מספרי הוואטסאפ של החשבון. count<=1 ⇒ אין מה לבחור והמקטע לא מוצג בכלל.
+  const [inboxes, setInboxes] = useState(null);
+  const [pickingInbox, setPickingInbox] = useState(false);
+
+  // בחירת המספר שהרצפים יוצאים ממנו. אין כאן ConfirmDialog בכוונה: הבחירה משנה רק
+  // מאיזה מספר יֵצאו ההודעות הבאות, ואינה שולחת דבר — לעומת ביטול חסימה, שהוא פעולת ציות.
+  const chooseInbox = useCallback(
+    (inboxId) => {
+      setPickingInbox(true);
+      setWhatsappInbox(inboxId, accountId)
+        .then((res) => {
+          setInboxes(res);
+          toast({ title: t('inboxSaved'), variant: 'success' });
+        })
+        .catch((e) => setError(e.message))
+        .finally(() => setPickingInbox(false));
+    },
+    [accountId, t, toast]
+  );
+
   const [resumeOpen, setResumeOpen] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [consentOpen, setConsentOpen] = useState(false);
@@ -374,10 +407,12 @@ export default function ComplianceView({ accountId }) {
     Promise.all([
       getCompliance(accountId),
       listSuppressed(accountId).catch(() => []), // רשימת החסומים — לא קריטית, לא שוברת את התצוגה
+      getWhatsappInboxes(accountId).catch(() => null),
     ])
-      .then(([c, sup]) => {
+      .then(([c, sup, boxes]) => {
         setData(c || {});
         setSuppressed(sup);
+        setInboxes(boxes);
         const s = { ...DEFAULT_SETTINGS, ...(c?.settings || {}) };
         setForm(s);
         setKeywordsText((Array.isArray(s.opt_out_keywords) ? s.opt_out_keywords : []).join(', '));
@@ -532,6 +567,57 @@ export default function ComplianceView({ accountId }) {
             >
               {t('resume')}
             </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── מספר הוואטסאפ ────────────────────────────────────────────────────
+          מוצג רק כשיש באמת ממה לבחור (יותר ממספר אחד). לחשבון עם מספר יחיד אין כאן
+          החלטה, ומקטע קבוע היה רק רעש. כשלא נבחר מספר — המנוע עצור, ולכן זה נראה
+          כמו אזהרה ולא כמו הגדרה. */}
+      {inboxes && inboxes.count > 1 ? (
+        <div
+          className={`mb-5 rounded-xl border p-4 ${
+            inboxes.needs_choice
+              ? 'border-2 border-n-ruby-9 bg-n-ruby-3'
+              : 'border-n-strong bg-n-solid-1'
+          }`}
+          role={inboxes.needs_choice ? 'alert' : undefined}
+        >
+          <h2 className="mb-1 flex items-center gap-1.5 text-sm font-medium text-n-slate-12">
+            <Smartphone size={15} className={inboxes.needs_choice ? 'text-n-ruby-11' : 'text-n-blue-11'} aria-hidden="true" />
+            {t('inboxTitle')}
+          </h2>
+          <p className={`mb-3 text-sm ${inboxes.needs_choice ? 'font-medium text-n-ruby-11' : 'text-n-slate-11'}`}>
+            {inboxes.needs_choice ? t('inboxNeedsChoice') : t('inboxHelp')}
+          </p>
+          <div className="flex flex-col gap-2">
+            {(inboxes.inboxes || []).map((box) => (
+              <label
+                key={box.id}
+                className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 transition ${
+                  box.chosen ? 'border-n-blue-9 bg-n-blue-3' : 'border-n-weak hover:bg-n-alpha-1'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="drip-whatsapp-inbox"
+                  className="h-4 w-4 accent-n-blue-9"
+                  checked={!!box.chosen}
+                  disabled={pickingInbox}
+                  onChange={() => chooseInbox(box.id)}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-n-slate-12">{box.name}</span>
+                  {box.phone_number_id ? (
+                    <span className="block truncate text-xs text-n-slate-10" dir="ltr">
+                      phone_number_id: {box.phone_number_id}
+                    </span>
+                  ) : null}
+                </span>
+                {box.chosen ? <Badge color="blue">{t('inboxActive')}</Badge> : null}
+              </label>
+            ))}
           </div>
         </div>
       ) : null}

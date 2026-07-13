@@ -10,16 +10,51 @@
  * the Chatwoot client injects in production; without them the client falls back to the API.
  */
 export function makeDbReads(query) {
+  /**
+   * איזו תיבת וואטסאפ המנוע עובד מולה.
+   *
+   * לחשבון Chatwoot אחד יכולים להיות כמה מספרי וואטסאפ. עד היום כל אחד משלושת המקומות
+   * שצריכים אחד — בריאות, תבניות, ופתיחת שיחה — בחר לבד ובשיטה אחרת, כך שהמנוע יכול היה
+   * לקרוא את ה-tier ממספר אחד, את התבניות מכולם, ולשלוח ממספר שלישי. עכשיו יש מקור אמת
+   * אחד: drip.account_tokens.inbox_id.
+   *
+   * ⛔ יותר ממספר אחד ובלי בחירה ⇒ `ambiguous`. המנוע **לא מנחש**: שליחה מהמספר הלא נכון
+   * היא טעות שהלקוח רואה, ואי אפשר לבטל אותה.
+   *
+   * @returns {Promise<{inboxId:number|null, ambiguous:boolean, count:number}>}
+   */
+  const resolveInbox = async (accountId) => {
+    const rows = await query(
+      `SELECT i.id, (i.id = t.inbox_id) AS chosen
+         FROM public.inboxes i
+         JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
+         LEFT JOIN drip.account_tokens t ON t.account_id = i.account_id
+        WHERE i.account_id = $1 AND i.channel_type = 'Channel::Whatsapp'
+        ORDER BY i.id`,
+      [accountId]
+    );
+    const chosen = rows.find((r) => r.chosen);
+    if (chosen)        return { inboxId: chosen.id, ambiguous: false, count: rows.length };
+    if (rows.length === 1) return { inboxId: rows[0].id, ambiguous: false, count: 1 };
+    return { inboxId: null, ambiguous: rows.length > 1, count: rows.length };
+  };
+
   return {
+    resolveInbox,
+
     // All WhatsApp templates for the account (the AgentBot can't GET /inboxes).
     // Same shape as Chatwoot's API message_templates (name/language/components/status).
+    // ⚠️ Scoped to the CHOSEN inbox: templates belong to a WABA, and flattening two numbers'
+    // template lists together lets a name from one number resolve against the other.
     loadTemplates: async (accountId) => {
+      const { inboxId } = await resolveInbox(accountId);
+      if (!inboxId) return [];
       const rows = await query(
         `SELECT cw.message_templates
            FROM public.inboxes i
            JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
-          WHERE i.account_id = $1 AND i.channel_type = 'Channel::Whatsapp'`,
-        [accountId]
+          WHERE i.id = $1`,
+        [inboxId]
       );
       return rows.flatMap((r) => r.message_templates || []);
     },
@@ -73,16 +108,16 @@ export function makeDbReads(query) {
     // the templates is synced too slowly to catch a 3-hour pause and carries no quality score.
     // Returns null if the account has no WhatsApp channel.
     getWhatsappCreds: async (accountId) => {
+      const { inboxId } = await resolveInbox(accountId);
+      if (!inboxId) return null;              // אין תיבה, או שיש כמה ואף אחת לא נבחרה
       const rows = await query(
         `SELECT cw.provider_config->>'api_key'            AS token,
                 cw.provider_config->>'phone_number_id'    AS "phoneId",
                 cw.provider_config->>'business_account_id' AS "wabaId"
            FROM public.inboxes i
            JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
-          WHERE i.account_id = $1 AND i.channel_type = 'Channel::Whatsapp'
-          ORDER BY i.id
-          LIMIT 1`,
-        [accountId]
+          WHERE i.id = $1`,
+        [inboxId]
       );
       return rows[0]?.token && rows[0]?.phoneId ? rows[0] : null;
     },
