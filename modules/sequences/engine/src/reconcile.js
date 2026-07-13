@@ -1,4 +1,4 @@
-import { isNoSendNow, nextSendAt, atJerusalemHour, addInterval, skipNoSendWindows, quietWindowEnd } from './schedule.js';
+import { isNoSendNow, gateFor, nextSendAt, atJerusalemHour, addInterval, skipNoSendWindows, quietWindowEnd } from './schedule.js';
 import { withTx } from './db.js';
 import * as compliance from './compliance.js';
 
@@ -469,13 +469,10 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         // all fired together the moment the window opened — a synchronised burst, exactly
         // what Meta reads as spam. The jitter spreads them over the first spreadWindowMs
         // (default 1h) instead, which is also when the tier budget can absorb them.
-        const gateArgs = {
-          now,
-          windows,
-          skipShabbat: seq.skip_shabbat,
-          quietStart:  seq.quiet_start,
-          quietEnd:    seq.quiet_end,
-        };
+        //
+        // ⭐ ...except for the lead's FIRST message, which ignores quiet hours entirely —
+        // see gateFor(). It is the reply to a form submitted minutes ago, not a broadcast.
+        const gateArgs = gateFor(seq, e.current_step, now, windows);
         if (isNoSendNow(gateArgs)) {
           const edge = quietWindowEnd(gateArgs);
           if (edge) {
