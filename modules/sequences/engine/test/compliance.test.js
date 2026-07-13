@@ -341,3 +341,17 @@ test('canSend: cap_failures מעל הסף נדחה, לא מוסר', () => {
   assert.equal(v.reason, 'saturated');
   assert.equal(v.action, 'defer');
 });
+
+test('scanInbound: תגובה ישנה אינה מאפסת את מונה החסימות (נמדד: 13/13 נכשלו)', () => {
+  // הרגרסיה: cap_failures התאפס בכל תגובה. תגובה מלפני שבועות אינה מרפה את התקרה של
+  // מטא — רק חלון פתוח מרפה אותה. 13 לידים שהמונה שלהם אופס כך נשלחו כ"נקיים" וחזרו
+  // 13/13 עם 131049, בעוד שלידים עם מונה אמיתי 0 נמסרו 3/3.
+  // השער חייב לחסום נמענת עם היסטוריית חסימות גם אם היא הגיבה פעם.
+  const stale = { ...base.contact, cap_failures: 2, last_inbound_at: '2026-06-01T10:00:00Z' };
+  const v = canSend({ ...base, contact: stale });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'saturated');
+
+  // …אבל חלון פתוח (תגובה בתוך 24ש׳) כן עוקף — זה המנגנון היחיד שמטא מתעדת.
+  assert.equal(canSend({ ...base, contact: stale, inSession: true }).ok, true);
+});
