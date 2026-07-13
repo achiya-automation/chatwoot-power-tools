@@ -370,8 +370,24 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   // So we warn at 70% of the budget, while a twin still costs two minutes and nothing else.
   // Alerts are idempotent (ON CONFLICT DO NOTHING) — one per template, not one per tick.
   const warnAt = Math.max(1, Math.floor(Number(cSettings.max_template_failures) * 0.7));
+
+  // ⚠️ Only templates a sequence actually POINTS AT. template_health also holds every template
+  // we have ever rotated away from — and those are spent by definition. Warning on them is a
+  // ghost alert: it names a template nobody will ever send again, and it trains the client to
+  // ignore the alert that matters. (It fired on exactly that today.)
+  const inUse = new Set((await q(
+    `SELECT s.template_name AS n FROM drip.sequence_steps s
+       JOIN drip.sequences q ON q.id = s.sequence_id AND q.account_id = $1
+      UNION
+     SELECT s.template_burn FROM drip.sequence_steps s
+       JOIN drip.sequences q ON q.id = s.sequence_id AND q.account_id = $1
+      WHERE s.template_burn IS NOT NULL`,
+    [accountId]
+  )).map((r) => r.n));
+
   for (const [key, t] of cTemplates) {
     if (key.includes('|')) continue;                       // the "<name>|<lang>" alias — skip
+    if (!inUse.has(t.template_name)) continue;             // rotated away → not our problem
     const fails = Number(t.failures || 0);
     if (fails >= warnAt && fails < Number(cSettings.max_template_failures)) {
       await compliance.raiseAlert(
