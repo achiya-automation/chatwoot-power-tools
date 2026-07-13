@@ -26,6 +26,27 @@ export const cleanName = (name) => {
 export const firstName = (name) => cleanName(name).split(/\s+/).filter(Boolean)[0] || '';
 
 /**
+ * The CONTENT identity of a template, independent of its version.
+ *
+ * `bb_new_08`, `bb_new_08_v2`, `bb_new_08_v3` and `bb_new_01_btn_v3` are not four
+ * messages — they are the same copy, re-created because Meta down-ranks a template that
+ * accumulated a bad delivery history. A twin is a fresh envelope, never a new message.
+ *
+ * This matters because `enrollments.current_step` is a NUMBER, and step numbers MOVE:
+ * inserting a step in the middle shifts everyone after it, so a lead mid-sequence starts
+ * pointing at copy she has already received. 35 Banana Book customers got the same
+ * message twice exactly this way, before the guard in the send path was added.
+ *
+ * @param {string} name - template name
+ * @returns {string} the family key (`bb_new_08_v3` → `bb_new_08`)
+ */
+export const templateFamily = (name) =>
+  String(name || '')
+    .replace(/_v\d+$/, '')     // …_v3
+    .replace(/_btn$/, '')      // …_btn
+    .replace(/_v\d+$/, '');    // …_v2 that sat before _btn
+
+/**
  * Resolve template params, substituting @first_name/@name/@phone/@email tokens from contact.
  * @param {string[]|null} params - raw param list from sequence_steps.params
  * @param {object}        c      - contact { name, phone, email }
@@ -510,6 +531,46 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
               try { await client.patchAttrs(e.conversation_id, { seq_state: 'completed' }); }
               catch (pe) { console.error(`[drip] patchAttrs(cond-complete) conv ${e.conversation_id}:`, pe.message); }
             }
+            return;
+          }
+        }
+
+        // ── NEVER SEND COPY SHE HAS ALREADY RECEIVED ─────────────────────────
+        // `current_step` is a NUMBER, and step numbers move: inserting a step in the
+        // middle shifts everyone after it, and a lead mid-sequence silently starts
+        // pointing at a message she already got. 35 Banana Book customers received the
+        // same message twice exactly this way.
+        //
+        // The check is by template FAMILY, not by name — bb_new_08 / bb_new_08_v2 /
+        // bb_new_08_v3 are one message in three envelopes (twins exist to dodge Meta's
+        // template reputation, not to say something new). Only DELIVERED counts: a step
+        // that Meta blocked was never seen, and must still be retried.
+        if (e.contact_id) {
+          const seen = new Set((await c.query(
+            `SELECT DISTINCT sm.template_name
+               FROM drip.sent_messages sm
+               JOIN public.messages m ON m.id = sm.message_id
+              WHERE sm.account_id = $1 AND sm.contact_id = $2 AND m.status IN (1, 2)`,
+            [accountId, e.contact_id]
+          )).rows.map((r) => templateFamily(r.template_name)));
+
+          if (seen.has(templateFamily(step.template_name))) {
+            const nextStep = (await c.query(
+              `SELECT delay_days, delay_hours, send_hour, send_date, allowed_dow
+                 FROM drip.sequence_steps WHERE sequence_id = $1 AND step_order = $2`,
+              [e.sequence_id, e.current_step + 1]
+            )).rows[0];
+            if (nextStep) {
+              const nx = nextSendAt(now, nextStep.delay_days, nextStep.delay_hours, nextStep.send_hour,
+                                    nextStep.send_date, nextStep.allowed_dow, seq.skip_shabbat ? windows : []);
+              await c.query(
+                `UPDATE drip.enrollments SET current_step = current_step + 1, next_send_at = $2 WHERE id = $1`,
+                [e.id, nx]
+              );
+            } else {
+              await c.query(`UPDATE drip.enrollments SET status = 'completed' WHERE id = $1`, [e.id]);
+            }
+            console.log(`[drip] dup SKIP acct ${accountId} enr ${e.id}: "${step.template_name}" כבר נמסרה`);
             return;
           }
         }
