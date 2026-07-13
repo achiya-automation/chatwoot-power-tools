@@ -4,8 +4,11 @@
  *   { content, template_params: { name, language, category, processed_params } }
  * (no top-level message_type/content_type — the brief had those but n8n omits them)
  */
+import { readFile } from 'node:fs/promises';
 
-export function makeClient({ baseUrl, token, accountId, reads }) {
+const GRAPH = 'https://graph.facebook.com/v21.0';
+
+export function makeClient({ baseUrl, token, accountId, reads, query }) {
   const base = `${baseUrl}/api/v1/accounts/${accountId}`;
   const h = { 'Content-Type': 'application/json', api_access_token: token };
 
@@ -158,6 +161,179 @@ export function makeClient({ baseUrl, token, accountId, reads }) {
           },
         }),
       });
+      return { id: m.id, content };
+    },
+
+    /**
+     * ⭐ Send the step as a FREE-FORM message (no template) — only valid inside an open
+     * 24h customer-service window.
+     *
+     * This is the single highest-value path in the engine. Meta's per-user marketing cap
+     * (131049) and the portfolio's 24h tier apply to TEMPLATES sent outside a service
+     * window. A free-form message sent inside the window is neither — it is exempt from
+     * both. Measured on banana-book 2026-07-12: templates to leads who had replied landed
+     * ~29%; the same content sent free-form inside their window is not rate-limited at all.
+     *
+     * The caller MUST confirm the window is open (compliance.inSession) — outside it
+     * WhatsApp rejects a non-template message with 131047.
+     *
+     * Sends the SAME body + media as the template, so the lead sees identical content.
+     * Returns { id, content }, matching sendTemplate.
+     */
+    sendFreeform: async (cid, t) => {
+      let content = '';
+      let headerFormat = null;
+      try {
+        const tpls = await loadRawTemplates();
+        const tpl = tpls.find((x) => x.name === t.name && x.language === t.language)
+          || tpls.find((x) => x.name === t.name);
+        const bodyComp = (tpl?.components || []).find(
+          (c) => String(c.type || '').toUpperCase() === 'BODY'
+        );
+        content = renderBody(bodyComp?.text, t.params);
+        const headerComp = (tpl?.components || []).find(
+          (c) => String(c.type || '').toUpperCase() === 'HEADER'
+        );
+        headerFormat = headerComp ? String(headerComp.format || '').toUpperCase() : null;
+      } catch { /* templates unavailable → send the text we have */ }
+
+      const MEDIA_FORMATS = ['IMAGE', 'VIDEO', 'DOCUMENT'];
+      const textOnly = async () => {
+        const m = await req(`/conversations/${cid}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ content }),
+        });
+        return { id: m.id, content };
+      };
+
+      if (!t.mediaUrl || !MEDIA_FORMATS.includes(headerFormat)) return textOnly();
+
+      // Chatwoot's message API takes attachments as multipart file parts, not URLs — so we
+      // read the file we already serve at PUBLIC_BASE_URL straight off disk (media.js wrote it).
+      const file = String(t.mediaUrl).split('/').pop().split('?')[0];
+      let buf;
+      try {
+        buf = await readFile(`${process.env.MEDIA_DIR || '/app/media'}/${file}`);
+      } catch {
+        // Media gone from disk: still deliver the text. Dropping the whole step would stall
+        // the lead inside the one window where we can reach them for free.
+        console.warn(`[drip] freeform: media missing for ${t.name} (${file}) — sending text only`);
+        return textOnly();
+      }
+
+      const fd = new FormData();
+      fd.append('content', content);
+      fd.append('attachments[]', new Blob([buf]), file);
+      // No Content-Type header on purpose — fetch must set the multipart boundary itself.
+      const r = await fetch(`${base}/conversations/${cid}/messages`, {
+        method: 'POST',
+        headers: { api_access_token: token },
+        body: fd,
+      });
+      if (!r.ok) throw new Error(`Chatwoot POST freeform /conversations/${cid}/messages → ${r.status}`);
+      const m = await r.json();
+      return { id: m.id, content };
+    },
+
+    /**
+     * Send the step through Meta's Marketing Messages (MM Lite) API instead of Chatwoot's
+     * Cloud-API path — `POST /{PHONE_NUMBER_ID}/marketing_messages`.
+     *
+     * Why it might beat Cloud API: MM Lite routes marketing through Meta's ads-delivery
+     * optimizer. Meta: it "can recognize high-engagement message templates … and it can
+     * overcome per-user message limits that might not allow delivery on Cloud API."
+     * ⚠️ Unproven for THIS audience — that is what the A/B measures. On the burned cohort
+     * it delivered 0/19, same as Cloud API (2026-07-12).
+     *
+     * Chatwoot has no MM Lite path, so we send via Graph and then write the message row
+     * ourselves with source_id = the wamid — otherwise Meta's status webhook has nothing to
+     * match and we never learn whether it was delivered. The row is what makes the A/B
+     * measurable at all.
+     *
+     * Returns { id, content } — same shape as sendTemplate, so reconcile's bookkeeping
+     * (sent_messages, retry, advance) is untouched.
+     */
+    sendMmLite: async (cid, t) => {
+      const creds = reads?.getWhatsappCreds ? await reads.getWhatsappCreds(accountId) : null;
+      if (!creds?.token || !creds?.phoneId) throw new Error('MM Lite: no WhatsApp creds');
+
+      // Resolve the conversation once: Graph needs the recipient's phone; the message row
+      // needs the internal (not display) conversation id + inbox.
+      const conv = (await query(
+        `SELECT c.id AS conv_db_id, c.inbox_id, replace(ct.phone_number, '+', '') AS phone
+           FROM public.conversations c
+           JOIN public.contacts ct ON ct.id = c.contact_id
+          WHERE c.display_id = $1 AND c.account_id = $2`,
+        [cid, accountId]
+      ))[0];
+      if (!conv?.phone) throw new Error(`MM Lite: no phone for conversation ${cid}`);
+
+      // Same body + header the template path would render, so the lead sees identical content.
+      let content = '';
+      let headerFormat = null;
+      try {
+        const tpls = await loadRawTemplates();
+        const tpl = tpls.find((x) => x.name === t.name && x.language === t.language)
+          || tpls.find((x) => x.name === t.name);
+        const bodyComp = (tpl?.components || []).find((c) => String(c.type || '').toUpperCase() === 'BODY');
+        content = renderBody(bodyComp?.text, t.params);
+        const headerComp = (tpl?.components || []).find((c) => String(c.type || '').toUpperCase() === 'HEADER');
+        headerFormat = headerComp ? String(headerComp.format || '').toUpperCase() : null;
+      } catch { /* templates unavailable → body params still go out, just no rendered preview */ }
+
+      const params = Array.isArray(t.params) ? t.params : Object.values(t.params || {});
+      const components = [];
+      const MEDIA_FORMATS = ['IMAGE', 'VIDEO', 'DOCUMENT'];
+      if (t.mediaUrl && MEDIA_FORMATS.includes(headerFormat)) {
+        const kind = headerFormat.toLowerCase();
+        components.push({ type: 'header', parameters: [{ type: kind, [kind]: { link: t.mediaUrl } }] });
+      }
+      if (params.length) {
+        components.push({
+          type: 'body',
+          parameters: params.map((v) => ({ type: 'text', text: String(v ?? '') })),
+        });
+      }
+
+      const r = await fetch(`${GRAPH}/${creds.phoneId}/marketing_messages`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${creds.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: conv.phone,
+          type: 'template',
+          template: { name: t.name, language: { code: t.language }, components },
+        }),
+      });
+      const j = await r.json();
+      const wamid = j?.messages?.[0]?.id;
+      if (!wamid) {
+        throw new Error(`MM Lite ${r.status}: ${JSON.stringify(j?.error || j).slice(0, 200)}`);
+      }
+
+      // The sender must match the drip's other messages or the thread renders inconsistently.
+      const sender = (await query(
+        `SELECT sender_type, sender_id FROM public.messages
+          WHERE account_id = $1 AND message_type = 1 AND sender_type = 'AgentBot'
+          ORDER BY id DESC LIMIT 1`,
+        [accountId]
+      ))[0] || { sender_type: 'AgentBot', sender_id: null };
+
+      const m = (await query(
+        `INSERT INTO public.messages
+           (account_id, inbox_id, conversation_id, message_type, content_type, status,
+            sender_type, sender_id, private, content, source_id, additional_attributes,
+            created_at, updated_at)
+         VALUES ($1, $2, $3, 1, 0, 0, $4, $5, false, $6, $7,
+                 jsonb_build_object('template_params', jsonb_build_object(
+                   'name', $8::text, 'category', $9::text, 'language', $10::text, 'via', 'MM_LITE')),
+                 now(), now())
+         RETURNING id`,
+        [accountId, conv.inbox_id, conv.conv_db_id, sender.sender_type, sender.sender_id,
+         content, wamid, t.name, t.category, t.language]
+      ))[0];
+
       return { id: m.id, content };
     },
 

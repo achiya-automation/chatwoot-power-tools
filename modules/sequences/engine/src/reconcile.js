@@ -436,6 +436,33 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         //   'stop'           — halt the enrollment
         // Only meaningful once a message has gone out (last_sent_at) on a real
         // conversation; on step 1 there is no previous send, so it's a no-op.
+        // ── A step whose copy REFERS BACK to the previous message ─────────────
+        // "יצא לך לראות את הסרטון ששלחתי?" only makes sense if the video actually
+        // arrived. It often doesn't: step 1 is a marketing template and Meta blocks it
+        // with 131049 for most cold leads. Sending the follow-up anyway asks the lead
+        // about a video she never received — 26 people got exactly that before this guard.
+        //
+        // Defer rather than skip: the previous step is still being retried (24h × attempt),
+        // and if it lands, this step becomes coherent again. If it never lands the
+        // enrollment fails on its own and this step never fires.
+        if (step.require_prev_delivered && Number(step.step_order) > 1) {
+          const landed = (await c.query(
+            `SELECT 1 FROM drip.sent_messages sm
+               JOIN public.messages m ON m.id = sm.message_id
+              WHERE sm.enrollment_id = $1 AND sm.step_order = $2 AND m.status IN (1, 2)
+              LIMIT 1`,
+            [e.id, Number(step.step_order) - 1]
+          )).rows.length > 0;
+          if (!landed) {
+            await c.query(
+              `UPDATE drip.enrollments SET next_send_at = $2 WHERE id = $1`,
+              [e.id, new Date(now.getTime() + 6 * 3600 * 1000)]
+            );
+            console.log(`[drip] gate DEFER acct ${accountId} enr ${e.id}: prev_step_not_delivered (step ${step.step_order})`);
+            return;
+          }
+        }
+
         const cond = step.send_condition || 'always';
         if (cond !== 'always' && e.last_sent_at && e.conversation_id) {
           const replied = await client.incomingSince(
@@ -574,15 +601,47 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         // Resolve contact for param substitution
         const contact = await client.getContact(conversationId);
 
-        // Send the template (irreversible — happens inside this tx so that if
-        // it throws the advance never commits and the row stays at current_step).
-        const sendResult = await client.sendTemplate(conversationId, {
+        // Send (irreversible — happens inside this tx so that if it throws the advance
+        // never commits and the row stays at current_step).
+        //
+        // ⭐ Window open (`session`, computed at the gate above) → send FREE-FORM, not a
+        // template. Meta's per-user marketing cap (131049) and the 24h tier apply only to
+        // templates sent OUTSIDE a service window; a free-form message inside the window is
+        // exempt from both. Same body, same media — the lead sees identical content, but it
+        // actually arrives. (2026-07-12: templates to leads who had replied landed ~29%.)
+        const sendArgs = {
           name:     step.template_name,
           language: step.language,
           category: step.category,
           params:   paramsResolve(step.params, contact),
-          mediaUrl: step.media_url || null, // header media (IMAGE/VIDEO/DOCUMENT); sendTemplate resolves the type
-        });
+          mediaUrl: step.media_url || null, // header media (IMAGE/VIDEO/DOCUMENT); the sender resolves the type
+        };
+        // MM Lite A/B (opts.mmLiteExperiment, default off). Meta claims its marketing API
+        // "can overcome per-user message limits that might not allow delivery on Cloud API"
+        // for high-engagement templates — unproven for this audience, so we measure instead
+        // of guessing. Deterministic 50/50 on contact_id: the same lead always lands in the
+        // same arm, so a retry doesn't switch rails mid-experiment and contaminate the result.
+        // Only for MARKETING outside a session — in-session sends are free-form (no cap to beat)
+        // and UTILITY is exempt from the per-user cap anyway.
+        const mmLiteArm = opts.mmLiteExperiment
+          && !session
+          && String(step.category || '').toUpperCase() === 'MARKETING'
+          && Number(e.contact_id) % 2 === 0;
+
+        let sendResult;
+        if (session) {
+          sendResult = await client.sendFreeform(conversationId, sendArgs);
+        } else if (mmLiteArm) {
+          try {
+            sendResult = await client.sendMmLite(conversationId, sendArgs);
+          } catch (mmErr) {
+            // An experiment must never cost a lead a message. Fall back to the proven path.
+            console.error(`[drip] MM Lite failed for enr ${e.id}, falling back to template:`, mmErr.message);
+            sendResult = await client.sendTemplate(conversationId, sendArgs);
+          }
+        } else {
+          sendResult = await client.sendTemplate(conversationId, sendArgs);
+        }
 
         // Record what was delivered (send history → "see exactly what was sent").
         // Best-effort and SAVEPOINT-isolated: a logging failure must NEVER abort the
