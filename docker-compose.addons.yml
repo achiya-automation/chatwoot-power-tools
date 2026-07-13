@@ -47,6 +47,10 @@ services:
       PORT: "3100"
       RECONCILE_INTERVAL: "60000"
       MEDIA_DIR: /app/media
+      # Optional: POST {text} here the moment Meta resolves a NEW lead's first message, and the
+      # operator gets a WhatsApp ping (delivered / blocked). The path is the shared secret —
+      # anyone holding this URL can push a notification. Unset = alerts off.
+      NOTIFY_WEBHOOK_URL: ${CWPT_NOTIFY_WEBHOOK_URL:-}
     volumes:
       - cwpt_media:/app/media
     ports:
