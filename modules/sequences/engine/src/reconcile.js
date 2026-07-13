@@ -42,6 +42,7 @@ export const firstName = (name) => cleanName(name).split(/\s+/).filter(Boolean)[
  */
 export const templateFamily = (name) =>
   String(name || '')
+    .replace(/_burn\d*$/, '')  // burn-pool copy — same message, disposable envelope
     .replace(/_v\d+$/, '')     // …_v3
     .replace(/_btn$/, '')      // …_btn
     .replace(/_v\d+$/, '');    // …_v2 that sat before _btn
@@ -446,7 +447,8 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         }
 
         // Load the step to send
-        const step = (await c.query(
+        // `let`, not `const`: a saturated lead is re-pointed at the burn-pool copy below.
+        let step = (await c.query(
           `SELECT * FROM drip.sequence_steps
             WHERE sequence_id = $1 AND step_order = $2`,
           [e.sequence_id, e.current_step]
@@ -603,13 +605,41 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           }
         }
 
+        const cState = cStates.get(e.contact_id) || {};
+        const session = compliance.inSession(cState, now);
+
+        // ── THE BURN POOL — a saturated lead must never touch a clean template ────
+        // A template is an ASSET, and every failed delivery devalues it — for everyone.
+        // Measured on this account, for brand-new leads (first message of their life):
+        //     template with 0 failures  → 67% delivered
+        //     template with 1-5         → 40%
+        //     template with 6+          → 8%
+        // And on 13/07 it played out inside a single day: the morning's template carried
+        // ~100 failures and every new lead was blocked; a fresh copy at 14:46 delivered
+        // 4/4; two hours and 24 failures later the next new leads were blocked again.
+        //
+        // The 769 leads Meta has already capped fail ~85% of the time. Left in the same
+        // template as everyone else, they burn it — and the client's brand-new leads,
+        // the ones worth 67%, inherit a template rated 8%. That is how this campaign died.
+        //
+        // So a capped lead is served from a SEPARATE COPY of the same message. She still
+        // gets the sequence, in order, with the same copy — but she burns her own template,
+        // not the one paying customers arrive on. Burn copies are disposable and rotated.
+        // No burn twin defined → fall back to the normal template (fail-open: never mute
+        // a lead over bookkeeping).
+        //
+        // ⚠️ In-session sends are EXEMPT: inside a 24h window delivery is ~100%, so the send
+        // does not burn anything — and it improves the template's history. Use the good one.
+        const saturated = Number(cState.cap_failures || 0) > 0 && !session;
+        if (saturated && step.template_burn) {
+          step = { ...step, template_name: step.template_burn };
+        }
+
         // ── COMPLIANCE GATE ──────────────────────────────────────────────────
         // Every one of Meta's rules is enforced here, in one place, before anything
         // irreversible happens (no conversation opened, no message sent, no cost).
         // Runs BEFORE lazy conversation creation on purpose: a blocked lead must not
         // leave a stray empty conversation behind.
-        const cState = cStates.get(e.contact_id) || {};
-        const session = compliance.inSession(cState, now);
         const verdict = compliance.canSend({
           category:  step.category,
           contact:   cState,
