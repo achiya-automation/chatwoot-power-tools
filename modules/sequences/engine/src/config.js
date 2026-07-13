@@ -18,6 +18,10 @@ export function loadConfig(env = process.env) {
     // after deliveryRetryHours×attempt, up to maxDeliveryRetries, then give up.
     maxDeliveryRetries: Number(env.MAX_DELIVERY_RETRIES || 3),
     deliveryRetryHours: Number(env.DELIVERY_RETRY_HOURS || 24),
+    // MM Lite A/B: route a deterministic 50% of MARKETING sends (contact_id even) through
+    // Meta's marketing API instead of Cloud API, and compare delivery. OFF by default —
+    // this is an experiment, not a default. Turn on only while measuring.
+    mmLiteExperiment: String(env.MM_LITE_EXPERIMENT || '').toLowerCase() === 'true',
     // The "master" Chatwoot account whose administrators are super-admins of the drip
     // dashboard: they can pick and manage ANY drip-managed account. Everyone else is
     // limited to the accounts they're a member of (tenant isolation in the auth gate).

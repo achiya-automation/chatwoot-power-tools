@@ -76,6 +76,7 @@ async function tick() {
       token: a.chatwoot_token,
       accountId: a.account_id,
       reads,
+      query,          // sendMmLite writes the message row itself (Chatwoot has no MM Lite path)
     });
     try {
       // ── Phase 0: inbound scan ────────────────────────────────────────────────
@@ -108,6 +109,7 @@ async function tick() {
         maxSendsPerTick: config.maxSendsPerTick,
         maxDeliveryRetries: config.maxDeliveryRetries,
         deliveryRetryHours: config.deliveryRetryHours,
+        mmLiteExperiment: config.mmLiteExperiment,
       });
     } catch (e) {
       console.error(`[drip] reconcile acct ${a.account_id}:`, e.message);

@@ -232,7 +232,13 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   if (inSession) return { ok: true, reason: 'in_session' };
 
   // ── מכסות שיווק ─────────────────────────────────────────────────────────
-  if (s.require_consent && !contact.consent_at) {
+  // ההסכמה נבדקת בשתי רמות, ודי באחת מהן:
+  //   • הצהרת בעל המידע (drip.blanket_consent) — הלקוח חתם שכל הרשימות שלו הסכימו.
+  //     זו הרמה הנכונה: ההסכמה שייכת למפרסם, לא לנו. שורה אחת מכסה את כל הלידים שלו.
+  //   • consent_at פר-איש-קשר — opt-in ישיר שנרשם אצלנו (טופס, תווית, RPC).
+  // אין אף אחת מהן → defer. לקוח שלא הצהיר לא ישלח שיווק בטעות (תיקון 40: עד ₪1,000
+  // להודעה; ולמטא זו סיבה #1 להשבתת מספרים).
+  if (s.require_consent && !contact.consent_at && !s.blanket_consent) {
     return { ok: false, reason: 'no_consent', action: 'defer' };
   }
   if (s.block_us_marketing && isUsNumber(phone)) {
@@ -262,8 +268,44 @@ export async function loadSettings(pool, accountId) {
   const { rows } = await pool.query(
     `SELECT * FROM drip.compliance WHERE account_id = $1`, [accountId]
   );
-  if (!rows[0]) return { ...DEFAULT_SETTINGS };
-  return { ...DEFAULT_SETTINGS, ...rows[0], opt_out_keywords: rows[0].opt_out_keywords || [] };
+
+  // הצהרת בעל המידע: המפרסם (הלקוח) חתם שכל הנמענים ברשימותיו הסכימו לקבל דבר
+  // פרסומת. ההסכמה שייכת לו, לא לנו — ולכן היא נבדקת ברמת החשבון, לא פר-ליד.
+  //
+  // שתי רמות, הספציפית גוברת:
+  //   • account_id = <החשבון>  — הצהרה נפרדת ללקוח מסוים.
+  //   • account_id = 0         — ההצהרה הגלובלית: תנאי ההתקשרות הסטנדרטיים, שבהם
+  //                              כל לקוח מצהיר בחתימה על ההסכם. שורה אחת מכסה את כל
+  //                              החשבונות — הקיימים והעתידיים.
+  //
+  // ⚠️ אינה גוברת על suppressed_at: מי שביקש להסיר לא מקבל, גם עם הצהרה. זה נבדק
+  // קודם ב-canSend ואינו ניתן לעקיפה.
+  // fail-closed: כל תקלה כאן משמעה "אין הצהרה" ⇒ השיווק נחסם. זה הכיוון הבטוח —
+  // אבל הוא גם שקט, ולכן ⚠️ חייבים לצעוק: תקלת הרשאה (`GRANT SELECT` חסר ל-drip_engine)
+  // נראית בדיוק כמו "אין הצהרה", ותשתק לקוח שלם בלי סימן. 42P01 = הטבלה לא קיימת
+  // (טסטים/התקנה נקייה) — זה תרחיש לגיטימי ושקט. כל שאר השגיאות נרשמות.
+  const { rows: bc } = await pool.query(
+    `SELECT source, detail, declared_at, declared_by
+       FROM drip.blanket_consent
+      WHERE account_id IN ($1, 0)
+      ORDER BY (account_id = $1) DESC
+      LIMIT 1`, [accountId]
+  ).catch((e) => {
+    if (e.code !== '42P01') {
+      console.error(`[drip] blanket_consent unreadable for acct ${accountId} (${e.code}: ${e.message}) — שיווק ייחסם`);
+    }
+    return { rows: [] };
+  });
+
+  const blanket = bc[0] ? { blanket_consent: true, blanket_consent_source: bc[0].source } : {};
+
+  if (!rows[0]) return { ...DEFAULT_SETTINGS, ...blanket };
+  return {
+    ...DEFAULT_SETTINGS,
+    ...rows[0],
+    ...blanket,
+    opt_out_keywords: rows[0].opt_out_keywords || [],
+  };
 }
 
 /** בריאות החשבון (tier / איכות / עצירה). {} כשאין עדיין שורה. */
