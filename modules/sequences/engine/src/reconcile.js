@@ -535,6 +535,34 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           }
         }
 
+        // ── NEVER WALK THE SEQUENCE BACKWARDS ────────────────────────────────
+        // A lead who already received step 4 must never be sent step 1 again — she has
+        // moved on, and re-introducing yourself reads as spam. It happened: a bulk revival
+        // reset every lead whose step 1 never got delivered, without checking whether she
+        // had already received LATER steps. A customer replied "פעם שלישית שאתם שולחים
+        // לי" — the third time you're sending me. 27 leads were in that state.
+        //
+        // The pointer jumps past the highest step she has actually RECEIVED. Blocked sends
+        // don't count — she never saw them, so they must still be retried.
+        if (e.contact_id) {
+          const peak = (await c.query(
+            `SELECT max(sm.step_order)::int AS peak
+               FROM drip.sent_messages sm
+               JOIN public.messages m ON m.id = sm.message_id
+              WHERE sm.enrollment_id = $1 AND m.status IN (1, 2)`,
+            [e.id]
+          )).rows[0]?.peak;
+
+          if (peak != null && Number(e.current_step) <= Number(peak)) {
+            await c.query(
+              `UPDATE drip.enrollments SET current_step = $2 WHERE id = $1`,
+              [e.id, Number(peak) + 1]
+            );
+            console.log(`[drip] backwards SKIP acct ${accountId} enr ${e.id}: ${e.current_step} → ${peak + 1}`);
+            return;   // הטיק הבא ישלח את השלב הנכון
+          }
+        }
+
         // ── NEVER SEND COPY SHE HAS ALREADY RECEIVED ─────────────────────────
         // `current_step` is a NUMBER, and step numbers move: inserting a step in the
         // middle shifts everyone after it, and a lead mid-sequence silently starts
