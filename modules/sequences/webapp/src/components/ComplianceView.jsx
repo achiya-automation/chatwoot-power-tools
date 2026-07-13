@@ -91,6 +91,9 @@ const M = {
     consentTitle: 'כיסוי הסכמות',
     consentCovered: '{n} מתוך {total} אנשי קשר עם רשומת הסכמה',
     consentCta: '{n} אנשי קשר משויכים לרצף בלי רשומת הסכמה — שיווק אליהם חסום.',
+    consentBlanketCovered: 'הצהרת בעל המידע חלה על כל {total} אנשי הקשר',
+    consentBlanketOk: 'הצהרת בעל המידע בתוקף — אף ליד אינו חסום בגלל הסכמה.',
+    consentBlanketGlobal: 'תנאי ההתקשרות הסטנדרטיים',
     consentCtaBtn: 'רישום הסכמה לפי תווית',
     contactsKnown: 'אנשי קשר',
     contactsSuppressed: 'חסומים לשיווק',
@@ -219,6 +222,9 @@ const M = {
     consentTitle: 'Consent coverage',
     consentCovered: '{n} of {total} contacts have a consent record',
     consentCta: '{n} contacts are enrolled in a sequence without a consent record — marketing to them is blocked.',
+    consentBlanketCovered: 'A data-owner declaration covers all {total} contacts',
+    consentBlanketOk: 'Data-owner declaration in force — no lead is blocked for consent.',
+    consentBlanketGlobal: 'standard contract terms',
     consentCtaBtn: 'Record consent by label',
     contactsKnown: 'Contacts',
     contactsSuppressed: 'Blocked for marketing',
@@ -386,10 +392,18 @@ export default function ComplianceView({ accountId }) {
   const contacts = data?.contacts || {};
   const alerts = data?.alerts || [];
   const templates = data?.templates || [];
+  // `missing_consent` = מי שבאמת חסום, כפי ש-canSend מחשב אותו. כשקיימת הצהרת בעל המידע
+  // (blanket_consent) — הלקוח חתם שכל הרשימה שלו הסכימה — אף אחד אינו חסום, והשרת מחזיר 0.
+  // קודם הדשבורד ספר "מי שאין לו consent_at" והתריע "שיווק אליהם חסום" על לידים שקיבלו
+  // הודעה באותו בוקר. ⚠️ הכיסוי מוצג 100% כשההצהרה בתוקף, כי זו האמת התפעולית.
+  const blanket = data?.blanket_consent || null;
   const missing = Number(data?.missing_consent) || 0;
   const withConsent = Number(contacts.with_consent) || 0;
-  const consentTotal = withConsent + missing;
-  const consentPct = consentTotal > 0 ? Math.round((withConsent / consentTotal) * 100) : 100;
+  const noRecord = Number(data?.without_consent_record) || 0;
+  const consentTotal = withConsent + noRecord;
+  const consentPct = blanket
+    ? 100
+    : (consentTotal > 0 ? Math.round((withConsent / consentTotal) * 100) : 100);
 
   const save = async () => {
     setSaving(true);
@@ -631,7 +645,9 @@ export default function ComplianceView({ accountId }) {
         </div>
 
         <p className="mt-2 text-xs text-n-slate-11">
-          {t('consentCovered', { n: withConsent, total: consentTotal })}
+          {blanket
+            ? t('consentBlanketCovered', { total: contacts.known ?? 0 })
+            : t('consentCovered', { n: withConsent, total: consentTotal })}
         </p>
         <div className="mt-1.5 h-2 w-full rounded-full bg-n-alpha-3" aria-hidden="true">
           <div
@@ -646,7 +662,21 @@ export default function ComplianceView({ accountId }) {
           <span>{t('contactsStale')}: <span className="font-medium text-n-amber-11">{contacts.stale ?? 0}</span></span>
         </div>
 
-        {missing > 0 ? (
+        {blanket ? (
+          /* הצהרת בעל המידע בתוקף — אף ליד אינו חסום. זו האמת, וזו גם הראיה מול רגולטור. */
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-n-teal-7 bg-n-teal-3 px-3 py-2.5 text-sm text-n-teal-12">
+            <ShieldCheck size={15} className="mt-0.5 shrink-0 text-n-teal-11" aria-hidden="true" />
+            <span>
+              {t('consentBlanketOk')}
+              {blanket.declared_at ? (
+                <span className="text-n-slate-11">
+                  {' · '}{new Date(blanket.declared_at).toLocaleDateString('he-IL')}
+                  {blanket.account_id === 0 ? ` · ${t('consentBlanketGlobal')}` : ''}
+                </span>
+              ) : null}
+            </span>
+          </div>
+        ) : missing > 0 ? (
           <div className="mt-3 flex flex-col gap-2.5 rounded-lg border border-n-amber-7 bg-n-amber-3 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
             <span className="flex items-start gap-2 text-sm text-n-amber-12">
               <AlertCircle size={15} className="mt-0.5 shrink-0 text-n-amber-11" aria-hidden="true" />
