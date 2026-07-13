@@ -34,11 +34,19 @@ const REASONS = {
 
 const fmtPhone = (p) => String(p || '').replace(/^\+?972/, '0');
 
+/**
+ * ⚠️ הספירה חייבת להיות באותו היקף כמו ההתראה — לידים חדשים בלבד.
+ * אחוז כלל-חשבוני מערבב פנימה את הזנב השרוף (שנכשל בכוונה, כי כבר חסום), ואז כל
+ * התראה על ליד חדש שנמסר בהצלחה נגררת עם "59%" ונראית ככישלון. אותו היקף, אותו מספר.
+ */
+const tallyOf = (t) =>
+  `📊 לידים חדשים היום: ${t.delivered}/${t.total} נמסרו` +
+  (t.total ? ` (${Math.round((t.delivered / t.total) * 100)}%)` : '');
+
 /** One lead, one message. Short enough to read on a lock screen. */
 function render(r, tally) {
   const who = `${r.name || 'ללא שם'} · ${fmtPhone(r.phone_number)}`;
-  const rate = tally.total ? Math.round((tally.delivered / tally.total) * 100) : 0;
-  const today = `📊 היום: ${tally.delivered}/${tally.total} נמסרו (${rate}%)`;
+  const today = tallyOf(tally);
 
   if (r.delivery_status === 'failed') {
     const why = REASONS[Number(r.error_code)] || r.error_title || `שגיאה ${r.error_code || '?'}`;
@@ -83,15 +91,19 @@ export async function notifyNewLeads(pool, accountId, opts) {
   );
   if (!rows.length) return 0;
 
-  // אחוז המסירה של היום — נכנס לכל התראה, כדי שהמספר יהיה מול העיניים בלי לפתוח כלום.
+  // אחוז המסירה של הלידים החדשים היום — מול העיניים בכל התראה, בלי לפתוח כלום.
+  // אותו NOT EXISTS כמו למעלה: אותו היקף בדיוק כמו ההתראה עצמה.
   const [tally] = (await pool.query(
     `SELECT count(*)::int AS total,
             count(*) FILTER (WHERE delivery_status IN ('delivered','read'))::int AS delivered
-       FROM drip.sent_messages
-      WHERE account_id = $1
-        AND delivery_status IN ('delivered','read','failed')
-        AND sent_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Jerusalem')
-                       AT TIME ZONE 'Asia/Jerusalem'`,
+       FROM drip.sent_messages sm
+      WHERE sm.account_id = $1
+        AND sm.delivery_status IN ('delivered','read','failed')
+        AND sm.sent_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Jerusalem')
+                          AT TIME ZONE 'Asia/Jerusalem'
+        AND NOT EXISTS (
+              SELECT 1 FROM drip.sent_messages p
+               WHERE p.enrollment_id = sm.enrollment_id AND p.sent_at < sm.sent_at)`,
     [accountId]
   )).rows;
 
@@ -101,8 +113,7 @@ export async function notifyNewLeads(pool, accountId, opts) {
     ? [`📥 ${rows.length} לידים חדשים נסגרו כרגע\n\n` +
        `✅ נמסרו: ${rows.filter((r) => r.delivery_status !== 'failed').length}\n` +
        `🔴 נחסמו: ${rows.filter((r) => r.delivery_status === 'failed').length}\n\n` +
-       `📊 היום: ${tally.delivered}/${tally.total} נמסרו ` +
-       `(${tally.total ? Math.round((tally.delivered / tally.total) * 100) : 0}%)`]
+       tallyOf(tally)]
     : rows.map((r) => render(r, tally));
 
   for (const text of texts) {
