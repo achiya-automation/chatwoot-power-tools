@@ -4,6 +4,7 @@ import { getPool, query } from './db.js';
 import { runMigrations } from './migrate.js';
 import { reconcileAccount } from './reconcile.js';
 import { refreshHealth } from './meta.js';
+import { rotateSpentTemplates, uploadToMeta } from './rotate.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
@@ -152,6 +153,29 @@ async function tick() {
       // Live tier + quality rating from Meta (cached ~30m). Fails safe: a Graph outage can
       // only keep the last known cap, never raise it. A RED quality rating halts the account.
       const { cap: tierCap } = await refreshHealth(pool, reads, a.account_id, now, { compliance });
+
+      // ── Self-healing templates ────────────────────────────────────────────────
+      // A template is a consumable: every failed delivery devalues it for everyone, and ~10
+      // failures is enough to take a capped recipient from 69% delivery down to 14%. Rotation
+      // is therefore not maintenance — it is the thing that keeps the client delivering. No
+      // human can watch it closely enough, and the week nobody looks, the client silently
+      // drops to 14% and blames the system.
+      //
+      // Fully wrapped: template review takes minutes, and a send must never wait on it. Until
+      // the twin is APPROVED the step keeps the old template and the gate defers the lead —
+      // it is never dropped.
+      try {
+        const creds = await reads.getWhatsappCreds(a.account_id);
+        if (creds?.wabaId && creds?.token) {
+          await rotateSpentTemplates(pool, a.account_id, {
+            wabaId: creds.wabaId,
+            token: creds.token,
+            uploadMedia: (url) => uploadToMeta(url, creds.token, config.metaAppId),
+          });
+        }
+      } catch (e) {
+        console.error(`[drip] rotate acct ${a.account_id} (non-fatal):`, e.message);
+      }
 
       // Attribute definitions are provisioned once at onboarding (the AgentBot token can't
       // manage them), so the per-tick ensureAttributes call is gone — reconcile only.
