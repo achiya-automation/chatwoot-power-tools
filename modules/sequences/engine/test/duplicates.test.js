@@ -34,3 +34,17 @@ test('templateFamily: קלט ריק לא מפיל', () => {
   assert.equal(templateFamily(undefined), '');
   assert.equal(templateFamily(''), '');
 });
+
+test('templateFamily: עותק שריפה הוא אותו תוכן — לא הודעה חדשה', () => {
+  // מאגר השריפה: נמענת שמטא חסמה מקבלת עותק נפרד של אותה הודעה, כדי לא לשרוף את
+  // התבנית שהלידים החדשים נוחתים עליה. אבל זה **אותו טקסט** — ולכן שומר הכפילויות
+  // חייב לזהות את זה, אחרת לקוחה שכבר קיבלה את ההודעה תקבל אותה שוב מהעותק.
+  assert.equal(templateFamily('bb_new_01_burn1'), 'bb_new_01');
+  assert.equal(templateFamily('bb_new_01_btn_v4'), 'bb_new_01');
+  assert.equal(templateFamily('bb_new_01_burn1'), templateFamily('bb_new_01_btn_v4'));
+  assert.equal(templateFamily('bb_new_video_followup_burn1'), 'bb_new_video_followup');
+  assert.equal(templateFamily('bb_new_video_followup_burn1'),
+               templateFamily('bb_new_video_followup_btn_v3'));
+  // עותקי שריפה שונים של הודעות שונות נשארים שונים
+  assert.notEqual(templateFamily('bb_new_09_burn1'), templateFamily('bb_new_10_burn1'));
+});
