@@ -313,7 +313,7 @@ test('canSend: תגובה מבטלת רוויה — חלון פתוח עוקף �
 });
 
 test('canSend: תבנית מעל התקציב נעצרת לנמענת מסוכנת — ולעולם לא לנמענת נקייה', () => {
-  const burned = { ...base.template, failures: 15 };
+  const burned = { ...base.template, failures: 40 };
   const risky  = { ...base.contact, cap_failures: 1 };   // מטא כבר חסמה אותה פעם
 
   const v = canSend({ ...base, template: burned, contact: risky });
@@ -326,7 +326,7 @@ test('canSend: תבנית מעל התקציב נעצרת לנמענת מסוכנ
   assert.deepEqual(canSend({ ...base, template: burned }), { ok: true });
 
   // מתחת לסף — עוברת גם למסוכנת.
-  assert.deepEqual(canSend({ ...base, template: { ...base.template, failures: 14 }, contact: risky }), { ok: true });
+  assert.deepEqual(canSend({ ...base, template: { ...base.template, failures: 39 }, contact: risky }), { ok: true });
 
   // בחלון פתוח שולחים תמיד: השליחה נמסרת (100%) ולא נספרת בשום מכסה.
   assert.equal(canSend({ ...base, template: burned, contact: risky, inSession: true }).ok, true);
