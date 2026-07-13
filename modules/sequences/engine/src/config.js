@@ -22,6 +22,9 @@ export function loadConfig(env = process.env) {
     // Meta's marketing API instead of Cloud API, and compare delivery. OFF by default —
     // this is an experiment, not a default. Turn on only while measuring.
     mmLiteExperiment: String(env.MM_LITE_EXPERIMENT || '').toLowerCase() === 'true',
+    // Meta app id — needed to open a resumable upload session when the engine re-creates a
+    // worn-out template (POST /{app-id}/uploads). Empty = template rotation is off.
+    metaAppId: String(env.META_APP_ID || ''),
     // The "master" Chatwoot account whose administrators are super-admins of the drip
     // dashboard: they can pick and manage ANY drip-managed account. Everyone else is
     // limited to the accounts they're a member of (tenant isolation in the auth gate).
