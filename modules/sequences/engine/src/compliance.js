@@ -514,6 +514,12 @@ export async function scanInbound(pool, accountId, now = new Date(), settings = 
     // הזמן הוא של ההודעה עצמה, לא now(): בריצה הראשונה סורקים 90 יום אחורה, ותגובה
     // מלפני חודשיים אסור שתיראה כחלון שירות פתוח. Chatwoot שומר created_at כ-UTC נאיבי.
     // GREATEST מגן מפני סדר לא-מונוטוני בין id ל-created_at.
+    // ⛔ cap_failures לא מתאפס כאן. הוא היה מתאפס, וזה שיקר:
+    // תגובה *ישנה* לא מרפה את התקרה של מטא. נמדד 13/07 — 13 לידים שהמונה שלהם אופס
+    // ע"י תגובה מלפני שבועות נשלחו כ"נקיים" וחזרו **13/13 עם 131049**. במקביל, לידים
+    // עם מונה אמיתי 0 נמסרו 3/3. המונה חייב לספור את כל ההיסטוריה, אחרת הוא מסווה
+    // בדיוק את מי שאסור לשלוח אליו.
+    // מה שכן מרפה את התקרה זה **חלון שירות פתוח** — וזה נבדק ב-inSession, לא כאן.
     await pool.query(
       `INSERT INTO drip.contact_state (account_id, contact_id, last_inbound_at, unengaged_streak, cap_failures)
        VALUES ($1, $2, ($3::timestamp AT TIME ZONE 'UTC'), 0, 0)
@@ -521,7 +527,6 @@ export async function scanInbound(pool, accountId, now = new Date(), settings = 
          SET last_inbound_at  = GREATEST(drip.contact_state.last_inbound_at,
                                          ($3::timestamp AT TIME ZONE 'UTC')),
              unengaged_streak = 0,
-             cap_failures     = 0,
              updated_at       = now()`,
       [accountId, contactId, lastInbound]
     );
