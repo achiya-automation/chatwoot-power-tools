@@ -33,7 +33,7 @@ test('ליד שנמסר → התראת הצלחה עם אחוז היום', async
   assert.equal(n, 1);
   assert.match(sent[0], /✅ ליד חדש קיבל/);
   assert.match(sent[0], /0501234567/);          // +972 → 0, כמו שהוא מחייג
-  assert.match(sent[0], /8\/10 נמסרו \(80%\)/);
+  assert.match(sent[0], /לידים חדשים היום: 8\/10 נמסרו \(80%\)/);
   assert.deepEqual(pool.marked, ['a1']);
 });
 
