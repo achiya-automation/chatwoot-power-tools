@@ -16,7 +16,7 @@ function fakePool(leads) {
     marked,
     query: async (sql, params) => {
       if (/UPDATE drip\.sent_messages SET alerted_at/.test(sql)) { marked.push(...params[0]); return {}; }
-      if (/count\(\*\)/.test(sql)) return { rows: [{ total: 10, delivered: 8 }] };
+      if (/count\(\*\)/.test(sql)) return { rows: [{ delivered: 8, failed: 2 }] };
       return { rows: leads };
     },
   };
@@ -26,14 +26,14 @@ const capture = (sent, ok = true) => async (_url, o) => {
   return { ok, status: ok ? 200 : 502 };
 };
 
-test('ליד שנמסר → התראת הצלחה עם אחוז היום', async () => {
+test('ליד שנמסר → התראת הצלחה + מאזן היום', async () => {
   const pool = fakePool([LEAD]); const sent = [];
   const n = await notifyNewLeads(pool, 7, { webhookUrl: 'https://x/y', fetchImpl: capture(sent) });
 
   assert.equal(n, 1);
   assert.match(sent[0], /✅ ליד חדש קיבל/);
   assert.match(sent[0], /0501234567/);          // +972 → 0, כמו שהוא מחייג
-  assert.match(sent[0], /לידים חדשים היום: 8\/10 נמסרו \(80%\)/);
+  assert.match(sent[0], /לידים חדשים היום: 8 נמסרו · 2 חסומים/);
   assert.deepEqual(pool.marked, ['a1']);
 });
 

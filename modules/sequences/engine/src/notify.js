@@ -35,13 +35,17 @@ const REASONS = {
 const fmtPhone = (p) => String(p || '').replace(/^\+?972/, '0');
 
 /**
- * ⚠️ הספירה חייבת להיות באותו היקף כמו ההתראה — לידים חדשים בלבד.
- * אחוז כלל-חשבוני מערבב פנימה את הזנב השרוף (שנכשל בכוונה, כי כבר חסום), ואז כל
- * התראה על ליד חדש שנמסר בהצלחה נגררת עם "59%" ונראית ככישלון. אותו היקף, אותו מספר.
+ * ⛔ בכוונה בלי אחוז.
+ *
+ * אחוז מסירה של לידים חדשים מחלק את המסירות ב*כל* מי שנכנס — כולל לידים שמטא כבר
+ * חסמה עוד לפני שהגיעו אלינו (שרידים מקמפיין קודם). ב-13/07: 5 מסירות מתוך 22 = 23%,
+ * מספר שנראה כמו מערכת גוססת. האמת: 5 מתוך 5 הלידים שמטא לא חסמה נמסרו — 100%.
+ *
+ * שתי עובדות ובלי מנה. מי שקורא רואה גם שהמערכת מוסרת וגם כמה מהתור כבר שרוף,
+ * ואף מספר לא משקר לו.
  */
 const tallyOf = (t) =>
-  `📊 לידים חדשים היום: ${t.delivered}/${t.total} נמסרו` +
-  (t.total ? ` (${Math.round((t.delivered / t.total) * 100)}%)` : '');
+  `📊 לידים חדשים היום: ${t.delivered} נמסרו · ${t.failed} חסומים אצל מטא`;
 
 /** One lead, one message. Short enough to read on a lock screen. */
 function render(r, tally) {
@@ -80,11 +84,14 @@ export async function notifyNewLeads(pool, accountId, opts) {
       WHERE sm.account_id = $1
         AND sm.alerted_at IS NULL
         AND sm.delivery_status IN ('delivered', 'read', 'failed')
-        -- ההודעה הראשונה של ההרשמה = האירוע ברמת הליד ("נכנס — נמסר/נחסם").
+        -- ⭐ "ליד חדש" = מי שמעולם לא שלחנו לו. לא "ההודעה הראשונה של ההרשמה":
+        -- החייאה של רצף ישן פותחת הרשמות חדשות למאות לידים ותיקים, והם היו נספרים
+        -- כחדשים — 500 התראות, ואחוז הצלחה מדולל בזנב שרוף שכבר חסום.
         -- כשל בשלב 6 אצל מי שכבר קיבל 1-5 הוא רעש, לא התראה.
         AND NOT EXISTS (
               SELECT 1 FROM drip.sent_messages p
-               WHERE p.enrollment_id = sm.enrollment_id AND p.sent_at < sm.sent_at)
+               WHERE p.account_id = sm.account_id AND p.contact_id = sm.contact_id
+                 AND p.sent_at < sm.sent_at)
       ORDER BY sm.sent_at
       LIMIT 50`,
     [accountId]
@@ -92,10 +99,10 @@ export async function notifyNewLeads(pool, accountId, opts) {
   if (!rows.length) return 0;
 
   // אחוז המסירה של הלידים החדשים היום — מול העיניים בכל התראה, בלי לפתוח כלום.
-  // אותו NOT EXISTS כמו למעלה: אותו היקף בדיוק כמו ההתראה עצמה.
+  // אותו NOT EXISTS בדיוק כמו למעלה: אותו היקף כמו ההתראה עצמה, אחרת המספר משקר.
   const [tally] = (await pool.query(
-    `SELECT count(*)::int AS total,
-            count(*) FILTER (WHERE delivery_status IN ('delivered','read'))::int AS delivered
+    `SELECT count(*) FILTER (WHERE delivery_status IN ('delivered','read'))::int AS delivered,
+            count(*) FILTER (WHERE delivery_status = 'failed')::int AS failed
        FROM drip.sent_messages sm
       WHERE sm.account_id = $1
         AND sm.delivery_status IN ('delivered','read','failed')
@@ -103,7 +110,8 @@ export async function notifyNewLeads(pool, accountId, opts) {
                           AT TIME ZONE 'Asia/Jerusalem'
         AND NOT EXISTS (
               SELECT 1 FROM drip.sent_messages p
-               WHERE p.enrollment_id = sm.enrollment_id AND p.sent_at < sm.sent_at)`,
+               WHERE p.account_id = sm.account_id AND p.contact_id = sm.contact_id
+                 AND p.sent_at < sm.sent_at)`,
     [accountId]
   )).rows;
 
