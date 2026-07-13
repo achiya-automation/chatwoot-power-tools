@@ -177,6 +177,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
   block_us_marketing:    true,
   halt_on_red:           true,
   opt_out_keywords:      [],
+  // תקציב הכישלונות של תבנית. מטא לא מפרסמת סף — ומדידה על החשבון הזה (n=4,998, בבקרה
+  // על היסטוריית החסימות של הנמענת, שאחרת מתחזה לאפקט של התבנית) מראה הידרדרות רציפה
+  // ולא צוק: ~86% מסירה בתבנית טרייה, ~67% אחרי 10-14 כישלונות, וקריסה ל-~20% מעבר ל-50.
+  // 15 הוא בלם זהירות, לא סף מדוד: הוא עוצר תבנית שמידרדרת בעודה רחוקה מהקריסה, ומתריע
+  // שצריך תאומה — במקום לגלות את זה מהדוח של הלקוח.
+  max_template_failures: 15,
 });
 
 /**
@@ -218,7 +224,18 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   if (contact.suppressed_at) {
     const scope = contact.suppressed_scope || 'marketing';
     if (scope === 'all' || marketing) {
-      return { ok: false, reason: 'suppressed', action: 'drop', detail: contact.suppressed_reason || '' };
+      // ⚠️ רוויה (`saturated`) אינה בקשה של הנמענת — היא תקרה של מטא, והיא שונה מהותית
+      // מ-opt-out. מטא: התקרה "מסתגלת אוטומטית עם הזמן", ו*מתבטלת* בתוך חלון שירות פתוח.
+      // לכן היא נדחית ולא מסירה: הלידה נשארת ברצף, ואם תגיב אי-פעם — תקבל הכל (נמדד:
+      // 25/25 = 100% מסירה בחלון פתוח, מול 7.9% לנמענת שמטא כבר חסמה).
+      // מי שביקש להסיר (keyword / 131050) או שאינו נמען תקף — נשאר חסום תמיד.
+      const capBased = contact.suppressed_reason === 'saturated';
+      if (!capBased) {
+        return { ok: false, reason: 'suppressed', action: 'drop', detail: contact.suppressed_reason || '' };
+      }
+      if (!inSession) {
+        return { ok: false, reason: 'saturated', action: 'defer', detail: contact.suppressed_reason || '' };
+      }
     }
   }
 
@@ -247,10 +264,27 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   if (Number(sentToday) >= Number(s.max_marketing_per_day)) {
     return { ok: false, reason: 'daily_cap', action: 'defer' };
   }
+
+  // ── תקציב הכישלונות של התבנית ───────────────────────────────────────────
+  // עוצר תבנית שמידרדרת לפני שהיא מתה, ומסמן אותה להחלפה.
+  //
+  // ⚠️ אבל רק לנמענות שכבר *הראו סיכון* (מטא חסמה אותן פעם אחת לפחות). זו לא החמרה
+  // אלא הדיוק שמונע ירייה ברגל: קהל נקי מוסר ב-84%, כלומר גם שליחה מושלמת ל-120 לידים
+  // בריאים מייצרת ~19 כישלונות טבעיים. תקציב שסופר אותם היה חוסם את התבנית בדיוק בשביל
+  // הלידים הטובים — ומקפיא את הרצף. הכישלונות ששורפים תבנית מגיעים מהזנב הרווי (7.9%
+  // מסירה), ורק הוא נעצר כאן.
+  //
+  // מתחת ל-inSession בכוונה: שליחה בחלון פתוח עוקפת את התקרה, נמסרת (100%), ו*משפרת*
+  // את מוניטין התבנית. חסר מידע על התבנית ⇒ שולחים (fail-open).
+  if (template && Number(template.failures || 0) >= Number(s.max_template_failures)
+      && Number(contact.cap_failures || 0) > 0) {
+    return { ok: false, reason: 'template_burned', action: 'defer' };
+  }
+
   // הגנות עומק — הכתיבה עצמה נעשית ב-reconcileDeliveries, אבל אם מחזור אחד פספס,
-  // השער לא ישלח בכל זאת.
+  // השער לא ישלח בכל זאת. רוויה = דחייה, לא הסרה (ראה ההערה למעלה).
   if (Number(contact.cap_failures || 0) >= Number(s.max_cap_failures)) {
-    return { ok: false, reason: 'saturated', action: 'drop' };
+    return { ok: false, reason: 'saturated', action: 'defer' };
   }
   if (Number(contact.unengaged_streak || 0) >= Number(s.max_unengaged)) {
     return { ok: false, reason: 'unengaged', action: 'drop' };
@@ -327,10 +361,25 @@ export async function loadContactStates(pool, accountId, contactIds) {
   return new Map(rows.map((r) => [r.contact_id, r]));
 }
 
-/** מפת "<name>|<lang>" → שורת template_health. */
+/**
+ * מפת "<name>|<lang>" → שורת template_health, **בתוספת `failures`** — מספר המסירות
+ * שנכשלו בתבנית הזו מאז ומעולם. זה המונה שעליו עובד `max_template_failures`.
+ *
+ * למה לספור מ-sent_messages ולא לשמור עמודה: התאומה (`_v3`) היא שם חדש, ולכן המונה שלה
+ * מתאפס מעצמו — בדיוק כמו אצל מטא. עמודה נפרדת הייתה דורשת איפוס ידני בכל החלפה.
+ * ⚠️ `quality_score` של מטא מחזיר UNKNOWN לתמיד בנפחים האלה — הוא אינו אזהרה מוקדמת.
+ */
 export async function loadTemplateHealth(pool, accountId) {
   const { rows } = await pool.query(
-    `SELECT * FROM drip.template_health WHERE account_id = $1`, [accountId]
+    `SELECT th.*, COALESCE(f.failures, 0)::int AS failures
+       FROM drip.template_health th
+       LEFT JOIN (
+              SELECT template_name, count(*) AS failures
+                FROM drip.sent_messages
+               WHERE account_id = $1 AND delivery_status = 'failed'
+               GROUP BY template_name
+            ) f ON f.template_name = th.template_name
+      WHERE th.account_id = $1`, [accountId]
   );
   const m = new Map();
   for (const r of rows) {
@@ -475,6 +524,36 @@ export async function scanInbound(pool, accountId, now = new Date(), settings = 
              cap_failures     = 0,
              updated_at       = now()`,
       [accountId, contactId, lastInbound]
+    );
+
+    // ⭐ תגובה מבטלת רוויה. `saturated` היא תקרה של מטא, לא בקשה של הנמענת — ומטא מסירה
+    // אותה בדיוק כאן: "Marketing messages sent within this window do not count towards the
+    // limit". החסימה יורדת; opt-out מפורש (keyword / 131050) לעולם לא נוגעים בו.
+    await pool.query(
+      `UPDATE drip.contact_state
+          SET suppressed_at = NULL, suppressed_reason = NULL, suppressed_detail = NULL,
+              updated_at = now()
+        WHERE account_id = $1 AND contact_id = $2 AND suppressed_reason = 'saturated'`,
+      [accountId, contactId]
+    );
+
+    // ⭐ ומוסרים לה את ההודעה שמטא חסמה — עכשיו, בתוך החלון שהיא פתחה.
+    // התנאי מדויק בכוונה: רק אם השלב הנוכחי שלה *נשלח ונכשל ומעולם לא נמסר*. כלומר זו
+    // אינה האצה של הרצף (הקצב שהוגדר נשמר) אלא מסירה סוף-סוף של הודעה שכבר הגיע זמנה
+    // ונחסמה. +2 שעות ולא מיד: קודם כל שיניב יספיק לענות לה כמו בן אדם.
+    await pool.query(
+      `UPDATE drip.enrollments e
+          SET status = 'active', next_send_at = now() + interval '2 hours'
+        WHERE e.account_id = $1 AND e.contact_id = $2
+          AND e.status IN ('active', 'failed')
+          AND e.next_send_at > now() + interval '2 hours'
+          AND EXISTS (SELECT 1 FROM drip.sent_messages sm
+                       WHERE sm.enrollment_id = e.id AND sm.step_order = e.current_step
+                         AND sm.delivery_status = 'failed')
+          AND NOT EXISTS (SELECT 1 FROM drip.sent_messages sm
+                           WHERE sm.enrollment_id = e.id AND sm.step_order = e.current_step
+                             AND sm.delivery_status = 'delivered')`,
+      [accountId, contactId]
     );
 
     if (hit) {

@@ -256,14 +256,27 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   // LEFT JOIN + `sequence_id IS NULL` keeps ORPHANED enrollments (sequence deleted) flowing
   // through so the tx below can stop them gracefully — filtering them here would leave them
   // stuck 'active' forever.
+  // ⭐ סדר העדיפויות הוא ההחלטה החשובה כאן, לא רק התור.
+  // התקציב בטיק הזה סופי (ה-tier של מטא), והשאלה היא על מי מוציאים אותו. מדידה על
+  // החשבון הזה (n=4,998):
+  //     חלון שירות פתוח (הגיבה ב-24ש׳)   →  25/25  = 100% מסירה, ובלי לגעת בשום מכסה
+  //     נמענת שמטא מעולם לא חסמה          →  60-84%
+  //     נמענת שמטא כבר חסמה               →  7.9%   — וכל כישלון גם שורף את התבנית לכולם
+  // לכן: קודם מי שהחלון שלה פתוח, אחר כך מי שנקייה מחסימות, ורק אז השאר. בתוך כל שכבה —
+  // הכי מאחרים בלוח הזמנים ראשונים, כך שהקצב שהוגדר ברצף נשמר.
+  // זה לא משנה *מי* יקבל, רק את הסדר בתוך הטיק — ובזכותו התקציב לא נבזבז על חסומות.
   const dueIds = (await q(
     `SELECT e.id FROM drip.enrollments e
        LEFT JOIN drip.sequences s ON s.id = e.sequence_id
+       LEFT JOIN drip.contact_state cs
+              ON cs.account_id = e.account_id AND cs.contact_id = e.contact_id
       WHERE e.account_id   = $1
         AND e.status       = 'active'
         AND e.next_send_at <= $2
         AND (s.send_enabled OR e.sequence_id IS NULL)
-      ORDER BY e.next_send_at, e.id`,
+      ORDER BY (cs.last_inbound_at > $2::timestamptz - interval '24 hours') DESC NULLS LAST,
+               COALESCE(cs.cap_failures, 0) ASC,
+               e.next_send_at, e.id`,
     [accountId, now]
   )).map((r) => r.id);
 
@@ -542,10 +555,25 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           // 'defer' — not now, but the lead keeps its exact place in the sequence.
           // A paused template lifts in 3h, a daily cap in 24h, an account halt when a
           // human clears it. Re-arm and check again; never burn the lead over a wait.
+          //
+          // template_burned — התבנית הגיעה לתקציב הכישלונות. זה לא נפתר מעצמו: צריך ליצור
+          // תאומה ולהחליף. מתריעים (אידמפוטנטי) ומחזיקים את הליד יום, כדי שהתור לא יסתובב
+          // סרק — הוא ימשיך מעצמו ברגע שהשלב יצביע על תבנית טרייה.
+          // saturated — מטא חסמה את הנמענת. התקרה "מסתגלת עם הזמן", ותגובה שלה מבטלת אותה
+          // מיידית (סורק ה-inbound מקדים אותה בחזרה). עד אז — לא רודפים.
+          if (verdict.reason === 'template_burned') {
+            await compliance.raiseAlert(
+              pool, accountId, 'warn', `template_burned:${step.template_name}`,
+              `התבנית "${step.template_name}" הגיעה ל-${cSettings.max_template_failures} כישלוני מסירה ` +
+              `והשליחה בה נעצרה. צריך ליצור תאומה (_v3) ולהחליף את השלב, אחרת הרצף תקוע כאן.`
+            );
+          }
           const waitMs =
-            verdict.reason === 'daily_cap'      ? 24 * 3600 * 1000 :
-            verdict.reason === 'account_halted' ? 60 * 60 * 1000
-                                                : TEMPLATE_HOLD_MS;
+            verdict.reason === 'daily_cap'       ? 24 * 3600 * 1000 :
+            verdict.reason === 'account_halted'  ? 60 * 60 * 1000 :
+            verdict.reason === 'template_burned' ? 24 * 3600 * 1000 :
+            verdict.reason === 'saturated'       ? 7 * 24 * 3600 * 1000
+                                                 : TEMPLATE_HOLD_MS;
           await c.query(
             `UPDATE drip.enrollments SET next_send_at = $2 WHERE id = $1`,
             [e.id, new Date(now.getTime() + waitMs)]
@@ -806,8 +834,10 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
  * @param {number}            accountId
  * @param {Date}              [now]
  */
-export async function reconcileDeliveries(pool, client, accountId, now = new Date(), opts = {}) {
-  const { maxDeliveryRetries = 3, deliveryRetryHours = 24 } = opts;
+export async function reconcileDeliveries(pool, client, accountId, now = new Date(), _opts = {}) {
+  // ponytail: MAX_DELIVERY_RETRIES / DELIVERY_RETRY_HOURS אינם נקראים יותר — ה-cap שהיה
+  // הצרכן היחיד שלהם עבר לצינון מתארך פר-נמענת (ראה case 'cap'), כי retry הוא בדיוק מה
+  // שמטא מענישה עליו. החתימה נשמרת לתאימות לאחור עם הקוראים והטסטים.
   let pending = [];
   try {
     pending = (await pool.query(
@@ -952,19 +982,13 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
         continue;
 
       // ── Per-user marketing cap (131049) — the Banana Book failure ────────────
-      // Meta: "wait at least 24 hours before attempting to resend ... excessive retry
-      // attempts [make] further delivery attempts unavailable for up to 24 hours."
-      // So: never retry sooner than deliveryRetryHours, and after max_cap_failures the
-      // contact is saturated — Meta's cap is cross-business and adaptive, they will not
-      // receive marketing from anyone. Chasing them costs money, produces nothing, and
-      // drags the list's read rate down, which shrinks the cap for everyone else.
+      // cap_failures (per CONTACT) — how saturated is this person? Meta's per-user marketing
+      // limit is cross-business and adaptive. Past max_cap_failures we stop initiating
+      // marketing to her: chasing costs money, produces almost nothing (measured: 7.9%
+      // delivery once Meta has capped a recipient, vs 60-84% before), and every failure
+      // also burns the template for everyone else.
       case 'cap': {
-        // Two independent counters, because they answer two different questions.
-        //
-        // cap_failures (per CONTACT) — is this person saturated? Meta's per-user marketing
-        // limit is cross-business and adaptive: after a couple of 131049s they will not be
-        // receiving marketing from anyone. Chasing them costs money, produces nothing, and
-        // drags the list's read rate down, which shrinks the cap for every other contact.
+        let failures = 1;
         if (row.contact_id) {
           const st = (await pool.query(
             `INSERT INTO drip.contact_state (account_id, contact_id, cap_failures)
@@ -974,31 +998,37 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
              RETURNING cap_failures`,
             [accountId, row.contact_id]
           )).rows[0];
-          const failures = Number(st?.cap_failures || 1);
+          failures = Number(st?.cap_failures || 1);
           if (failures >= Number(settings.max_cap_failures)) {
             await compliance.suppressContact(
               pool, accountId, row.contact_id, 'saturated',
               `${failures} כשלי מכסה אישית (${code}) ברצף`, 'marketing'
             );
+            // ההרשמה נשארת פעילה בכוונה. `saturated` נדחית ולא מסירה (ראה canSend): אם
+            // הנמענת תגיב אי-פעם, ייפתח חלון שירות — והתקרה של מטא לא חלה בתוכו.
             continue;
           }
         }
 
-        // tries (per STEP) — how many times have we already attempted THIS step? This is the
-        // retry budget, and it comes from the send history so it survives a restart.
-        // Meta requires ≥24h between attempts (deliveryRetryHours); production runs with
-        // maxDeliveryRetries=0, i.e. no retries at all.
-        const tries = Number((await pool.query(
-          `SELECT count(*)::int AS c FROM drip.sent_messages
-            WHERE enrollment_id = $1 AND step_order = $2 AND delivery_status = 'failed'`,
-          [row.enrollment_id, row.step_order]
-        )).rows[0].c);
-
-        if (maxDeliveryRetries > 0 && tries < maxDeliveryRetries) {
-          await rearm(row.enrollment_id, row.step_order, deliveryRetryHours * tries);
-          continue;
-        }
-        await failEnrollment(row.enrollment_id, row.conversation_id);
+        // ⛔ A CAP MUST NEVER FAIL THE ENROLLMENT.
+        // 131049 is temporary by definition — Meta: the per-user limit "adapts automatically
+        // over time based on a person's recent engagement levels", and it is lifted entirely
+        // inside an open 24h service window. Failing the lead over it throws away someone who
+        // is still reachable. It did exactly that here: 324 of the 335 failed enrollments on
+        // this account died on 131049 — among them 65 leads who had REPLIED and 134 who had
+        // READ. The best audience in the list, deleted by a soft error.
+        //
+        // ⚠️ And chasing them makes it worse. Meta: "If your WABA attempts to resend marketing
+        // messages multiple times within a 24-hour period to users who have already reached
+        // their messaging limit, further delivery attempts to these users may be unavailable
+        // for up to 24 hours" — the retry loop MANUFACTURES the very block it is fighting.
+        // (35% of this account's sends were such retries.)
+        //
+        // So: an escalating cooldown on the SAME step (3 → 6 → 9 … capped at 12 days), the
+        // lead stays active, and the only stop is contact-level saturation above. If she ever
+        // replies, the window opens and she gets everything she missed.
+        const cooldownDays = Math.min(3 * failures, 12);
+        await rearm(row.enrollment_id, row.step_order, 24 * cooldownDays);
         continue;
       }
 

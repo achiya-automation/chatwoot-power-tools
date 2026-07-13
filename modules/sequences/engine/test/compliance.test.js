@@ -233,11 +233,14 @@ test('canSend: marketing to a US number is dropped (Meta never delivers it)', ()
   assert.equal(v.action, 'drop');
 });
 
-test('canSend: a saturated contact (repeated 131049) is dropped', () => {
+test('canSend: a saturated contact (repeated 131049) is DEFERRED, never dropped', () => {
+  // תוקן 2026-07-13. הכלל הישן היה 'drop', והוא מחק 335 הרשמות בבננה בוק — 324 מהן על
+  // 131049, ובהן 65 לידים שהגיבו ו-134 שקראו. מטא: התקרה הפר-נמענת "adapts automatically
+  // over time", והיא מתבטלת לגמרי בחלון שירות פתוח. שגיאה זמנית לא מוחקת ליד.
   const v = canSend({ ...base, contact: { ...base.contact, cap_failures: 2 } });
   assert.equal(v.ok, false);
   assert.equal(v.reason, 'saturated');
-  assert.equal(v.action, 'drop');
+  assert.equal(v.action, 'defer');
 });
 
 test('canSend: a contact who never opens marketing is dropped before Meta punishes the list', () => {
@@ -273,4 +276,68 @@ test('isMarketing: defaults to marketing when the category is missing', () => {
   assert.equal(isMarketing(undefined), true);
   assert.equal(isMarketing('marketing'), true);
   assert.equal(isMarketing('UTILITY'), false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-07-13 — מה שהנתונים לימדו אותנו (בננה בוק, n=4,998)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('canSend: רוויה (131049) נדחית ולא מסירה — התקרה של מטא זמנית, opt-out לא', () => {
+  // 324 מתוך 335 ההרשמות שנפלו בבננה בוק נפלו על 131049 — שגיאה זמנית. הן נמחקו מהרצף
+  // לנצח, ובהן 199 לידים שכבר הגיבו או קראו. תקרה ≠ בקשת הסרה.
+  const capped = canSend({ ...base, contact: { ...base.contact, suppressed_at: '2026-07-12T10:00:00Z',
+                                               suppressed_reason: 'saturated' } });
+  assert.equal(capped.ok, false);
+  assert.equal(capped.reason, 'saturated');
+  assert.equal(capped.action, 'defer');   // ⛔ אסור 'drop' — הליד חייב להישאר ברצף
+
+  const optOut = canSend({ ...base, contact: { ...base.contact, suppressed_at: '2026-07-12T10:00:00Z',
+                                               suppressed_reason: 'keyword' } });
+  assert.equal(optOut.action, 'drop');    // מי שביקש להסיר — יוצא, תמיד
+});
+
+test('canSend: תגובה מבטלת רוויה — חלון פתוח עוקף את חסימת המכסה', () => {
+  // מטא: "Marketing messages sent within this window do not count towards the limit".
+  // נמדד: 25/25 = 100% מסירה בחלון פתוח, מול 7.9% לנמענת שמטא כבר חסמה.
+  const v = canSend({ ...base, inSession: true,
+                      contact: { ...base.contact, suppressed_at: '2026-07-12T10:00:00Z',
+                                 suppressed_reason: 'saturated', cap_failures: 9 } });
+  assert.equal(v.ok, true);
+
+  // …אבל חלון פתוח לא מחייה מי שביקשה להסיר.
+  const optOut = canSend({ ...base, inSession: true,
+                           contact: { ...base.contact, suppressed_at: '2026-07-12T10:00:00Z',
+                                      suppressed_reason: 'keyword' } });
+  assert.equal(optOut.ok, false);
+  assert.equal(optOut.action, 'drop');
+});
+
+test('canSend: תבנית מעל התקציב נעצרת לנמענת מסוכנת — ולעולם לא לנמענת נקייה', () => {
+  const burned = { ...base.template, failures: 15 };
+  const risky  = { ...base.contact, cap_failures: 1 };   // מטא כבר חסמה אותה פעם
+
+  const v = canSend({ ...base, template: burned, contact: risky });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'template_burned');
+  assert.equal(v.action, 'defer');        // הליד ממתין לתאומה, לא נזרק
+
+  // ⭐ נמענת נקייה עוברת גם בתבנית מעל התקציב: היא מוסרת ב-84% ו*מרפאת* את התבנית.
+  // חסימה שלה הייתה מקפיאה את הרצף בדיוק בשביל הלידים הטובים — ירייה ברגל.
+  assert.deepEqual(canSend({ ...base, template: burned }), { ok: true });
+
+  // מתחת לסף — עוברת גם למסוכנת.
+  assert.deepEqual(canSend({ ...base, template: { ...base.template, failures: 14 }, contact: risky }), { ok: true });
+
+  // בחלון פתוח שולחים תמיד: השליחה נמסרת (100%) ולא נספרת בשום מכסה.
+  assert.equal(canSend({ ...base, template: burned, contact: risky, inSession: true }).ok, true);
+
+  // תבנית שאין עליה מידע — fail-open. חוסר ידע לא משתק לקוח.
+  assert.deepEqual(canSend({ ...base, template: null }), { ok: true });
+});
+
+test('canSend: cap_failures מעל הסף נדחה, לא מוסר', () => {
+  const v = canSend({ ...base, contact: { ...base.contact, cap_failures: 2 } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'saturated');
+  assert.equal(v.action, 'defer');
 });
