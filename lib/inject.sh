@@ -53,6 +53,45 @@ _cwpt_content_hash() {
 _CWPT_DASHBOARD_MARK_START='<!-- CWPT:START -->'
 _CWPT_DASHBOARD_MARK_END='<!-- CWPT:END -->'
 
+# Integrity line, written as the first line INSIDE the block. It pins the sha256 of the
+# payload that follows, so any later rewrite of the value that mangles a character is
+# detectable — by the installer on the next run, and by the watchdog on a schedule.
+#
+# This is not paranoia. DASHBOARD_SCRIPTS is one big string in a DB column that operators
+# (and past versions of this project) edit with `rails runner`. A Ruby single-quoted string
+# folds a doubled backslash into a single one; a double-quoted one mangles far more. That is
+# exactly how prod lost `querySelectorAll('.group\/cardLayout')`: the selector turned invalid,
+# querySelectorAll threw, and the whole campaigns dashboard vanished — with no error anywhere
+# an operator would look. A stored value that no longer matches its own hash is now loud.
+_CWPT_INTEGRITY_PREFIX='<!-- cwpt-integrity sha256:'
+_CWPT_INTEGRITY_SUFFIX=' -->'
+
+# _cwpt_string_hash <string> → full sha256 hex of the string, with no trailing newline added.
+# (_cwpt_content_hash hashes a FILE and truncates to 10 chars for cache-busting — different job.)
+_cwpt_string_hash() {
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
+  else
+    printf '%s' "$1" | openssl dgst -sha256 | awk '{print $NF}'
+  fi
+}
+
+# _cwpt_extract_payload — stdin: the full DASHBOARD_SCRIPTS value. stdout: the hashed payload,
+# i.e. everything strictly between the integrity line and CWPT:END. Prints nothing when the
+# block or the integrity line is absent. Command substitution strips the trailing newline,
+# matching how the payload was hashed at write time.
+_cwpt_extract_payload() {
+  awk -v endmark="$_CWPT_DASHBOARD_MARK_END" '
+    started { if (index($0, endmark) == 1) exit; print; next }
+    index($0, "<!-- cwpt-integrity sha256:") == 1 { started = 1 }
+  '
+}
+
+# _cwpt_declared_hash — stdin: the full value. stdout: the sha256 the block claims for itself.
+_cwpt_declared_hash() {
+  sed -n 's/^<!-- cwpt-integrity sha256:\([0-9a-f]\{64\}\) -->$/\1/p' | head -1
+}
+
 # _cwpt_fetch_dashboard_scripts <rails_container>
 #   Prints the CURRENT DASHBOARD_SCRIPTS InstallationConfig value verbatim (empty, exit 0,
 #   when no such row exists yet — `&.value` on nil). Never fails the caller: stderr is
@@ -160,8 +199,10 @@ inject_dashboard_script() {
   existing="$(_cwpt_fetch_dashboard_scripts "$rails_container")" || existing=""
   _cwpt_backup_dashboard_scripts "$compose_dir" "$existing"
 
-  local new_block
-  new_block="$(printf '%s\n%s\n%s' "$_CWPT_DASHBOARD_MARK_START" "$html" "$_CWPT_DASHBOARD_MARK_END")"
+  local integrity_line new_block
+  integrity_line="${_CWPT_INTEGRITY_PREFIX}$(_cwpt_string_hash "$html")${_CWPT_INTEGRITY_SUFFIX}"
+  new_block="$(printf '%s\n%s\n%s\n%s' \
+    "$_CWPT_DASHBOARD_MARK_START" "$integrity_line" "$html" "$_CWPT_DASHBOARD_MARK_END")"
   local merged
   merged="$(_cwpt_merge_dashboard_scripts "$existing" "$new_block")"
 
@@ -189,7 +230,59 @@ inject_dashboard_script() {
   fi
 
   docker exec "$rails_container" rm -f "$tmp_remote" >/dev/null 2>&1 || true
+
+  # Read-back verification: what Chatwoot actually STORED must hash to what we wrote. A write
+  # that silently mangled a character (see the _CWPT_INTEGRITY_PREFIX comment) fails here
+  # instead of shipping a dashboard whose scripts throw on the first tick.
+  if ! verify_dashboard_script "$compose_dir"; then
+    echo "inject_dashboard_script: stored DASHBOARD_SCRIPTS does not match what was written — NOT trusting this install" >&2
+    return 1
+  fi
+
   echo "dashboard_script_injected"
+}
+
+# verify_dashboard_script <compose_dir>
+#   Re-reads DASHBOARD_SCRIPTS from Chatwoot and checks the chatwoot-power-tools block against
+#   the sha256 it carries in its own integrity line. This is the guard against the failure mode
+#   that a passing test suite cannot see: the code in git is fine, the assembled artifact is
+#   fine, and the value sitting in the database is subtly corrupt.
+#   Prints one status word. Exit: 0 = ok / not-installed / legacy (nothing to compare),
+#   1 = the rails container can't be reached, 2 = CORRUPT (hash mismatch).
+verify_dashboard_script() {
+  local compose_dir="$1"
+  local rails_container
+  rails_container="$(detect_service_container "$compose_dir" rails)" || {
+    echo "dashboard_script_unreachable"
+    return 1
+  }
+
+  local value
+  value="$(_cwpt_fetch_dashboard_scripts "$rails_container")" || value=""
+
+  if [[ "$value" != *"$_CWPT_DASHBOARD_MARK_START"* ]]; then
+    echo "dashboard_script_not_installed"
+    return 0
+  fi
+
+  local declared
+  declared="$(printf '%s' "$value" | _cwpt_declared_hash)"
+  if [ -z "$declared" ]; then
+    # A block injected before integrity lines existed. Nothing to compare against — say so
+    # rather than claiming an all-clear; the next inject run adds the line.
+    echo "dashboard_script_legacy_no_integrity_line"
+    return 0
+  fi
+
+  local actual
+  actual="$(_cwpt_string_hash "$(printf '%s' "$value" | _cwpt_extract_payload)")"
+  if [ "$declared" != "$actual" ]; then
+    echo "dashboard_script_corrupt declared=${declared:0:12} actual=${actual:0:12}"
+    return 2
+  fi
+
+  echo "dashboard_script_ok"
+  return 0
 }
 
 # remove_dashboard_script <compose_dir>

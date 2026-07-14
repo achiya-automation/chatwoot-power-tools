@@ -38,6 +38,13 @@
   function isDark() { return document.body.classList.contains('dark'); }
   function pct(n, d) { return d > 0 ? Math.round((n / d) * 100) : 0; }
 
+  // כרטיס קמפיין. שם המחלקה של Tailwind מכיל '/', וכסלקטור-מחלקה הוא מחייב escaping —
+  // אבל ה-escaping הזה לא שורד כתיבה חוזרת של DASHBOARD_SCRIPTS דרך מחרוזת Ruby, שמקפלת
+  // backslash כפול לבודד. הסלקטור נשבר, querySelectorAll זורק SyntaxError, renderCards()
+  // מת — ואיתו renderHeader() ו-renderKpiBar(). זה קרה בפרוד, בשקט מוחלט.
+  // [class~="..."] מתאים למחלקה בדיוק אותו דבר, ולא דורש escaping כלל. אל תחזיר מחלקה.
+  var CARD_SEL = '[class~="group/cardLayout"]';
+
   // bar-chart-3 (lucide) — direction-neutral, so it reads the same in RTL and LTR
   var REPORT_ICON =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
@@ -134,7 +141,7 @@
   // and only rewrites its innerHTML when the numbers or locale actually change (cheap on re-runs).
   function renderCards() {
     if (!onPage()) return;
-    var cards = document.querySelectorAll('.group\\/cardLayout');
+    var cards = document.querySelectorAll(CARD_SEL);
     for (var i = 0; i < cards.length; i++) {
       var card = cards[i];
       var titleEl = card.querySelector('.text-base.font-medium.capitalize');
@@ -354,7 +361,7 @@
       renderCards();
       renderHeader();
       renderKpiBar();
-      if (statsList.length && !document.querySelector('.group\\/cardLayout')) {
+      if (statsList.length && !document.querySelector(CARD_SEL)) {
         cardMissTicks += 1;
         if (cardMissTicks > 20 && !warnedCards) {
           warnedCards = true;
