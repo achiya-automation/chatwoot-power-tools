@@ -81,7 +81,15 @@ export function parseExternalError(attrsText) {
   const raw = obj && typeof obj === 'object' ? obj.external_error : null;
   if (!raw) return null;
   const title = String(raw);
-  const m = title.match(/#?(\d{4,7})/);    // "131026:" | "(#132012)"
+  // ⚠️ 3 ספרות ומעלה — לא 4. הקוד של מטא לחסימת המספר על הפרת מדיניות הוא **368**,
+  // בן שלוש ספרות, והרגקס הקודם (`\d{4,7}`) לא תפס אותו: הוא החזיר `code = null`,
+  // מה שסווג כ-`permanent` והרג את הליד — בזמן שהמנוע היה אמור לעצור הכל ולהתריע.
+  // כלומר עצירת החירום `case '368' → policy` הייתה **קוד מת**, והמנוע היה ממשיך
+  // להלום לתוך חסימה של מטא — הדרך המהירה ביותר להפוך חסימה זמנית לבאן קבוע.
+  // הטסט על 368 היה ירוק כי הוא קרא ל-classifyError('368') ישירות ודילג על הפרסר.
+  //
+  // מעוגן: `(#368)` או `368:` — כדי לא לתפוס מספרים אקראיים בתוך הטקסט.
+  const m = title.match(/\(#(\d{3,7})\)/) || title.match(/(?:^|\D)(\d{3,7})\s*:/);
   return { code: m ? m[1] : null, title };
 }
 
@@ -1230,12 +1238,29 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
       }
 
       // ── Transient Meta hiccup ────────────────────────────────────────────────
-      case 'transient':
+      // כולל קוד שאיננו מכירים (ראה classifyError): הליד מתקרר ונשאר. אבל קוד לא-מוכר
+      // הוא גם משהו שאדם חייב לראות — אחרת נלמד עליו רק כשהוא כבר עשה נזק.
+      case 'transient': {
         await rearm(row.enrollment_id, row.step_order, 1);
+        const KNOWN = new Set(['130429', '133004', '131000', '80007', '131052', '131053']);
+        if (code && !KNOWN.has(code)) {
+          try {
+            await compliance.raiseAlert(
+              pool, accountId, 'warn', 'unknown_meta_code',
+              `מטא החזירה קוד שאיננו מכירים (${code}): ${parsed?.title || ''}. ` +
+              `הליד לא נמחק — הוא מתקרר וינסה שוב. כדאי לבדוק מה הקוד אומר.`
+            );
+          } catch { /* alert is best-effort */ }
+        }
         continue;
+      }
 
+      // ⛔ אין יותר `default` שהורג ליד. classifyError כבר לא מחזירה 'permanent' לקוד
+      // לא-מוכר — היא מחזירה 'transient'. אם בכל זאת הגענו לכאן, זה באג אצלנו ולא
+      // ראיה שהנמענת אבודה: מתקררים ומתריעים, לא מוחקים.
       default:
-        await failEnrollment(row.enrollment_id, row.conversation_id);
+        console.error(`[drip] unhandled error kind "${kind}" (code ${code}) — cooling down instead of failing`);
+        await rearm(row.enrollment_id, row.step_order, 24);
     }
   }
 }
