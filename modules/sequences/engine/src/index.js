@@ -162,8 +162,6 @@ async function tick() {
         intervalMs: config.reconcileIntervalMs,
         spreadWindowMs: config.spreadWindowMs,
         maxSendsPerTick: config.maxSendsPerTick,
-        maxDeliveryRetries: config.maxDeliveryRetries,
-        deliveryRetryHours: config.deliveryRetryHours,
         mmLiteExperiment: config.mmLiteExperiment,
         freeformInSession: config.freeformInSession,
       });

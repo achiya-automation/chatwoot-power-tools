@@ -227,17 +227,27 @@ test('130472 (frequency-cap experiment) also retries', async () => {
   assert.equal(e.current_step, 1);
 });
 
-test('transient cap gives up (failed) after maxDeliveryRetries attempts', async () => {
+// ── ⛔ a CAP must NEVER fail the enrollment, no matter how many times it repeats ──
+// This test used to assert the opposite: "after 3 attempts → give up gracefully". That rule
+// deleted the best audience in the list. 324 of the 335 failed enrollments on this account
+// died on 131049 — among them 65 leads who had REPLIED and 134 who had READ. 131049 is a
+// SOFT error: Meta's per-user cap is temporary, adapts on its own, and is lifted entirely
+// inside an open service window. The lead stays active and cools down on the SAME step; the
+// only thing that ever stops her is contact-level saturation (which suppresses, not fails).
+// Chasing her with retries is what manufactures the block in the first place.
+test('⛔ repeated 131049 NEVER fails the enrollment — it cools down on the same step', async () => {
   const { seq, enr } = await seed({ status: 'active', step: 1 });
-  await seedFailedSent(enr, seq, 1); // attempt 1 (already failed)
-  await seedFailedSent(enr, seq, 1); // attempt 2 (already failed)
+  await seedFailedSent(enr, seq, 1);
+  await seedFailedSent(enr, seq, 1);
   await seedMessage(913, 3, '131049: still capped');
-  await seedSent(enr, seq, 913, 1); // attempt 3 → at the cap of 3
+  await seedSent(enr, seq, 913, 1);   // a third cap in a row
   const client = fakeClient();
-  await reconcileDeliveries(pool, client, 1, new Date(), { maxDeliveryRetries: 3, deliveryRetryHours: 24 });
-  const e = (await query('SELECT status FROM drip.enrollments WHERE id=$1', [enr]))[0];
-  assert.equal(e.status, 'failed', 'after 3 attempts → give up gracefully');
-  assert.deepEqual(client.patches[0], { cid: 7001, attrs: { seq_state: 'failed' } });
+  await reconcileDeliveries(pool, client, 1, new Date(), {});
+  const e = (await query('SELECT status, current_step, next_send_at FROM drip.enrollments WHERE id=$1', [enr]))[0];
+  assert.notEqual(e.status, 'failed', 'a soft cap must not delete a reachable lead');
+  assert.equal(e.current_step, 1, 'stays on the step she never received');
+  assert.ok(new Date(e.next_send_at) > new Date(), 'cooled down into the future, not retried now');
+  assert.equal(client.patches.length, 0, 'no "failed" badge — she is not failed');
 });
 
 test('permanent code (131026) still fails immediately — no retry', async () => {
