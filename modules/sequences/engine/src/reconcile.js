@@ -645,15 +645,13 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         }
 
         const cState = cStates.get(e.contact_id) || {};
-        // ⚠️ An open service window is worth something ONLY because it lets us send FREE-FORM:
-        // every exemption below (no consent needed, exempt from 131049, excluded from the 24h
-        // tier, ignores saturation) is Meta's rule for a free-form message — NOT for a template.
-        // So when the free-form path is off, there is no window: a template sent inside one is
-        // counted by Meta like any other, and pretending otherwise would silently overrun the
-        // tier (`sm.in_session = false` is what makes a send count).
-        // Off by default — free-form drops the template's BUTTONS and inlines media as a raw
-        // file attachment. See config.freeformInSession.
-        const session = (opts.freeformInSession === true) && compliance.inSession(cState, now);
+        // ⭐ An open 24h service window is the single most valuable asset this engine has:
+        // measured 25/25 = 100% delivery, vs 7.9% to a recipient Meta has already capped.
+        // Meta's exemption is a property of the WINDOW, not of the message format — it covers
+        // TEMPLATES too ("Marketing messages sent within this window do not count towards the
+        // limit"). So every in-session benefit below (exempt from 131049, excluded from the
+        // 24h tier, ignores saturation) stays ON regardless of how we send.
+        const session = compliance.inSession(cState, now);
 
         // ── THE BURN POOL — a saturated lead must never touch a clean template ────
         // A template is an ASSET, and every failed delivery devalues it — for everyone.
@@ -826,8 +824,17 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           && String(step.category || '').toUpperCase() === 'MARKETING'
           && Number(e.contact_id) % 2 === 0;
 
+        // ⛔ FREE-FORM IN SESSION — off by default, and it should stay off.
+        // It was added to dodge 131049 inside the window. But the window's exemption already
+        // covers TEMPLATES (measured 25/25), so free-form buys NOTHING — while costing:
+        //   • the template's BUTTONS (free-form carries BODY text only), and
+        //   • the media header (it degrades to a file attachment with a raw UUID filename).
+        // And a Quick-Reply tap is an INBOUND message — it is what re-opens the window. So
+        // stripping the buttons from the one lead who just replied removes the very mechanism
+        // that keeps her window (and her ~100% delivery) alive. It made the hottest lead the
+        // only one to receive the worst message. (banana-book, 2026-07-14.)
         let sendResult;
-        if (session) {
+        if (session && opts.freeformInSession === true) {
           sendResult = await client.sendFreeform(conversationId, sendArgs);
         } else if (mmLiteArm) {
           try {

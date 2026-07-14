@@ -22,14 +22,17 @@ export function loadConfig(env = process.env) {
     // Meta's marketing API instead of Cloud API, and compare delivery. OFF by default —
     // this is an experiment, not a default. Turn on only while measuring.
     mmLiteExperiment: String(env.MM_LITE_EXPERIMENT || '').toLowerCase() === 'true',
-    // Inside an open 24h service window, send FREE-FORM instead of a template: Meta exempts
-    // it from the per-user marketing cap (131049) and from the 24h tier. OFF by default.
-    // ⚠️ Free-form carries only the BODY text — it CANNOT carry the template's BUTTONS, and
-    // its media goes out as a file attachment (raw UUID filename) instead of an inline media
-    // header. Once every step's template has Quick-Reply buttons, the exemption buys delivery
-    // at the price of the message itself — and the lead who just replied (the hottest one)
-    // is exactly who receives the mangled version. Turn on only for button-less, media-less
-    // sequences. (banana-book, 2026-07-14: all 41 steps have buttons ⇒ stays off.)
+    // Inside an open 24h service window, send FREE-FORM instead of the template. OFF, and it
+    // should stay off — this buys nothing and costs the message.
+    // Meta's window exemption is a property of the WINDOW, not of the message format: it
+    // covers TEMPLATES too ("Marketing messages sent within this window do not count towards
+    // the limit"), measured 25/25 = 100% delivery. So free-form gains no cap relief, while
+    // it carries BODY text ONLY — dropping the template's BUTTONS and degrading its media
+    // header into a file attachment with a raw UUID filename.
+    // Worse: a Quick-Reply tap is an inbound message, i.e. the thing that RE-OPENS the window.
+    // Stripping buttons from the lead who just replied removes the mechanism keeping her
+    // window alive — so the hottest lead was the only one getting the worst message.
+    // (banana-book, 2026-07-14.)
     freeformInSession: String(env.FREEFORM_IN_SESSION || '').toLowerCase() === 'true',
     // Webhook that turns "Meta answered about a new lead" into a WhatsApp ping to the operator.
     // The URL's path IS the secret (n8n webhook, no credential). Empty = alerts off.

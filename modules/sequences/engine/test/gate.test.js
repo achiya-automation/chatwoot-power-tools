@@ -262,14 +262,15 @@ test('SCAN: an in-session send bypasses consent AND is excluded from the 24h tie
   assert.equal(sm.in_session, true, 'and must be flagged so it does not consume the tier');
 });
 
-// ── ⭐ default: NO free-form. A window must not cost the message its buttons ──
-// Free-form carries only BODY text: no template BUTTONS, and media degrades to a file
-// attachment with a raw UUID filename. Once every step's template has Quick-Reply buttons
-// (banana-book, 2026-07-14), the lead who JUST REPLIED — the hottest one — was the only one
-// receiving a button-less message with a bare .mp4 dangling off it. Default is now a normal
-// template, which also means Meta counts it, so it must NOT be flagged in_session.
-test('⭐ by default an open window still sends a TEMPLATE (keeps buttons) and DOES consume the tier', async () => {
-  await seed({ consent: true });
+// ── ⭐ default: an open window sends a TEMPLATE — keeping BOTH the buttons AND the exemption ──
+// Meta's window exemption is a property of the WINDOW, not of the message format: it covers
+// templates too (measured 25/25 = 100% delivery). So free-form bought no cap relief at all,
+// while carrying BODY text only — dropping the BUTTONS and degrading media to a file
+// attachment. And a Quick-Reply tap is the inbound message that RE-OPENS the window, so
+// stripping buttons from the lead who just replied kills the very thing keeping her at ~100%.
+// The template must therefore still be flagged in_session (it does NOT consume the tier).
+test('⭐ by default an open window sends a TEMPLATE (keeps buttons) and is STILL exempt from the tier', async () => {
+  await seed({ consent: false });          // no consent — the window must still let it through
   await pool.query(
     `INSERT INTO public.messages(id, conversation_id, account_id, message_type, content, created_at)
      VALUES (1, 501, $1, 0, 'היי, יש לי שאלה', now())`, [ACCT]
@@ -278,12 +279,12 @@ test('⭐ by default an open window still sends a TEMPLATE (keeps buttons) and D
 
   const c = spyClient();
   await run(c);                                    // no freeformInSession → default OFF
-  assert.equal(c.sent.length, 1, 'still sends');
+  assert.equal(c.sent.length, 1, 'the window still bypasses consent — the send is allowed');
   assert.equal(c.sent[0].via, 'template', 'a template — so the buttons and media header survive');
 
   const sm = (await query('SELECT in_session FROM drip.sent_messages WHERE account_id=$1', [ACCT]))[0];
-  assert.equal(sm.in_session, false,
-    'a template is counted by Meta ⇒ flagging it in_session would silently overrun the tier');
+  assert.equal(sm.in_session, true,
+    'the exemption belongs to the WINDOW, not to free-form — the template must not consume the tier');
 });
 
 test('SCAN: the watermark advances — the same message is not processed twice', async () => {
