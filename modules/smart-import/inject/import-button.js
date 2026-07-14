@@ -83,8 +83,10 @@
     return fb ? fb.parentElement : null;
   }
 
-  var t;
-  new MutationObserver(function () { clearTimeout(t); t = setTimeout(inject, 200); })
+  // ⚠️ לא לקרוא למשתנה הזה t — t() היא פונקציית התרגום למעלה. השמה כאן דורסת אותה במזהה
+  // הטיימר, ואז t('smartImport') זורק TypeError שנבלע ב-catch של inject() → הכפתור נעלם בשקט.
+  var timer;
+  new MutationObserver(function () { clearTimeout(timer); timer = setTimeout(inject, 200); })
     .observe(document.body, { childList: true, subtree: true });
   setTimeout(inject, 600);
 })();

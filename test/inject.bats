@@ -210,3 +210,66 @@ NEW_BLOCK
   run remove_dashboard_script
   [ "$status" -eq 1 ]
 }
+
+# ── integrity: the guard against a stored value that no longer matches the code ──────────
+# Prod lost the whole campaigns dashboard to a DASHBOARD_SCRIPTS value that had been rewritten
+# through a Ruby string, folding a doubled backslash into a single one. Git was clean, the test
+# suite was green, and the browser threw a SyntaxError nobody was watching. These tests cover
+# the one layer that can see that: the value actually stored in the database.
+
+# Builds a well-formed CWPT block (integrity line first) around <payload>.
+_mk_block() {
+  local payload="$1" hash
+  hash="$(_cwpt_string_hash "$payload")"
+  printf '%s\n%s%s%s\n%s\n%s' \
+    "$_CWPT_DASHBOARD_MARK_START" \
+    "$_CWPT_INTEGRITY_PREFIX" "$hash" "$_CWPT_INTEGRITY_SUFFIX" \
+    "$payload" "$_CWPT_DASHBOARD_MARK_END"
+}
+
+@test "inject writes an integrity line pinning the payload hash" {
+  export MOCK_DOCKER_CP_CAPTURE="$BATS_TEST_TMPDIR/captured.html"
+  run inject_dashboard_script /opt/chatwoot /drip enhancements
+  [ "$status" -eq 0 ]
+  grep -qE '^<!-- cwpt-integrity sha256:[0-9a-f]{64} -->$' "$MOCK_DOCKER_CP_CAPTURE"
+}
+
+@test "verify_dashboard_script: intact block → ok" {
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="$(_mk_block '<script>var CARD_SEL = "[class~=\"group/cardLayout\"]";</script>')"
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dashboard_script_ok"* ]]
+}
+
+@test "verify_dashboard_script: the exact prod corruption (Ruby folds a doubled backslash) → CORRUPT" {
+  local payload='<script>document.querySelectorAll(".group\\/cardLayout");</script>'
+  local block corrupted
+  block="$(_mk_block "$payload")"
+  corrupted="${block//\\\\/\\}"   # ← precisely what the DB value suffered
+  [ "$corrupted" != "$block" ]    # sanity: the simulation really did change something
+
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="$corrupted"
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"dashboard_script_corrupt"* ]]
+}
+
+@test "verify_dashboard_script: operator content around the block does not affect the hash" {
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="$(printf '<script>theirs();</script>\n%s\n<script>more();</script>' "$(_mk_block '<script>ours();</script>')")"
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dashboard_script_ok"* ]]
+}
+
+@test "verify_dashboard_script: pre-integrity block → reported as legacy, never a false all-clear" {
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="$(printf '%s\n<script>old();</script>\n%s' "$_CWPT_DASHBOARD_MARK_START" "$_CWPT_DASHBOARD_MARK_END")"
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dashboard_script_legacy_no_integrity_line"* ]]
+}
+
+@test "verify_dashboard_script: nothing installed → not_installed" {
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dashboard_script_not_installed"* ]]
+}
