@@ -216,9 +216,10 @@ export default function OverviewView({ accountId }) {
 
   return (
     <>
-      {/* סה"כ */}
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {TOTAL_CARDS.map((c) => (
+      {/* סה"כ — כרטיס שערכו תמיד 0 הוא רעש: הוא תופס מקום בשורה הראשונה, גורם לעין
+          לסרוק חמישה מספרים, ואומר "אין כאן כלום". מוצגים רק אלה שיש בהם משהו. */}
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {TOTAL_CARDS.filter((c) => c.key === 'total' || c.key === 'active' || totals[c.key] > 0).map((c) => (
           <div key={c.key} className="flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak">
             <span className={`text-2xl font-semibold leading-none ${c.text}`}>{totals[c.key]}</span>
             <span className="mt-1 text-xs text-n-slate-11">{t(c.label)}</span>
@@ -353,15 +354,12 @@ function DeliveryCard({ stats }) {
       {sent === 0 ? (
         <p className="py-6 text-center text-sm text-n-slate-10">{tr('nothingToday')}</p>
       ) : (
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-          {/* הפרוסות = כל מה שנשלח (מסתכם תמיד). האחוז במרכז = רק מה שהוכרע. */}
+        <div className="flex flex-col items-center gap-5 sm:flex-row">
+          {/* מספר-גיבור אחד. חמישה מספרים בגודל שווה נלחמים על העין ואף אחד לא נקרא;
+              כאן יש דבר אחד להסתכל עליו, והשאר הוא ההקשר שלו. */}
           <div className="flex items-center gap-4">
-            <Donut
-              slices={slices}
-              centerValue={`${successRate}%`}
-              centerLabel={tr('successRate')}
-            />
-            <div className="min-w-0 flex-1 space-y-1.5 sm:w-44">
+            <Donut slices={slices} centerValue={`${successRate}%`} centerLabel={tr('successRate')} />
+            <div className="min-w-0 space-y-1.5 sm:w-48">
               <LegendRow cls="text-n-teal-9" label={tr('arrived')} value={String(arrived)} />
               <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')} value={String(failed)} />
               {waiting > 0 ? (
@@ -371,15 +369,16 @@ function DeliveryCard({ stats }) {
             </div>
           </div>
 
-          {/* ההצלחה מול החסימה — זה מה שקובע אם הקמפיין עובד. אחוז הקריאה נמדד מתוך
-              מי שההודעה הגיעה אליה בכלל; מדידה מתוך "נשלחו" מענישה אותנו על חסימות. */}
-          <div className="grid flex-1 grid-cols-3 gap-3">
-            <DeliveryMetric label={tr('mSent')} value={sent} text="text-n-slate-12" />
-            <DeliveryMetric label={tr('mBlocked')} value={failed}
-                            sub={decided > 0 ? `${100 - successRate}% ${tr('ofDecided')}` : undefined}
-                            text={failed > 0 ? 'text-n-ruby-11' : 'text-n-slate-12'} />
-            <DeliveryMetric label={tr('mRead')} value={read}
-                            sub={`${readOfArrived}% ${tr('ofArrived')}`} text="text-n-blue-11" />
+          {/* שורת ההקשר — משפט אחד במקום רשת מספרים. אחוז הקריאה נמדד מתוך מי שההודעה
+              הגיעה אליה בכלל; מדידה מתוך "נשלחו" מענישה אותנו על חסימות של מטא. */}
+          <div className="flex flex-1 flex-wrap items-baseline justify-center gap-x-5 gap-y-2 text-sm sm:justify-start">
+            <span className="text-n-slate-11">
+              {tr('mSent')} <b className="font-semibold text-n-slate-12">{sent}</b>
+            </span>
+            <span className="text-n-slate-11">
+              {tr('mRead')} <b className="font-semibold text-n-blue-11">{read}</b>
+              <span className="text-n-slate-10"> · {readOfArrived}% {tr('ofArrived')}</span>
+            </span>
           </div>
         </div>
       )}
@@ -432,15 +431,6 @@ function DeliveryCard({ stats }) {
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function DeliveryMetric({ label, value, sub, text }) {
-  return (
-    <div className="flex flex-col items-start rounded-lg bg-n-alpha-1 px-3 py-2 ring-1 ring-n-weak">
-      <span className={`text-xl font-semibold leading-none ${text}`}>{value}</span>
-      <span className="mt-1 text-xs text-n-slate-11">{label}{sub ? ` · ${sub}` : ''}</span>
     </div>
   );
 }

@@ -744,36 +744,49 @@ async function actionDeliveryStats(accountId) {
   const dayStart = `date_trunc('day', now() AT TIME ZONE '${TZ}') AT TIME ZONE '${TZ}'`;
 
   // Today: totals + WhatsApp block-reason breakdown
+  //
+  // ⚠️ The outcome is read from `sent_messages.delivery_status` — the engine's OWN column,
+  // written by reconcileDeliveries — and NOT from a JOIN to public.messages.status.
+  // The JOIN silently loses history: deleting a Chatwoot inbox cascade-deletes its
+  // conversations and messages, and every sent_messages row then points at a message id
+  // that no longer exists. `m.status` comes back NULL, and a BLOCKED send is counted as
+  // "awaiting Meta". Measured 2026-07-14 (banana-book, hours after an inbox swap): Chatwoot
+  // held 6 failures for the day, the dashboard showed 1 — four of the five it lost were
+  // 131049 caps on brand-new leads. The success rate read 97% when it was 91%.
+  // `read` has no column of its own, so it still needs the message row; a message that was
+  // deleted simply cannot be known to have been read, which is a floor, never an inflation.
   const today = (await query(
     `WITH t AS (
-       SELECT sm.error_code AS ec, m.status AS s
+       SELECT sm.error_code                     AS ec,
+              COALESCE(sm.delivery_status, 'pending') AS ds,
+              m.status                          AS s
          FROM drip.sent_messages sm
          LEFT JOIN public.messages m ON m.id = sm.message_id
         WHERE sm.account_id = $1 AND sm.sent_at >= ${dayStart}
      )
      SELECT count(*)::int AS sent,
-            count(*) FILTER (WHERE s IN (1,2))::int AS delivered,
-            count(*) FILTER (WHERE s = 2)::int       AS read,
-            count(*) FILTER (WHERE s = 3)::int       AS failed,
-            count(*) FILTER (WHERE s = 0 OR s IS NULL)::int AS pending,
-            count(*) FILTER (WHERE s = 3 AND ec IN ('131049','130472'))::int AS block_cap,
-            count(*) FILTER (WHERE s = 3 AND ec = '131026')::int             AS block_invalid,
-            count(*) FILTER (WHERE s = 3 AND ec = '131050')::int             AS block_optout,
-            count(*) FILTER (WHERE s = 3 AND (ec IS NULL OR ec NOT IN ('131049','130472','131026','131050')))::int AS block_other
+            count(*) FILTER (WHERE ds = 'delivered')::int AS delivered,
+            count(*) FILTER (WHERE s = 2)::int            AS read,
+            count(*) FILTER (WHERE ds = 'failed')::int    AS failed,
+            count(*) FILTER (WHERE ds = 'pending')::int   AS pending,
+            count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131049','130472'))::int AS block_cap,
+            count(*) FILTER (WHERE ds = 'failed' AND ec = '131026')::int             AS block_invalid,
+            count(*) FILTER (WHERE ds = 'failed' AND ec = '131050')::int             AS block_optout,
+            count(*) FILTER (WHERE ds = 'failed' AND (ec IS NULL OR ec NOT IN ('131049','130472','131026','131050')))::int AS block_other
        FROM t`,
     [accountId]
   ))[0];
 
-  // Failed-by-template today (top 5) — which message clusters the blocks
+  // Failed-by-template today (top 5) — which message clusters the blocks.
+  // Same rule as above: delivery_status, never a JOIN to a message row that may be gone.
   const byTemplate = (await query(
     `SELECT sm.template_name AS template,
             count(*)::int AS sent,
-            count(*) FILTER (WHERE m.status = 3)::int AS failed
+            count(*) FILTER (WHERE sm.delivery_status = 'failed')::int AS failed
        FROM drip.sent_messages sm
-       LEFT JOIN public.messages m ON m.id = sm.message_id
       WHERE sm.account_id = $1 AND sm.sent_at >= ${dayStart}
       GROUP BY sm.template_name
-     HAVING count(*) FILTER (WHERE m.status = 3) > 0
+     HAVING count(*) FILTER (WHERE sm.delivery_status = 'failed') > 0
       ORDER BY 3 DESC LIMIT 5`,
     [accountId]
   ));
@@ -788,14 +801,15 @@ async function actionDeliveryStats(accountId) {
     [accountId]
   ))[0]?.c || 0);
 
-  // 7-day trend (oldest → newest)
+  // 7-day trend (oldest → newest). The JOIN mattered most HERE: history is exactly where
+  // message rows get deleted, so the older a day was, the more of its blocks the chart
+  // quietly dropped — the one view whose whole job is to show a trend.
   const trend = (await query(
     `SELECT to_char(sm.sent_at AT TIME ZONE '${TZ}', 'DD/MM') AS day,
             count(*)::int AS sent,
-            count(*) FILTER (WHERE m.status IN (1,2))::int AS delivered,
-            count(*) FILTER (WHERE m.status = 3)::int       AS failed
+            count(*) FILTER (WHERE sm.delivery_status = 'delivered')::int AS delivered,
+            count(*) FILTER (WHERE sm.delivery_status = 'failed')::int    AS failed
        FROM drip.sent_messages sm
-       LEFT JOIN public.messages m ON m.id = sm.message_id
       WHERE sm.account_id = $1 AND sm.sent_at >= ${dayStart} - interval '6 days'
       GROUP BY 1, date_trunc('day', sm.sent_at AT TIME ZONE '${TZ}')
       ORDER BY date_trunc('day', sm.sent_at AT TIME ZONE '${TZ}')`,
