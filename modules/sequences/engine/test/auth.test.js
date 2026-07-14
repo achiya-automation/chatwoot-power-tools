@@ -35,15 +35,18 @@ function sessionCookie(fields = {}) {
 }
 
 // Minimal express-style req/res doubles so the gate can be unit-tested without a
-// live server or DB. status()/json()/set() chain like express; next() flags pass-through.
-function runGate(gate, headers, query = {}) {
-  const req = { headers, query };
+// live server or DB. status()/json()/send()/type()/set() chain like express; next() flags
+// pass-through. method/path default to a plain API GET — a navigation is opted into per test.
+function runGate(gate, headers, query = {}, { method = 'GET', path = '/drip-api' } = {}) {
+  const req = { headers, query, method, path };
   const res = {
     statusCode: 200,
     body: undefined,
     headers: {},
     status(c) { this.statusCode = c; return this; },
     json(b) { this.body = b; return this; },
+    send(b) { this.body = b; return this; },
+    type(t) { this.headers['Content-Type'] = t; return this; },
     set(k, v) { this.headers[k] = v; return this; },
   };
   let nexted = false;
@@ -54,6 +57,10 @@ function runGate(gate, headers, query = {}) {
     headers: res.headers,
   }));
 }
+
+// A browser/WebView navigating to the panel (as opposed to the SPA's fetch() calls).
+const NAV = { method: 'GET', path: '/' };
+const NAV_ACCEPT = { accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' };
 
 // ── no cookie → false, and Chatwoot is never called ──
 test('isAuthenticated returns false for an empty cookie without calling Chatwoot', async () => {
@@ -149,6 +156,77 @@ test('authGate marks every denial no-store (a cached 401 would blank the dashboa
   const badCookie = await runGate(gate, { cookie: sessionCookie() });
   assert.equal(badCookie.status, 401);
   assert.equal(badCookie.headers['Cache-Control'], 'no-store');
+});
+
+// ───────────────── denying a NAVIGATION: sign-in page, not raw JSON ─────────────────
+//
+// Chatwoot's MOBILE app opens a dashboard app in a react-native-webview whose cookie jar is
+// EMPTY for the Chatwoot origin: the native app authenticates over the API (devise headers in
+// AsyncStorage) and never runs the web SPA — and cw_d_session_info is written by the SPA's
+// JavaScript, never Set-Cookie'd by Rails. So the WebView carries no session, the gate denies,
+// and `{"ok":false,"error":"unauthorized"}` is literally what the agent reads on their phone.
+//
+// A navigation must therefore be denied with a PAGE that lets them sign in (Chatwoot's own
+// /app/login, same-origin iframe → its SPA writes the cookie into this very jar), while the
+// SPA's fetch() calls keep getting the machine-readable JSON they parse.
+
+test('authGate denies a NAVIGATION with the sign-in page, not raw JSON', async () => {
+  const gate = authGate({ chatwootBaseUrl: BASE, fetchImpl: async () => ({ status: 200 }) });
+  const r = await runGate(gate, NAV_ACCEPT, {}, NAV);
+  assert.equal(r.passed, false);
+  assert.equal(r.status, 401);
+  assert.match(r.headers['Content-Type'], /html/, 'a navigation gets HTML, not JSON');
+  assert.match(String(r.body), /<iframe[^>]+src="\/app\/login"/, 'embeds Chatwoot login same-origin');
+  assert.match(String(r.body), /cw_d_session_info/, 'polls for the cookie the SPA writes on success');
+  assert.equal(r.headers['Cache-Control'], 'no-store', 'a denial is never cacheable');
+});
+
+// An EXPIRED session arrives here with cw_d_session_info still in the jar — the gate only knows
+// it's stale because Chatwoot rejected it. A page that reloaded on the cookie's mere PRESENCE
+// would reload, be denied, reload… forever. It must reload only when the value CHANGES (a fresh
+// login mints a new token), which is also what the cookie-less phone case needs.
+test('the sign-in page reloads on a CHANGED session cookie, never on its mere presence', async () => {
+  const gate = authGate({ chatwootBaseUrl: BASE, fetchImpl: async () => ({ status: 401 }) });
+  const r = await runGate(gate, { ...NAV_ACCEPT, cookie: sessionCookie() }, {}, NAV);
+  assert.equal(r.status, 401, 'a stale cookie is still a denial');
+  const html = String(r.body);
+
+  assert.match(html, /cw_d_session_info=\(\[\^;\]\*\)/, 'reads the cookie VALUE, not just its name');
+  assert.match(html, /now\s*!==?\s*before|before\s*!==?\s*now/, 'compares against the value seen at load');
+  assert.doesNotMatch(
+    html,
+    /if\s*\(\s*document\.cookie\.indexOf\('cw_d_session_info='\)\s*!==\s*-1\s*\)\s*location\.reload/,
+    'presence-only reload = infinite loop for an expired session'
+  );
+});
+
+test('authGate still denies the SPA fetch() calls with JSON (Accept: */*)', async () => {
+  const gate = authGate({ chatwootBaseUrl: BASE, fetchImpl: async () => ({ status: 200 }) });
+  const r = await runGate(gate, { accept: '*/*' }, {}, { method: 'GET', path: '/' });
+  assert.equal(r.status, 401);
+  assert.deepEqual(r.body, { ok: false, error: 'unauthorized' }, 'fetch() must keep parsing JSON');
+});
+
+// The API is a machine contract: never hand it a page, even if a client sends a browser Accept.
+test('authGate never serves the sign-in page on /drip-api, whatever the Accept header', async () => {
+  const gate = authGate({ chatwootBaseUrl: BASE, fetchImpl: async () => ({ status: 200 }) });
+  const r = await runGate(gate, NAV_ACCEPT, {}, { method: 'GET', path: '/drip-api' });
+  assert.deepEqual(r.body, { ok: false, error: 'unauthorized' });
+
+  const post = await runGate(gate, NAV_ACCEPT, {}, { method: 'POST', path: '/drip-api' });
+  assert.deepEqual(post.body, { ok: false, error: 'unauthorized' }, 'a POST is never a navigation');
+});
+
+// 403 (wrong tenant) is a real answer, not a missing session — a sign-in page would loop forever.
+test('authGate answers a forbidden tenant with JSON even on a navigation', async () => {
+  const gate = authGate({
+    chatwootBaseUrl: BASE,
+    masterAccountId: 1,
+    fetchImpl: async () => ({ status: 200, json: async () => ({ id: 9, accounts: [{ id: 7, role: 'agent' }] }) }),
+  });
+  const r = await runGate(gate, { ...NAV_ACCEPT, cookie: sessionCookie() }, { account_id: '99' }, NAV);
+  assert.equal(r.status, 403);
+  assert.deepEqual(r.body, { ok: false, error: 'forbidden' }, 'signing in again would not help');
 });
 
 // ── valid cookie passes, and a repeat is served from cache (one Chatwoot call) ──
@@ -331,4 +409,19 @@ test('GET / (static SPA) without a cookie → 401', async () => {
 test('GET / with a valid session cookie passes the gate (not 401)', async () => {
   const res = await fetch(`${srvUrl}/`, { headers: { cookie: sessionCookie() } });
   assert.notEqual(res.status, 401, 'a logged-in admin must pass the gate');
+});
+
+// ── end to end: what Chatwoot's mobile WebView actually gets — a sign-in page, not JSON ──
+// The phone sends a browser Accept and no cookie. Before this, it rendered the raw string
+// {"ok":false,"error":"unauthorized"} on screen.
+test('GET / from a cookie-less WebView (browser Accept) serves the sign-in page', async () => {
+  const res = await fetch(`${srvUrl}/?embed=1&account_id=7`, {
+    headers: { accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+  });
+  assert.equal(res.status, 401);
+  assert.match(res.headers.get('content-type') || '', /html/);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  const html = await res.text();
+  assert.match(html, /<iframe[^>]+src="\/app\/login"/);
+  assert.doesNotMatch(html, /\{"ok":false/, 'the agent must never read raw JSON on their phone');
 });

@@ -133,6 +133,74 @@ export function canAccessAccount(access, accountId) {
 }
 
 /**
+ * The page a *navigation* gets when it carries no session — instead of the raw 401 JSON.
+ *
+ * Why this exists: Chatwoot's MOBILE app opens a dashboard app in a react-native-webview, and
+ * that WebView's cookie jar is EMPTY for the Chatwoot origin. The native app authenticates over
+ * the API (devise headers kept in AsyncStorage) and never runs the web SPA — and cw_d_session_info
+ * is written by the SPA's JavaScript, never Set-Cookie'd by Rails. So the phone always arrives
+ * cookie-less, the gate denies, and the WebView renders the denial body: the agent literally reads
+ * `{"ok":false,"error":"unauthorized"}` on screen.
+ *
+ * Chatwoot gives us nothing to fix that with: dashboard apps have no auth contract at all
+ * (chatwoot#8552, open since 2023), the URL is never templated (chatwoot#13756), and the
+ * appContext postMessage is unsigned — so its `currentAgent` is a hint, never a credential.
+ *
+ * The one honest fix is to let the user prove themselves to Chatwoot *inside that WebView*:
+ * Chatwoot's own /app/login is same-origin and allows framing (frame-ancestors 'self'), so it
+ * runs in the iframe below. On success its SPA writes cw_d_session_info into this very cookie
+ * jar, the poll sees it, and the reload lands on the real panel — with every later /drip request
+ * carrying the session. The security model is untouched: no shared secret, no bypass, no trust in
+ * anything the host page claims. It also upgrades the desktop expired-session case, which used to
+ * dump the same JSON into the Chatwoot sidebar.
+ *
+ * Inline <style>/<script> are allowed by the CSP already in front of this route
+ * (script-src 'self' 'unsafe-inline'; frame-src 'self').
+ */
+const SIGN_IN_PAGE = `<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>התחברות</title>
+<style>html,body{margin:0;height:100%;background:#fff}iframe{display:block;width:100%;height:100%;border:0}</style>
+</head>
+<body>
+<iframe src="/app/login" title="התחברות ל-Chatwoot"></iframe>
+<script>
+  // ה-SPA של Chatwoot כותב את cw_d_session_info בהתחברות מוצלחת. ה-iframe הוא same-origin,
+  // אז ה-cookie מופיע גם כאן — וברגע שהוא נכתב, טוענים מחדש ונכנסים לפאנל עצמו.
+  //
+  // משווים את הערך למצב הפתיחה, ולא בודקים רק אם הוא קיים: סשן שפג תוקף מגיע לכאן עם
+  // cookie קיים אך פסול (השער אימת אותו מול Chatwoot ודחה). בדיקת-קיום הייתה מזהה אותו,
+  // מרעננת, נדחית שוב — ולולאת רענון אינסופית במקום מסך התחברות.
+  function sess() {
+    var m = document.cookie.match(/(?:^|;\\s*)cw_d_session_info=([^;]*)/);
+    return m ? m[1] : '';
+  }
+  var before = sess();
+  setInterval(function () {
+    var now = sess();
+    if (now && now !== before) location.reload();  // התחברות חדשה = טוקן חדש = ערך שונה
+  }, 500);
+</script>
+</body>
+</html>`;
+
+/**
+ * A navigation is a browser/WebView asking for a PAGE — it sends a `text/html` Accept. The SPA's
+ * own fetch() calls do not (they send a wildcard or `application/json`) and must keep getting the
+ * JSON they parse. /drip-api is a machine contract: never a navigation, whatever Accept claims.
+ */
+function isNavigation(req) {
+  return (
+    req.method === 'GET' &&
+    !String(req.path || '').startsWith('/drip-api') &&
+    /\btext\/html\b/i.test(req.headers?.accept || '')
+  );
+}
+
+/**
  * authGate(config) → express middleware.
  *
  * Two layers: (1) the session must be a valid logged-in Chatwoot user, and (2) the request's
@@ -164,14 +232,22 @@ export function authGate(config) {
   // a never-before-requested asset URL exists to be poisoned — so it breaks right after every
   // release, which is the worst possible time. Deny responses are marked no-store here, and
   // the proxy snippet no longer blanket-stamps this route (see lib/proxy-caddy.sh).
-  const deny = (res, status, error) => {
+  //
+  // A denial that is a NAVIGATION and is about a MISSING session (401, not 403) gets the sign-in
+  // page instead of the JSON — see SIGN_IN_PAGE for why the phone always arrives cookie-less.
+  // 403 stays JSON on purpose: the session is fine, the tenant is wrong, and offering a login
+  // there would just loop the user through a sign-in that changes nothing.
+  const deny = (req, res, status, error) => {
     res.set('Cache-Control', 'no-store');
+    if (status === 401 && isNavigation(req)) {
+      return res.status(401).type('html').send(SIGN_IN_PAGE);
+    }
     return res.status(status).json({ ok: false, error });
   };
 
   return async function gate(req, res, next) {
     const cookie = req.headers.cookie || '';
-    if (!cookie) return deny(res, 401, 'unauthorized');
+    if (!cookie) return deny(req, res, 401, 'unauthorized');
 
     const key = createHash('sha256').update(cookie).digest('hex');
     let access = null;
@@ -186,7 +262,7 @@ export function authGate(config) {
       try { access = await p; } finally { inflight.delete(key); }
       if (access && access.ok) cache.set(key, { access, expiry: Date.now() + TTL_MS });
     }
-    if (!access || !access.ok) return deny(res, 401, 'unauthorized');
+    if (!access || !access.ok) return deny(req, res, 401, 'unauthorized');
 
     req.dripAccess = access;
 
@@ -194,7 +270,7 @@ export function authGate(config) {
     // super-admin on any). Stops ?account_id=N from reading another tenant's leads.
     const acc = parseInt(req.query?.account_id || '0', 10);
     if (acc && !canAccessAccount(access, acc)) {
-      return deny(res, 403, 'forbidden');
+      return deny(req, res, 403, 'forbidden');
     }
     return next();
   };
