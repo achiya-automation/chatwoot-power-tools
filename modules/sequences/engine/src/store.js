@@ -816,6 +816,39 @@ async function actionDeliveryStats(accountId) {
     [accountId]
   ));
 
+  // ── חסימות: ליד חדש מול המשך הרצף ───────────────────────────────────────────
+  // שתי החסימות האלה הן שתי בעיות שונות לגמרי, ומיזוגן למספר אחד מסתיר את שתיהן:
+  //   • ליד חדש שנחסם בהודעה הראשונה בחייו = הוא הגיע רווי מעסקים אחרים. זו בעיית
+  //     מקור לידים, ושום שינוי בתוכן או בקצב לא יתקן אותה.
+  //   • חסימה בהמשך הרצף = אנחנו עשינו משהו — קצב, תוכן, או תבנית שנשרפה.
+  // נמדד בבננה בוק 14/07: ליד חדש נחסם ב-40%, המשך הרצף ב-2%. פי עשרים.
+  //
+  // ⚠️ "ליד חדש" הוא ההודעה הראשונה *בחייו*, ולא step_order=1: ליד שנרשם מחדש לרצף
+  // חוזר לשלב 1 בלי להיות חדש. מתוך 1,506 שליחות של שלב 1 בחשבון הזה, 571 היו ללידים
+  // שכבר קיבלו הודעות קודם — פיצול לפי step_order בלבד היה מנפח את "הלידים החדשים"
+  // ביותר משליש ומשקר בדיוק על המספר שהפיצול נועד לחשוף.
+  // ה-window function רץ על כל ההיסטוריה של איש הקשר (אחרת "ראשונה" הייתה נמדדת בתוך
+  // היום ולא בתוך חייו), ורק אז מסננים ליום — אחרת כל שליחה ראשונה של היום נראית כמו
+  // ליד חדש, גם למי שברצף כבר חודש.
+  const bySource = (await query(
+    `WITH s AS (
+       SELECT sm.sent_at,
+              COALESCE(sm.delivery_status, 'pending') AS ds,
+              row_number() OVER (PARTITION BY sm.contact_id ORDER BY sm.sent_at, sm.id) = 1
+                AS is_first_ever
+         FROM drip.sent_messages sm
+        WHERE sm.account_id = $1
+     )
+     SELECT is_first_ever                                  AS "isNewLead",
+            count(*)::int                                  AS sent,
+            count(*) FILTER (WHERE ds = 'delivered')::int  AS arrived,
+            count(*) FILTER (WHERE ds = 'failed')::int     AS blocked
+       FROM s
+      WHERE sent_at >= ${dayStart}
+      GROUP BY 1`,
+    [accountId]
+  ));
+
   // ── מי מהרשימה עוד ניתן להשגה ────────────────────────────────────────────────
   // התקרה האישית של מטא (131049) היא המשתנה היחיד שבאמת מנבא מסירה — לא "קר/חם".
   // נמדד בחשבון הזה: נמענת שמטא מעולם לא חסמה נמסרת ב-60-84%; אחרי שנחסמה — 7.9%.
@@ -836,7 +869,16 @@ async function actionDeliveryStats(accountId) {
     [accountId]
   ))[0];
 
-  return { data: { today, byTemplate, retryWaiting, trend, burn } };
+  // bySource → { newLead: {...}, inSequence: {...} } — צורה יציבה גם כשאחד מהם ריק
+  const src = (isNew) => bySource.find((r) => r.isNewLead === isNew)
+    || { sent: 0, arrived: 0, blocked: 0 };
+
+  return {
+    data: {
+      today, byTemplate, retryWaiting, trend, burn,
+      bySource: { newLead: src(true), inSequence: src(false) },
+    },
+  };
 }
 
 // ── template_media ──────────────────────────────────────────────────────────────

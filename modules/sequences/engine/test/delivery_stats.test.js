@@ -33,13 +33,13 @@ beforeEach(async () => {
 });
 
 /** One sent_messages row. `messageId = null` ⇒ its message row was cascade-deleted. */
-async function sent({ id, messageId, status, code = null }) {
+async function sent({ id, messageId, status, code = null, step = 1 }) {
   await query(
     `INSERT INTO drip.sent_messages
        (account_id, conversation_id, contact_id, template_name, step_order,
         message_id, delivery_status, error_code, sent_at)
-     VALUES (1, 7001, $1::int, 't1', 1, $2::int, $3::text, $4::text, now())`,
-    [id, messageId, status, code]
+     VALUES (1, 7001, $1::int, 't1', $5::int, $2::int, $3::text, $4::text, now())`,
+    [id, messageId, status, code, step]
   );
 }
 
@@ -84,6 +84,48 @@ test('a NULL delivery_status (row written, reconciler has not run yet) counts as
   const { data } = await handleAction(1, 'delivery_stats', {});
   assert.equal(data.today.pending, 1);
   assert.equal(data.today.failed, 0, 'unknown is not failure');
+});
+
+// ── ⭐ new-lead blocks vs in-sequence blocks — two different problems ────────────
+// A lead blocked on the FIRST message of her life arrived already saturated by other
+// businesses: that is a lead-source problem, and no change of copy or pace will fix it.
+// A block later in the sequence is something WE did. Merged into one number, both hide.
+// (banana-book, 2026-07-14: new leads blocked at 40%, in-sequence at 2% — twentyfold.)
+test('⭐ blocks are split into "first message of her life" vs "later in the sequence"', async () => {
+  // contact 1 — brand new: this is the only message she has ever been sent, and it blocked
+  await sent({ id: 1, messageId: null, status: 'failed', code: '131049' });
+
+  // contact 2 — already in the sequence: an earlier send landed, this later one blocked
+  await query(
+    `INSERT INTO drip.sent_messages
+       (account_id, conversation_id, contact_id, template_name, step_order,
+        delivery_status, sent_at)
+     VALUES (1, 7001, 2, 't1', 1, 'delivered', now() - interval '2 days')`
+  );
+  await sent({ id: 2, messageId: null, status: 'failed', code: '131049', step: 3 });
+
+  const { data } = await handleAction(1, 'delivery_stats', {});
+
+  assert.equal(data.bySource.newLead.blocked, 1, 'only the truly-first send counts as a new lead');
+  assert.equal(data.bySource.newLead.sent, 1);
+  assert.equal(data.bySource.inSequence.blocked, 1, 'the follow-up block belongs to the sequence');
+});
+
+test('⭐ a RE-ENROLLED lead back on step 1 is NOT a new lead', async () => {
+  // She was sent step 1 last week (it landed), then re-enrolled and is on step 1 again today.
+  // Splitting on step_order would call today's send a "new lead" and inflate the metric —
+  // 571 of this account's 1,506 step-1 sends were exactly this.
+  await query(
+    `INSERT INTO drip.sent_messages
+       (account_id, conversation_id, contact_id, template_name, step_order,
+        delivery_status, sent_at)
+     VALUES (1, 7001, 5, 't1', 1, 'delivered', now() - interval '7 days')`
+  );
+  await sent({ id: 5, messageId: null, status: 'failed', code: '131049' });   // step 1 again, today
+
+  const { data } = await handleAction(1, 'delivery_stats', {});
+  assert.equal(data.bySource.newLead.blocked, 0, 'she is not new — she has a history');
+  assert.equal(data.bySource.inSequence.blocked, 1, 'this is a block on someone we already knew');
 });
 
 test('the 7-day trend keeps blocks whose message rows were deleted (history is where they vanish)', async () => {
