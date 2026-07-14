@@ -11,10 +11,12 @@
   // ── i18n: Hebrew for RTL (he) users, English for everyone else. Chatwoot doesn't put the
   // locale on the DOM, but it sets #app[dir]=rtl only for Hebrew — the same signal the import
   // wizard already relies on. he→Hebrew, ltr→English (also the sane fallback for fr/es/…). ──
-  var DRIP_LOCALE = (function () {
+  // ⚠️ חייב להיות עצל — ראה import-button.js: ב-DASHBOARD_SCRIPTS זמן-הטעינה מקדים את Vue,
+  // אז #app[dir] עוד לא קיים וחישוב חד-פעמי ננעל על 'en' לנצח.
+  function dripLocale() {
     var a = document.querySelector('#app[dir]');
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
-  })();
+  }
   var I18N = {
     he: { firstName: 'שם פרטי', fullName: 'שם מלא', phone: 'טלפון', email: 'אימייל',
           remove: 'הסר', addField: 'הוסף שדה:',
@@ -29,7 +31,7 @@
           uploadBtn: '📎 Upload', uploading: 'Uploading…', uploaded: '✓ Uploaded', uploadFailed: '✗ Failed',
           mediaSaved: 'Media uploaded & remembered ✓', replace: 'Replace' },
   };
-  function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
+  function t(k) { return (I18N[dripLocale()] || I18N.en)[k] || I18N.en[k] || k; }
 
   (function () {
     var st = document.createElement('style');
@@ -72,20 +74,23 @@
     (document.head || document.documentElement).appendChild(st);
   })();
 
-  var BASE_FIELDS = [
-    { label: t('firstName'), liquid: '{{contact.first_name}}' },
-    { label: t('fullName'),  liquid: '{{contact.name}}' },
-    { label: t('phone'),     liquid: '{{contact.phone_number}}' },
-    { label: t('email'),     liquid: '{{contact.email}}' },
-  ];
-  var CUSTOM_FIELDS = [];          // loaded dynamically from the API
-  var liquidToLabel = {};          // reverse map Liquid→label (for token display)
-  function allFields() { return BASE_FIELDS.concat(CUSTOM_FIELDS); }
-  function rebuildLabelMap() {
-    liquidToLabel = {};
-    allFields().forEach(function (f) { liquidToLabel[f.liquid] = f.label; });
+  // ⚠️ פונקציה, לא קבוע. t() בזמן טעינת המודול = תרגום שקפא לפני ש-Vue רינדר, כלומר אנגלית
+  // לנצח (ראה dripLocale למעלה). כל תווית נבנית בזמן רינדור.
+  function baseFields() {
+    return [
+      { label: t('firstName'), liquid: '{{contact.first_name}}' },
+      { label: t('fullName'),  liquid: '{{contact.name}}' },
+      { label: t('phone'),     liquid: '{{contact.phone_number}}' },
+      { label: t('email'),     liquid: '{{contact.email}}' },
+    ];
   }
-  rebuildLabelMap();
+  var CUSTOM_FIELDS = [];          // loaded dynamically from the API
+  function allFields() { return baseFields().concat(CUSTOM_FIELDS); }
+  // Liquid → תווית ידידותית, מחושב בזמן קריאה (רשימה של 4 + custom — זול מלתחזק מפה).
+  function liquidLabel(liquid) {
+    var hit = allFields().filter(function (f) { return f.liquid === liquid; })[0];
+    return hit && hit.label;
+  }
 
   // Chatwoot's API requires devise-token-auth headers (not just the session cookie). The
   // frontend keeps them in the (non-httpOnly) cw_d_session_info cookie — read and forward
@@ -121,7 +126,6 @@
             return { label: d.attribute_display_name || d.attribute_key,
                      liquid: '{{contact.custom_attribute.' + d.attribute_key + '}}', custom: true };
           });
-        rebuildLabelMap();
         refreshAllChips();         // update holders that were already built before the fetch returned
       })
       .catch(function () {});
@@ -137,7 +141,7 @@
   // ── token overlay: when the value is a known Liquid expression, show a friendly pill
   // instead of the raw {{...}} ──
   function syncToken(wrap, inp) {
-    var label = liquidToLabel[(inp.value || '').trim()];
+    var label = liquidLabel((inp.value || '').trim());
     var pill = wrap.querySelector('.drip-token');
     if (label) {
       wrap.classList.add('has-token');
@@ -217,9 +221,10 @@
   }
 
   // ── prettify the template preview card ──
-  var LANG_NAMES = { he: t('lang_he'), en: t('lang_en'), en_us: t('lang_en'), ar: t('lang_ar') };
+  // פונקציות, לא קבועים — ראה baseFields(): t() בזמן טעינה קופא על אנגלית.
+  function langNames() { return { he: t('lang_he'), en: t('lang_en'), en_us: t('lang_en'), ar: t('lang_ar') }; }
+  function catNames() { return { MARKETING: t('cat_MARKETING'), UTILITY: t('cat_UTILITY'), AUTHENTICATION: t('cat_AUTHENTICATION') }; }
   var LANG_FLAGS = { he: '🇮🇱', en: '🇺🇸', en_us: '🇺🇸', ar: '🇸🇦' };
-  var CAT_NAMES  = { MARKETING: t('cat_MARKETING'), UTILITY: t('cat_UTILITY'), AUTHENTICATION: t('cat_AUTHENTICATION') };
   function prettifyName(raw) {
     return (raw || '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
       .replace(/\b\w/g, function (c) { return c.toUpperCase(); });
@@ -277,12 +282,12 @@
         d.badges.innerHTML = '';
         var lb = document.createElement('span');
         lb.className = 'drip-badge';
-        lb.textContent = (LANG_FLAGS[langKey] || '🌐') + ' ' + (LANG_NAMES[langKey] || lang);
+        lb.textContent = (LANG_FLAGS[langKey] || '🌐') + ' ' + (langNames()[langKey] || lang);
         d.badges.appendChild(lb);
         if (cat) {
           var cb = document.createElement('span');
           cb.className = 'drip-badge';
-          cb.textContent = '🏷️ ' + (CAT_NAMES[cat.toUpperCase()] || cat);
+          cb.textContent = '🏷️ ' + (catNames()[cat.toUpperCase()] || cat);
           d.badges.appendChild(cb);
         }
       }
@@ -404,7 +409,7 @@
     btn.textContent = t('uploading');
     if (lbl) lbl.textContent = t('uploading'); // feedback גם ב-badge (בהחלפה ה-btn מוסתר)
     fetch(base + '/drip-api/media?account_id=' + encodeURIComponent(acc) +
-          '&format=' + encodeURIComponent(format) + '&locale=' + DRIP_LOCALE, {
+          '&format=' + encodeURIComponent(format) + '&locale=' + dripLocale(), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-filename': encodeURIComponent(file.name || 'file') },

@@ -137,10 +137,11 @@
   // ── i18n: Hebrew for RTL (he) users, English for everyone else. Chatwoot doesn't put the
   // locale on the DOM, but it sets #app[dir]=rtl only for Hebrew — the same signal the import
   // wizard already relies on. he→Hebrew, ltr→English (also the sane fallback for fr/es/…). ──
-  var DRIP_LOCALE = (function () {
+  // ⚠️ חייב להיות עצל — ראה import-button.js: בזמן הטעינה Vue עוד לא רינדר, ו-#app[dir] לא קיים.
+  function dripLocale() {
     var a = document.querySelector('#app[dir]');
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
-  })();
+  }
   var I18N = {
     he: { videoCompressed: 'הסרטון כווץ', close: 'סגור',
           downloadCompressed: 'הורד את הסרטון המכווץ',
@@ -159,7 +160,7 @@
           compressionFailed: 'Compression failed — try a shorter video',
           compressBtnTitle: 'Compress a large video (>16MB) for WhatsApp — compressed in your browser and downloaded, then attach it via the paperclip' },
   };
-  function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
+  function t(k) { return (I18N[dripLocale()] || I18N.en)[k] || I18N.en[k] || k; }
 
   var CB = '?v=' + Date.now();
   var compPromise = null;
@@ -178,9 +179,9 @@
   function ensureCard() {
     if (!card) {
       card = document.createElement('div');
-      card.dir = DRIP_LOCALE === 'he' ? 'rtl' : 'ltr';
+      card.dir = dripLocale() === 'he' ? 'rtl' : 'ltr';
       card.className = 'bg-n-solid-1 border border-n-weak rounded-xl shadow-lg px-4 py-3'; // Chatwoot's card style (adapts to light/dark)
-      card.style.cssText = 'position:fixed;bottom:88px;left:50%;transform:translateX(-50%);z-index:99999;min-width:250px;max-width:90vw;direction:' + (DRIP_LOCALE === 'he' ? 'rtl' : 'ltr') + ';';
+      card.style.cssText = 'position:fixed;bottom:88px;left:50%;transform:translateX(-50%);z-index:99999;min-width:250px;max-width:90vw;direction:' + (dripLocale() === 'he' ? 'rtl' : 'ltr') + ';';
       document.body.appendChild(card);
     }
     clearTimeout(toastTimer);

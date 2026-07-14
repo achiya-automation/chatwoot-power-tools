@@ -4,7 +4,8 @@ setup() { source lib/assemble-dashboard-script.sh; }
   run assemble_dashboard_script "/chatwoot-addons" import
   [[ "$output" == *"__CW_ADDONS_BASE=\"/chatwoot-addons\""* ]]
   [[ "$output" == *"import-button"* ]]
-  [[ "$output" != *"sequences-nav"* ]]
+  # הסמן שה-assembler פולט לכל חלק — לא חיפוש שם-קובץ חופשי, שנתפס גם על אזכור בהערה
+  [[ "$output" != *"// part: modules/sequences/inject/sequences-nav.js"* ]]
 }
 
 @test "assemble has no hardcoded achiya domain" {
