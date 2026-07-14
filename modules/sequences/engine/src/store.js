@@ -802,7 +802,27 @@ async function actionDeliveryStats(accountId) {
     [accountId]
   ));
 
-  return { data: { today, byTemplate, retryWaiting, trend } };
+  // ── מי מהרשימה עוד ניתן להשגה ────────────────────────────────────────────────
+  // התקרה האישית של מטא (131049) היא המשתנה היחיד שבאמת מנבא מסירה — לא "קר/חם".
+  // נמדד בחשבון הזה: נמענת שמטא מעולם לא חסמה נמסרת ב-60-84%; אחרי שנחסמה — 7.9%.
+  // ומעל max_cap_failures המנוע מפסיק ליזום אליה שיווק בכלל. שלוש הקבוצות האלה הן
+  // הסיפור של הרשימה, ובלעדיהן "856 פעילים" נשמע כמו 856 אנשים שאפשר להגיע אליהם.
+  const burn = (await query(
+    `WITH cap AS (
+       SELECT COALESCE((SELECT max_cap_failures FROM drip.compliance WHERE account_id = $1), 4) AS m
+     )
+     SELECT (SELECT m FROM cap)::int AS "maxCap",
+            count(*) FILTER (WHERE COALESCE(cs.cap_failures, 0) = 0)::int                                  AS clean,
+            count(*) FILTER (WHERE COALESCE(cs.cap_failures, 0) BETWEEN 1 AND (SELECT m FROM cap) - 1)::int AS capped,
+            count(*) FILTER (WHERE COALESCE(cs.cap_failures, 0) >= (SELECT m FROM cap))::int               AS refused
+       FROM drip.enrollments e
+       LEFT JOIN drip.contact_state cs
+              ON cs.account_id = e.account_id AND cs.contact_id = e.contact_id
+      WHERE e.account_id = $1 AND e.status = 'active'`,
+    [accountId]
+  ))[0];
+
+  return { data: { today, byTemplate, retryWaiting, trend, burn } };
 }
 
 // ── template_media ──────────────────────────────────────────────────────────────

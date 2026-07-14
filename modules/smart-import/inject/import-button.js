@@ -69,15 +69,25 @@
   function inject() {
     try {
       if (!/\/contacts(\/|$|\?)/.test(location.pathname)) return;
-      if (document.getElementById('cwi-open-btn')) return;
       var host = findActionBar();
       if (!host) return; // MutationObserver will retry — no floating fallback
-      var btn = document.createElement('button');
-      btn.id = 'cwi-open-btn';
-      btn.innerHTML = '<span class="i-lucide-upload"></span><span>' + t('smartImport') + '</span>';
-      btn.className = 'cwi-open inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-n-brand text-white text-sm font-medium hover:brightness-110 outline outline-1 outline-transparent';
-      btn.addEventListener('click', function (e) { e.preventDefault(); openImport(); });
-      host.insertBefore(btn, host.firstChild); // first child = sits with the native header actions
+      var btn = document.getElementById('cwi-open-btn');
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.id = 'cwi-open-btn';
+        btn.className = 'cwi-open inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-n-brand text-white text-sm font-medium hover:brightness-110 outline outline-1 outline-transparent';
+        btn.addEventListener('click', function (e) { e.preventDefault(); openImport(); });
+        host.insertBefore(btn, host.firstChild); // first child = sits with the native header actions
+      }
+      // ⚠️ התווית נכתבת מחדש כשהשפה משתנה — לא נקבעת פעם אחת ביצירה.
+      // Chatwoot קובע #app[dir]="rtl" רק אחרי שנתוני החשבון נטענים, כלומר יש חלון שבו הממשק
+      // עדיין נראה LTR. כפתור שנוצר בחלון הזה עם תווית קפואה נשאר "Smart import" בממשק עברי
+      // לנצח. עצלות ב-dripLocale() לבדה לא מספיקה — צריך גם לרנדר שוב.
+      var loc = dripLocale();
+      if (btn.__cwiLocale !== loc) {
+        btn.__cwiLocale = loc;
+        btn.innerHTML = '<span class="i-lucide-upload"></span><span>' + t('smartImport') + '</span>';
+      }
     } catch (e) { /* never break Chatwoot */ }
   }
 
@@ -90,7 +100,11 @@
   // ⚠️ לא לקרוא למשתנה הזה t — t() היא פונקציית התרגום למעלה. השמה כאן דורסת אותה במזהה
   // הטיימר, ואז t('smartImport') זורק TypeError שנבלע ב-catch של inject() → הכפתור נעלם בשקט.
   var timer;
-  new MutationObserver(function () { clearTimeout(timer); timer = setTimeout(inject, 200); })
-    .observe(document.body, { childList: true, subtree: true });
+  function schedule() { clearTimeout(timer); timer = setTimeout(inject, 200); }
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+  // dir מתחלף על #app כשפרטי החשבון נטענים (ובהחלפת שפה) — שינוי ATTRIBUTE, שה-observer
+  // למעלה לא רואה (childList בלבד). בלי זה התווית לא תתעדכן לעולם.
+  new MutationObserver(schedule)
+    .observe(document.documentElement, { attributes: true, attributeFilter: ['dir'], subtree: true });
   setTimeout(inject, 600);
 })();
