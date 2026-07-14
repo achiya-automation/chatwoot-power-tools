@@ -48,6 +48,9 @@ const M = {
     waiting: 'ממתינות',
     waitingHint: 'מטא עוד לא אישרה',
     arrivalRate: 'שיעור הגעה',
+    successRate: 'לא נחסמו',
+    ofDecided: 'ממה שהוכרע',
+    notCounted: 'מטא עוד לא אישרה · לא נספרות באחוז',
     todayOutcome: 'תוצאות היום',
     nothingToday: 'עוד לא נשלחו הודעות היום',
     // מי מהרשימה עוד ניתן להשגה
@@ -107,6 +110,9 @@ const M = {
     waiting: 'Awaiting',
     waitingHint: 'Meta has not confirmed yet',
     arrivalRate: 'Arrival rate',
+    successRate: 'Not blocked',
+    ofDecided: 'of decided',
+    notCounted: 'Meta has not confirmed · not in the rate',
     todayOutcome: "Today's outcome",
     nothingToday: 'No messages sent today yet',
     reachTitle: 'Who is still reachable',
@@ -300,12 +306,23 @@ function DeliveryCard({ stats }) {
   const failed = Number(t.failed) || 0;
   const waiting = Number(t.pending) || 0;
 
-  const pctOfSent = (n) => (sent > 0 ? Math.round((n / sent) * 100) : 0);
   const readOfArrived = arrived > 0 ? Math.round((read / arrived) * 100) : 0;
 
+  // ⭐ המכנה הוא מה שהוכרע, לא מה שנשלח.
+  // "ממתינה" איננה כישלון: מטא כבר קיבלה את ההודעה (יש wamid, אין שגיאה) והיא פשוט
+  // טרם החזירה אישור מסירה — 98% מהממתינות נפתרות תוך שש שעות. לספור אותן במכנה
+  // מוריד את שיעור ההצלחה מ-97% ל-64%, ומודד את קצב הדיווח של מטא במקום את הקמפיין.
+  // אבל גם אסור לזקוף אותן כהצלחה: חסימה כן מגיעה באיחור (1,680 מהן הוכרעו ככישלון
+  // בטווח 6ש'-7 ימים). לכן הן נשארות בעוגה — הן באמת נשלחו — אך מחוץ לאחוז.
+  const decided = arrived + failed;
+  const successRate = decided > 0 ? Math.round((arrived / decided) * 100) : 0;
+
+  // גוון מקבץ משמעות: שתי דרגות הוודאות של "לא נחסם" הן אותה משפחת צבע (רמפת teal),
+  // והחסימה — הכישלון היחיד — היא ההפרדה החדה היחידה. כך העין קולטת "כמעט הכל עבר"
+  // לפני שהיא קוראת מספר אחד.
   const slices = [
     { key: 'arrived', label: tr('arrived'), value: arrived, cls: 'text-n-teal-9' },
-    { key: 'waiting', label: tr('waiting'), value: waiting, cls: 'text-n-slate-9' },
+    { key: 'waiting', label: tr('waiting'), value: waiting, cls: 'text-n-teal-8' },
     { key: 'failed', label: tr('mBlocked'), value: failed, cls: 'text-n-ruby-9' },
   ];
 
@@ -337,29 +354,30 @@ function DeliveryCard({ stats }) {
         <p className="py-6 text-center text-sm text-n-slate-10">{tr('nothingToday')}</p>
       ) : (
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-          {/* עוגה: הגיעו + ממתינות + נחסמו = כל מה שנשלח. מסתכם ל-100%, תמיד. */}
+          {/* הפרוסות = כל מה שנשלח (מסתכם תמיד). האחוז במרכז = רק מה שהוכרע. */}
           <div className="flex items-center gap-4">
             <Donut
               slices={slices}
-              centerValue={`${pctOfSent(arrived)}%`}
-              centerLabel={tr('arrivalRate')}
+              centerValue={`${successRate}%`}
+              centerLabel={tr('successRate')}
             />
-            <div className="min-w-0 flex-1 space-y-1.5 sm:w-40">
-              <LegendRow cls="text-n-teal-9" label={tr('arrived')}
-                         value={`${arrived} · ${pctOfSent(arrived)}%`} />
-              <LegendRow cls="text-n-slate-9" label={tr('waiting')} hint={tr('waitingHint')}
-                         value={`${waiting} · ${pctOfSent(waiting)}%`} />
-              <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')}
-                         value={`${failed} · ${pctOfSent(failed)}%`} />
+            <div className="min-w-0 flex-1 space-y-1.5 sm:w-44">
+              <LegendRow cls="text-n-teal-9" label={tr('arrived')} value={String(arrived)} />
+              <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')} value={String(failed)} />
+              {waiting > 0 ? (
+                <LegendRow cls="text-n-teal-8" label={tr('waiting')} hint={tr('notCounted')}
+                           value={String(waiting)} />
+              ) : null}
             </div>
           </div>
 
-          {/* המשפך: נשלחו → הגיעו → נקראו. הקריאה נמדדת מתוך מי שההודעה הגיעה
-              אליה בכלל — אחוז קריאה מתוך "נשלחו" מעניש אותנו על חסימות של מטא. */}
+          {/* ההצלחה מול החסימה — זה מה שקובע אם הקמפיין עובד. אחוז הקריאה נמדד מתוך
+              מי שההודעה הגיעה אליה בכלל; מדידה מתוך "נשלחו" מענישה אותנו על חסימות. */}
           <div className="grid flex-1 grid-cols-3 gap-3">
             <DeliveryMetric label={tr('mSent')} value={sent} text="text-n-slate-12" />
-            <DeliveryMetric label={tr('arrived')} value={arrived}
-                            sub={`${pctOfSent(arrived)}% ${tr('ofSent')}`} text="text-n-teal-11" />
+            <DeliveryMetric label={tr('mBlocked')} value={failed}
+                            sub={decided > 0 ? `${100 - successRate}% ${tr('ofDecided')}` : undefined}
+                            text={failed > 0 ? 'text-n-ruby-11' : 'text-n-slate-12'} />
             <DeliveryMetric label={tr('mRead')} value={read}
                             sub={`${readOfArrived}% ${tr('ofArrived')}`} text="text-n-blue-11" />
           </div>
