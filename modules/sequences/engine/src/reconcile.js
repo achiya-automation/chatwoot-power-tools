@@ -645,7 +645,15 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         }
 
         const cState = cStates.get(e.contact_id) || {};
-        const session = compliance.inSession(cState, now);
+        // ⚠️ An open service window is worth something ONLY because it lets us send FREE-FORM:
+        // every exemption below (no consent needed, exempt from 131049, excluded from the 24h
+        // tier, ignores saturation) is Meta's rule for a free-form message — NOT for a template.
+        // So when the free-form path is off, there is no window: a template sent inside one is
+        // counted by Meta like any other, and pretending otherwise would silently overrun the
+        // tier (`sm.in_session = false` is what makes a send count).
+        // Off by default — free-form drops the template's BUTTONS and inlines media as a raw
+        // file attachment. See config.freeformInSession.
+        const session = (opts.freeformInSession === true) && compliance.inSession(cState, now);
 
         // ── THE BURN POOL — a saturated lead must never touch a clean template ────
         // A template is an ASSET, and every failed delivery devalues it — for everyone.
