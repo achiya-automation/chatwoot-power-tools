@@ -170,20 +170,30 @@
   // "Statistics" button in the page header (next to "+ New Campaign") → the campaigns overview
   // (KPIs / trend / comparison). Idempotent (guarded by id).
   function renderHeader() {
-    if (!onPage() || document.getElementById('cwpt-overview-btn')) return;
-    var headerRow = document.querySelector('.h-20.justify-between') ||
-                    document.querySelector('header .items-center.justify-between');
-    if (!headerRow) return;
-    var btnWrap = headerRow.querySelector(':scope > div:last-child'); // the "+ New Campaign" wrapper
-    if (!btnWrap || btnWrap === headerRow.firstElementChild) return;   // need the title + the button wrapper
-    var b = document.createElement('button');
-    b.id = 'cwpt-overview-btn';
-    b.type = 'button';
-    b.className = 'inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm font-medium text-n-slate-11 hover:text-n-slate-12 hover:bg-n-alpha-2';
-    b.style.cssText = 'margin-inline-end:8px;cursor:pointer;';
-    b.innerHTML = REPORT_ICON + '<span>' + t('overview') + '</span>';
-    b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); showReport(null); });
-    btnWrap.insertBefore(b, btnWrap.firstChild); // sits inline, just before "+ New Campaign"
+    if (!onPage()) return;
+    var b = document.getElementById('cwpt-overview-btn');
+    if (!b) {
+      var headerRow = document.querySelector('.h-20.justify-between') ||
+                      document.querySelector('header .items-center.justify-between');
+      if (!headerRow) return;
+      var btnWrap = headerRow.querySelector(':scope > div:last-child'); // the "+ New Campaign" wrapper
+      if (!btnWrap || btnWrap === headerRow.firstElementChild) return;  // need the title + the button wrapper
+      b = document.createElement('button');
+      b.id = 'cwpt-overview-btn';
+      b.type = 'button';
+      b.className = 'inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm font-medium text-n-slate-11 hover:text-n-slate-12 hover:bg-n-alpha-2';
+      b.style.cssText = 'margin-inline-end:8px;cursor:pointer;';
+      b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); showReport(null); });
+      btnWrap.insertBefore(b, btnWrap.firstChild); // sits inline, just before "+ New Campaign"
+    }
+    // ⚠️ התווית נכתבת מחדש כשהשפה משתנה (כמו ב-renderCards/renderKpiBar, שה-sig שלהם כולל
+    // locale()). Chatwoot קובע #app[dir]="rtl" רק אחרי טעינת החשבון — כפתור שנוצר לפני כן עם
+    // תווית קפואה יישאר "Statistics" בממשק עברי לנצח.
+    var loc = locale();
+    if (b.__cwptLocale !== loc) {
+      b.__cwptLocale = loc;
+      b.innerHTML = REPORT_ICON + '<span>' + t('overview') + '</span>';
+    }
   }
 
   // Native aggregate-KPI bar at the top of the campaigns list (totals across all campaigns), so the
@@ -343,11 +353,16 @@
       try { frame.contentWindow.postMessage({ type: 'drip-theme', theme: isDark() ? 'dark' : 'light' }, window.location.origin); } catch (e) {}
     }
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  // ⚠️ מאזינים על documentElement עם subtree, לא על #app. יש שני #app: נקודת ההרכבה של Vue
+  // (בלי dir) והשורש שהוא מרנדר בתוכה (איתו) — querySelector('#app') מחזיר את החיצוני, ובלי
+  // subtree ה-observer לא היה רואה את החלפת ה-dir לעולם. חוץ מזה גם מרנדרים מחדש: Chatwoot
+  // קובע rtl רק אחרי טעינת החשבון, אז תוויות שנוצרו לפני כן חייבות להתעדכן.
   new MutationObserver(function () {
+    tick();
     if (shown && frame && frame.contentWindow) {
       try { frame.contentWindow.postMessage({ type: 'drip-locale', locale: locale() }, window.location.origin); } catch (e) {}
     }
-  }).observe(document.querySelector('#app') || document.documentElement, { attributes: true, attributeFilter: ['dir'] });
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['dir'], subtree: true });
 
   // bootstrap: fetch on entering the page (or account change), render cards + header button as Vue
   // re-renders the list, and close the overlay when navigating away.

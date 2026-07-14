@@ -59,26 +59,30 @@ function makeDom(path) {
   return { dom, errors };
 }
 
-// Chatwoot מרנדר את העמוד *אחרי* ש-DASHBOARD_SCRIPTS כבר רץ (הוא נטען אחרון ב-<body>).
-// הסדר הזה הוא לב הבאג: ה-MutationObserver יורה על הרינדור, ורק אז inject() רץ.
+// רצף האתחול האמיתי של Chatwoot, על שלושת שלביו — כל שלב חשף באג אחר:
+//   1. DASHBOARD_SCRIPTS רץ (בתחתית <body>). ה-DOM כמעט ריק; אין עדיין #app[dir].
+//   2. Vue מרנדר את העמוד — העוגנים מופיעים. הממשק עדיין נראה LTR.
+//   3. פרטי החשבון נטענים ורק אז dir הופך ל-"rtl".
+// מי שמצלם את השפה בשלב 1 (או בשלב 2, ביצירת הכפתור) — ננעל על אנגלית לנצח.
 async function runDashboardScript(dom, renderPage) {
   const w = dom.window;
   for (const body of scriptBodies(assembleDashboardScript())) w.eval(body);
   await new Promise((r) => setTimeout(r, 50));
-  renderPage(w.document); // ← Vue מרנדר; ה-observer יורה
-  await new Promise((r) => setTimeout(r, 900)); // bootstrap: setTimeout(inject/tick) + fetch
+
+  renderPage(w.document);                       // שלב 2 — עדיין בלי dir
+  await new Promise((r) => setTimeout(r, 900)); // הכפתורים נוצרים כאן, בעוד הממשק "אנגלי"
+
+  w.document.querySelector('#app').setAttribute('dir', 'rtl'); // שלב 3 — החשבון נטען
+  await new Promise((r) => setTimeout(r, 600));
   return w;
 }
 
-// Vue מרנדר, ורק עכשיו מופיע dir="rtl" על #app — האות היחיד שממנו ה-injectors גוזרים שפה.
-// זהו לב הבאג, והוא בתזמון: כל תרגום שחושב לפני הרגע הזה ננעל על אנגלית לנצח.
+// שלב 2: Vue מרנדר את תוכן העמוד. עדיין בלי dir — הוא מגיע רק בשלב 3, אחרי טעינת החשבון.
 // (בדפדפן האמיתי Chatwoot מקנן #app פנימי עם ה-dir בתוך נקודת ההרכבה של Vue; jsdom לא מתאים
 //  סלקטור מורכב כמו '#app[dir]' כששני אלמנטים חולקים id, אז כאן מדובר ב-#app יחיד. התזמון —
 //  מה שנבדק — זהה.)
 function mountVueRoot(doc, innerHtml) {
-  const app = doc.querySelector('#app');
-  app.setAttribute('dir', 'rtl');
-  app.innerHTML = innerHtml;
+  doc.querySelector('#app').innerHTML = innerHtml;
 }
 
 test('artifact: כפתור "ייבוא חכם" נוצר בעמוד אנשי הקשר אחרי שה-DOM משתנה', async () => {
