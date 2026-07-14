@@ -52,5 +52,12 @@ export function loadConfig(env = process.env) {
     // a safe, neutral fallback (never a hardcoded private domain).
     mediaDir: env.MEDIA_DIR || '/app/media',
     publicBase: env.PUBLIC_BASE_URL || '',
+    // Shared with the Chatwoot-side jbuilder override that signs sign-in tickets into the mobile
+    // app's dashboard-app URL (see src/sso.js). It is the ONLY way the mobile WebView — which has
+    // no cookie jar and no way to prove who it is — gets in without a second login.
+    //
+    // Empty means the ticket door does not exist; everything else keeps working. NEVER give this a
+    // default: a guessable value here would let anyone mint a ticket into any account.
+    ssoSecret: String(env.DRIP_SSO_SECRET || ''),
   };
 }

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { handleAction, initStore } from './store.js';
 import { authGate } from './auth.js';
-import { query } from './db.js';
+import { query, getPool } from './db.js';
 import { validateWhatsAppMedia, extForMime } from './media.js';
 
 /**
@@ -85,7 +85,11 @@ export function createApp(config) {
   // below this line requires a valid Chatwoot session cookie (verified against
   // GET /api/v1/profile). This guards the JSON API (incl. `enrollments`, which returns real
   // customer phone numbers) and the SPA shell.
-  app.use(authGate(config));
+  //
+  // The gate also opens for a ticket signed by Chatwoot (config.ssoSecret) — that is the only way
+  // the mobile app's WebView, which has no cookie jar, can get in without a second login. It needs
+  // the pool to spend the ticket exactly once (src/sso.js). Tests pass their own pool/secret.
+  app.use(authGate({ pool: config.pool || getPool(config), ...config }));
 
   // ── media upload (AUTHED) ──────────────────────────────────────────────────
   // Drag-drop a file → validated against WhatsApp limits → stored on the volume →
