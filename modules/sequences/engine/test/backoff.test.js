@@ -78,6 +78,42 @@ test('after the 3rd failed send the enrollment is flagged failed + seq_state fai
   assert.equal(failedState, 'failed', 'panel sees the failure via seq_state');
 });
 
+// ── ⭐ the conversation was DELETED in Chatwoot → re-open, don't burn the lead ──
+// Deleting an inbox in Chatwoot cascade-deletes every conversation in it, while the
+// enrollment survives pointing at a conversation that no longer exists → every send
+// 404s. Treating that as the lead's own failure would count 3 attempts and flag the
+// whole list 'failed'. Instead the link is cleared, and the next tick opens a fresh
+// conversation and sends the SAME step. (banana-book, 2026-07-14: inbox swapped.)
+test('⭐ a 404 on a deleted conversation clears the link and does NOT count as the lead failing', async () => {
+  await seqWithStep('gone', 0, 74);
+  const client = {
+    ...throwingClient,
+    sendTemplate: async (cid) => {
+      throw new Error(`Chatwoot POST /conversations/${cid}/messages → 404`);
+    },
+  };
+  await reconcileAccount(pool, client, 1, SUNDAY);
+
+  const e = (await query(
+    `SELECT conversation_id, send_attempts, status, current_step, next_send_at
+       FROM drip.enrollments WHERE sequence_id = (SELECT id FROM drip.sequences WHERE key='gone')`
+  ))[0];
+  assert.equal(e.conversation_id, null, 'link cleared → next tick opens a fresh conversation');
+  assert.equal(e.send_attempts, 0, 'NOT the lead\'s failure — no attempt counted');
+  assert.equal(e.status, 'active', 'stays active; a deleted inbox must not fail the list');
+  assert.equal(e.current_step, 1, 'step unchanged — the same message still owes the lead');
+  assert.ok(new Date(e.next_send_at) <= SUNDAY, 'not backed off — retries on the very next tick');
+});
+
+// ── a real send failure is still counted (the 404 path must not swallow everything) ──
+test('a non-404 send failure still counts an attempt (404 handling is narrow)', async () => {
+  await seqWithStep('real', 0, 75);
+  await reconcileAccount(pool, { ...throwingClient }, 1, SUNDAY);
+  const e = (await query('SELECT send_attempts, conversation_id FROM drip.enrollments WHERE conversation_id=75'))[0];
+  assert.equal(e.send_attempts, 1, 'ordinary failures still back off');
+  assert.equal(e.conversation_id, 75, 'and do NOT clear the conversation link');
+});
+
 // ── a successful send clears any prior backoff counter ──
 test('a successful send resets send_attempts to 0', async () => {
   await seqWithStep('rst', 2, 73);

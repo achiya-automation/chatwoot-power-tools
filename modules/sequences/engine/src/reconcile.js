@@ -934,6 +934,19 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
     } catch (err) {
       // One enrollment's failure must never abort the others
       console.error(`[drip] send error for enrollment ${enrollmentId}:`, err);
+
+      // ⚠️ השיחה נמחקה מתחת לרגליים. מחיקת תיבה ב-Chatwoot גוררת מחיקת קסקייד של כל
+      // השיחות שבה, וה-enrollment שורד עם conversation_id שמצביע לכלום ⇒ POST מחזיר 404.
+      // (בננה בוק, 14/07/2026: הוחלפה תיבת הוואטסאפ, ו-872 לידים נשארו מצביעים לשיחות מחוקות.)
+      // איפוס הקישור מחזיר את הליד לאותו נתיב שבו נפתחת שיחה לליד חדש: בטיק הבא תיפתח לו
+      // שיחה, והוא יישלח מאותו שלב בדיוק. זו לא תקלה שלו — ולכן לא נספר לו ניסיון כושל
+      // ולא נדחה אותו ב-backoff, אחרת מחיקת תיבה הייתה מסמנת 'failed' את כל הרשימה.
+      if (/\/conversations\/\d+\/messages → 404/.test(String(err?.message))) {
+        await pool.query('UPDATE drip.enrollments SET conversation_id = NULL WHERE id = $1', [enrollmentId]);
+        console.warn(`[drip] enrollment ${enrollmentId}: conversation gone → re-opening next tick`);
+        continue;
+      }
+
       // Back off (and eventually give up) so a permanently-failing step doesn't
       // retry every tick forever. Runs on the pool — the send tx already rolled back.
       await recordSendFailure(pool, client, enrollmentId, now);
