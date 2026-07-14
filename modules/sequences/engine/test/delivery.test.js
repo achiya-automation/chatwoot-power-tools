@@ -174,6 +174,49 @@ test('transient cap (131049) reschedules a retry instead of failing the enrollme
   assert.equal(client.patches.length, 0, 'no "stuck" patch — it is retrying');
 });
 
+// ── ⭐ the LAST cap failure must ALSO rewind the pointer, not just suppress ──────
+// When cap_failures hits max_cap_failures the contact is suppressed — but the enrollment
+// deliberately stays active, because a reply opens a service window where Meta's cap does
+// not apply, and then "she gets everything she missed". That promise was broken: this branch
+// returned WITHOUT re-arming, so current_step stayed on the step AFTER the one that never
+// arrived. The lead was left standing past a message she never saw, and the moment she
+// replied she'd be served the continuation of a story she never heard the start of.
+// (banana-book, 2026-07-14: 293 leads past an undelivered step, 197 of them 3 steps ahead.)
+test('⭐ the cap failure that SUPPRESSES her still rewinds current_step to the failed step', async () => {
+  const seq = (await query(
+    `INSERT INTO drip.sequences(account_id,key,display_name) VALUES (1,'cap','רצף') RETURNING id`
+  ))[0].id;
+  await query(`INSERT INTO drip.sequence_steps(sequence_id,step_order,template_name) VALUES ($1,1,'t1'),($1,2,'t2')`, [seq]);
+  await pool.query(`INSERT INTO public.contacts(id,account_id,name) VALUES (555,1,'דנה')`);
+  const enr = (await query(
+    `INSERT INTO drip.enrollments(account_id,conversation_id,contact_id,sequence_id,current_step,status)
+     VALUES (1,7001,555,$1,2,'active') RETURNING id`, [seq]
+  ))[0].id;
+
+  // she is one failure away from the cap (default max_cap_failures = 2).
+  // contact_state is not truncated by beforeEach, so upsert rather than insert.
+  await query(
+    `INSERT INTO drip.contact_state(account_id,contact_id,cap_failures) VALUES (1,555,1)
+     ON CONFLICT (account_id,contact_id) DO UPDATE SET cap_failures = 1, suppressed_at = NULL`
+  );
+
+  // step 1 was the send that Meta blocked — she never saw it
+  await seedMessage(930, 3, '131049: This message was not delivered to maintain healthy ecosystem engagement');
+  await seedSent(enr, seq, 930, 1);
+
+  await reconcileDeliveries(pool, fakeClient(), 1, new Date('2026-06-23T12:00:00Z'),
+    { maxDeliveryRetries: 3, deliveryRetryHours: 24 });
+
+  const cs = (await query('SELECT cap_failures, suppressed_at, suppressed_reason FROM drip.contact_state WHERE contact_id=555'))[0];
+  assert.equal(Number(cs.cap_failures), 2, 'the failure was counted');
+  assert.ok(cs.suppressed_at, 'and she is suppressed — we stop initiating marketing');
+
+  const e = (await query('SELECT status, current_step FROM drip.enrollments WHERE id=$1', [enr]))[0];
+  assert.equal(e.status, 'active', 'enrollment stays active — a reply can still revive her');
+  assert.equal(e.current_step, 1,
+    'pointer rewound to the step she never received — otherwise a reply serves her step 2 first');
+});
+
 test('130472 (frequency-cap experiment) also retries', async () => {
   const { seq, enr } = await seed({ status: 'active', step: 2 });
   await seedMessage(912, 3, '130472: User is part of an experiment');

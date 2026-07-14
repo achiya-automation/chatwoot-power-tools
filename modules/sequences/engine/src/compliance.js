@@ -443,16 +443,29 @@ export async function suppressContact(pool, accountId, contactId, reason, detail
            suppressed_scope = $5, updated_at = now()`,
     [accountId, contactId, reason, String(detail).slice(0, 500), scope]
   );
-  await pool.query(
-    `UPDATE drip.enrollments SET status = 'stopped'
-      WHERE account_id = $1 AND contact_id = $2 AND status = 'active'`,
-    [accountId, contactId]
-  );
-  await pool.query(
-    `UPDATE public.contacts SET custom_attributes = custom_attributes - 'sequence'
-      WHERE account_id = $1 AND id = $2`,
-    [accountId, contactId]
-  );
+  // ⚠️ Stopping the sequence belongs to a real opt-out (keyword / 131050) or an unreachable
+  // number — NOT to `saturated`. Saturation is Meta's per-user cap: temporary, self-adapting,
+  // and lifted entirely inside an open service window. canSend already encodes exactly that —
+  // it DEFERS a saturated contact instead of dropping her, so that "she stays in the sequence
+  // and gets everything she missed if she ever replies". Stopping the enrollment here would
+  // silently break that promise: the send query only ever looks at status='active', so a
+  // stopped lead never reaches canSend at all, and the open door it holds for her is one she
+  // can never walk through. Deleting her `sequence` tag compounds it — the reconciler reads an
+  // empty tag as an opt-out and would refuse to re-enroll her.
+  // Measured (banana-book, 2026-07-14): a lead with 4 cap failures — suppressed, written off
+  // as burned — was delivered AND read the moment she was sent from a clean number.
+  if (reason !== 'saturated') {
+    await pool.query(
+      `UPDATE drip.enrollments SET status = 'stopped'
+        WHERE account_id = $1 AND contact_id = $2 AND status = 'active'`,
+      [accountId, contactId]
+    );
+    await pool.query(
+      `UPDATE public.contacts SET custom_attributes = custom_attributes - 'sequence'
+        WHERE account_id = $1 AND id = $2`,
+      [accountId, contactId]
+    );
+  }
 }
 
 /**
