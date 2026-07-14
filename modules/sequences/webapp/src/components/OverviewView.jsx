@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, AlertCircle, Layers, BarChart3, HardDrive, Send, Ban, Clock, TrendingUp } from 'lucide-react';
+import { RefreshCw, AlertCircle, Layers, BarChart3, HardDrive, Send, Ban, Clock, TrendingUp, Target } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
 import Skeleton, { SkeletonCard, SkeletonText } from './ui/Skeleton.jsx';
@@ -41,6 +41,29 @@ const M = {
     steps: 'שלבים',
     active: 'פעיל',
     off: 'כבוי',
+    // משפך המסירה — "נקראו" הוא תת-קבוצה של "הגיעו", לא קטגוריה לצידו
+    arrived: 'הגיעו',
+    ofSent: 'מהנשלחות',
+    ofArrived: 'מאלה שהגיעו',
+    waiting: 'ממתינות',
+    waitingHint: 'מטא עוד לא אישרה',
+    arrivalRate: 'שיעור הגעה',
+    todayOutcome: 'תוצאות היום',
+    nothingToday: 'עוד לא נשלחו הודעות היום',
+    // מי מהרשימה עוד ניתן להשגה
+    reachTitle: 'למי עוד אפשר להגיע',
+    reachClean: 'מטא מעולם לא חסמה',
+    reachCapped: 'נחסמו {n} פעמים או פחות',
+    reachRefused: 'המנוע מפסיק לפנות',
+    reachCleanHint: 'סיכוי מסירה גבוה',
+    reachCappedHint: 'עדיין נשלחות, סיכוי נמוך',
+    reachRefusedHint: 'מעל {n} חסימות — לא נשלחות',
+    leads: 'לידים',
+    // מתגי הרצף — שניים נפרדים, לא "כבוי" אחד
+    sending: 'שולח',
+    notSending: 'לא שולח',
+    enrolling: 'קולט לידים',
+    notEnrolling: 'לא קולט',
     enrolled: 'משויכים',
     activeCount: 'פעילים',
     stuckCount: 'נתקעו',
@@ -78,6 +101,26 @@ const M = {
     steps: 'steps',
     active: 'Active',
     off: 'Off',
+    arrived: 'Arrived',
+    ofSent: 'of sent',
+    ofArrived: 'of arrived',
+    waiting: 'Awaiting',
+    waitingHint: 'Meta has not confirmed yet',
+    arrivalRate: 'Arrival rate',
+    todayOutcome: "Today's outcome",
+    nothingToday: 'No messages sent today yet',
+    reachTitle: 'Who is still reachable',
+    reachClean: 'Never capped by Meta',
+    reachCapped: 'Capped {n} times or fewer',
+    reachRefused: 'Engine stops contacting',
+    reachCleanHint: 'High delivery odds',
+    reachCappedHint: 'Still sent, low odds',
+    reachRefusedHint: 'Over {n} caps — not sent',
+    leads: 'leads',
+    sending: 'Sending',
+    notSending: 'Not sending',
+    enrolling: 'Enrolling',
+    notEnrolling: 'Not enrolling',
     enrolled: 'enrolled',
     activeCount: 'active',
     stuckCount: 'stuck',
@@ -180,6 +223,9 @@ export default function OverviewView({ accountId }) {
       {/* פעילות שליחה — מה יצא היום, כמה הגיע ללקוחות וכמה נחסם */}
       {stats ? <DeliveryCard stats={stats} /> : null}
 
+      {/* למי עוד אפשר להגיע — "פעילים" לבדו מסתיר את זה שרוב הרשימה חסומה אצל מטא */}
+      {stats?.burn ? <ReachCard burn={stats.burn} /> : null}
+
       {/* אחסון החשבון — Chatwoot + מדיה שהועלתה, יחד */}
       {storage ? <StorageCard storage={storage} /> : null}
 
@@ -242,8 +288,27 @@ function StorageCard({ storage }) {
 function DeliveryCard({ stats }) {
   const tr = useT(M);
   const t = stats.today || {};
-  const sent = t.sent || 0;
-  const pct = (n) => (sent > 0 ? Math.round((n / sent) * 100) : 0);
+  const sent = Number(t.sent) || 0;
+
+  // ⚠️ `delivered` שמגיע מהשרת כבר כולל את `read` (m.status IN (1,2)) — `read` הוא
+  // תת-קבוצה שלו. הצגתם זה לצד זה כשתי קטגוריות שוות ייצרה שני שקרים על אותו מסך:
+  //   • הסכום לא הסתדר — 49 נשלחו, אבל 31+14+1 הוצגו, ו-17 ה"ממתינות" נעלמו לגמרי;
+  //   • שיעור הקריאה נראה כמו 29% מהנשלחות, בזמן שהוא 45% ממי שההודעה בכלל הגיעה אליה.
+  // הפירוק כאן הוא היחיד שמסתכם: הגיעו + ממתינות + נחסמו = נשלחו.
+  const arrived = Number(t.delivered) || 0;      // נמסרו + נקראו
+  const read = Number(t.read) || 0;              // תת-קבוצה של arrived
+  const failed = Number(t.failed) || 0;
+  const waiting = Number(t.pending) || 0;
+
+  const pctOfSent = (n) => (sent > 0 ? Math.round((n / sent) * 100) : 0);
+  const readOfArrived = arrived > 0 ? Math.round((read / arrived) * 100) : 0;
+
+  const slices = [
+    { key: 'arrived', label: tr('arrived'), value: arrived, cls: 'text-n-teal-9' },
+    { key: 'waiting', label: tr('waiting'), value: waiting, cls: 'text-n-slate-9' },
+    { key: 'failed', label: tr('mBlocked'), value: failed, cls: 'text-n-ruby-9' },
+  ];
+
   const reasons = [
     { label: tr('reasonCap'), n: t.block_cap || 0 },
     { label: tr('reasonInvalid'), n: t.block_invalid || 0 },
@@ -268,12 +333,38 @@ function DeliveryCard({ stats }) {
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <DeliveryMetric label={tr('mSent')} value={sent} text="text-n-slate-12" />
-        <DeliveryMetric label={tr('mDelivered')} value={t.delivered || 0} sub={`${pct(t.delivered || 0)}%`} text="text-n-teal-11" />
-        <DeliveryMetric label={tr('mRead')} value={t.read || 0} sub={`${pct(t.read || 0)}%`} text="text-n-blue-11" />
-        <DeliveryMetric label={tr('mBlocked')} value={t.failed || 0} sub={`${pct(t.failed || 0)}%`} text="text-n-ruby-11" />
-      </div>
+      {sent === 0 ? (
+        <p className="py-6 text-center text-sm text-n-slate-10">{tr('nothingToday')}</p>
+      ) : (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          {/* עוגה: הגיעו + ממתינות + נחסמו = כל מה שנשלח. מסתכם ל-100%, תמיד. */}
+          <div className="flex items-center gap-4">
+            <Donut
+              slices={slices}
+              centerValue={`${pctOfSent(arrived)}%`}
+              centerLabel={tr('arrivalRate')}
+            />
+            <div className="min-w-0 flex-1 space-y-1.5 sm:w-40">
+              <LegendRow cls="text-n-teal-9" label={tr('arrived')}
+                         value={`${arrived} · ${pctOfSent(arrived)}%`} />
+              <LegendRow cls="text-n-slate-9" label={tr('waiting')} hint={tr('waitingHint')}
+                         value={`${waiting} · ${pctOfSent(waiting)}%`} />
+              <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')}
+                         value={`${failed} · ${pctOfSent(failed)}%`} />
+            </div>
+          </div>
+
+          {/* המשפך: נשלחו → הגיעו → נקראו. הקריאה נמדדת מתוך מי שההודעה הגיעה
+              אליה בכלל — אחוז קריאה מתוך "נשלחו" מעניש אותנו על חסימות של מטא. */}
+          <div className="grid flex-1 grid-cols-3 gap-3">
+            <DeliveryMetric label={tr('mSent')} value={sent} text="text-n-slate-12" />
+            <DeliveryMetric label={tr('arrived')} value={arrived}
+                            sub={`${pctOfSent(arrived)}% ${tr('ofSent')}`} text="text-n-teal-11" />
+            <DeliveryMetric label={tr('mRead')} value={read}
+                            sub={`${readOfArrived}% ${tr('ofArrived')}`} text="text-n-blue-11" />
+          </div>
+        </div>
+      )}
 
       {reasons.length > 0 ? (
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -336,6 +427,124 @@ function DeliveryMetric({ label, value, sub, text }) {
   );
 }
 
+/**
+ * Donut — חלק-מתוך-שלם. הפרוסות חייבות להסתכם ב-100% של אותו שלם, אחרת הצורה משקרת.
+ *
+ * הצבע נטען דרך `stroke-current` על טוקן טקסט של Chatwoot, כך שמצב כהה מגיע חינם
+ * מ-design system במקום שני סטים של hex מקודדים ביד. בין פרוסות יש מרווח של 2px
+ * בצבע המשטח — בלעדיו שתי פרוסות סמוכות נקראות כפרוסה אחת.
+ *
+ * ⚠️ ה-ΔE של כתום↔אדום תחת טריטנופיה הוא 7.8 (בתוך רצפת 8-12), ולכן הצבע לבדו
+ * אינו קביל: לכל פרוסה יש תווית ישירה במקרא. אל תסיר אותן.
+ */
+function Donut({ slices, size = 132, thickness = 17, centerValue, centerLabel }) {
+  const total = slices.reduce((sum, s) => sum + s.value, 0);
+  const r = (size - thickness) / 2;
+  const circ = 2 * Math.PI * r;
+  const GAP = 2;
+  let offset = 0;
+
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        <circle
+          cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={thickness}
+          className="stroke-current text-n-alpha-2"
+        />
+        <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+          {total > 0 && slices.filter((s) => s.value > 0).map((s) => {
+            const len = (s.value / total) * circ;
+            const dash = Math.max(1, len - GAP);
+            const node = (
+              <circle
+                key={s.key} cx={size / 2} cy={size / 2} r={r}
+                fill="none" strokeWidth={thickness} strokeLinecap="butt"
+                className={`stroke-current ${s.cls}`}
+                strokeDasharray={`${dash} ${circ - dash}`}
+                strokeDashoffset={-offset}
+              >
+                <title>{`${s.label}: ${s.value}`}</title>
+              </circle>
+            );
+            offset += len;
+            return node;
+          })}
+        </g>
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-2xl font-semibold leading-none text-n-slate-12">{centerValue}</span>
+        <span className="mt-1 text-[10px] text-n-slate-10">{centerLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+/** מקרא — הצבע לעולם לא לבד: נקודה + שם + ערך, בטקסט רגיל (לא בצבע הסדרה). */
+function LegendRow({ cls, label, value, hint }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className={`mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full bg-current ${cls}`} aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate text-xs text-n-slate-11">
+        {label}
+        {hint ? <span className="text-n-slate-10"> · {hint}</span> : null}
+      </span>
+      <span className="shrink-0 text-xs font-medium tabular-nums text-n-slate-12">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * ReachCard — כמה מהרשימה עוד ניתנת להשגה.
+ *
+ * "856 פעילים" הוא מספר מנחם וחסר-משמעות: התקרה האישית של מטא (131049) היא המשתנה
+ * היחיד שמנבא מסירה — נמענת שמעולם לא נחסמה נמסרת ב-60-84%, ואחרי שנחסמה ב-7.9%.
+ * שלוש הקבוצות כאן הן מצבים (טוב / אזהרה / קריטי), ולכן צבעי סטטוס ולא רמפה סדורה:
+ * רמפת אדום הייתה צובעת גם את הנקיים באדום בהיר, ומשקרת עליהם.
+ */
+function ReachCard({ burn }) {
+  const t = useT(M);
+  const clean = Number(burn?.clean) || 0;
+  const capped = Number(burn?.capped) || 0;
+  const refused = Number(burn?.refused) || 0;
+  const maxCap = Number(burn?.maxCap) || 4;
+  const total = clean + capped + refused;
+  if (total === 0) return null;
+
+  const rows = [
+    { key: 'clean', cls: 'text-n-teal-9', n: clean,
+      label: t('reachClean'), hint: t('reachCleanHint') },
+    { key: 'capped', cls: 'text-n-amber-9', n: capped,
+      label: t('reachCapped').replace('{n}', String(maxCap - 1)), hint: t('reachCappedHint') },
+    { key: 'refused', cls: 'text-n-ruby-9', n: refused,
+      label: t('reachRefused'), hint: t('reachRefusedHint').replace('{n}', String(maxCap - 1)) },
+  ];
+
+  return (
+    <div className="mb-5 rounded-xl border border-n-weak bg-n-surface-1 p-4">
+      <h2 className="mb-3 flex items-center gap-1.5 text-sm font-medium text-n-slate-12">
+        <Target size={15} className="text-n-blue-11" aria-hidden="true" />
+        {t('reachTitle')}
+      </h2>
+
+      {/* עמודה מוערמת — part-to-whole על ציר אחד. 2px משטח בין מקטעים. */}
+      <div className="flex h-3 w-full gap-0.5 overflow-hidden rounded-full" role="img"
+           aria-label={rows.map((r) => `${r.label}: ${r.n}`).join(', ')}>
+        {rows.filter((r) => r.n > 0).map((r) => (
+          <div key={r.key} className={`h-full bg-current ${r.cls}`}
+               style={{ width: `${(r.n / total) * 100}%` }} title={`${r.label}: ${r.n}`} />
+        ))}
+      </div>
+
+      <div className="mt-3 space-y-1.5">
+        {rows.map((r) => (
+          <LegendRow key={r.key} cls={r.cls} label={r.label} hint={r.hint}
+                     value={`${r.n} · ${Math.round((r.n / total) * 100)}%`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SequenceCard({ s }) {
   const t = useT(M);
   return (
@@ -345,9 +554,17 @@ function SequenceCard({ s }) {
           <p className="truncate text-sm font-medium text-n-slate-12">{s.name}</p>
           <p className="mt-0.5 truncate font-mono text-xs text-n-slate-10">{s.key}</p>
         </div>
+        {/* ⚠️ שני מתגים נפרדים, ולא תג "פעיל/כבוי" אחד. `enabled` הוא שדה נגזר
+            ("פעיל במשהו") שאף אחד לא מתחזק — המנוע אוכף אך ורק לפי send_enabled
+            ו-enroll_enabled. הצגה לפי הנגזרת הראתה "כבוי" בזמן שהרצף שלח בפועל. */}
         <div className="flex shrink-0 items-center gap-1.5">
           <Badge color="slate">{s.steps} {t('steps')}</Badge>
-          <Badge color={s.enabled ? 'teal' : 'slate'}>{s.enabled ? t('active') : t('off')}</Badge>
+          <Badge color={s.sendEnabled ? 'teal' : 'slate'}>
+            {s.sendEnabled ? t('sending') : t('notSending')}
+          </Badge>
+          <Badge color={s.enrollEnabled ? 'blue' : 'slate'}>
+            {s.enrollEnabled ? t('enrolling') : t('notEnrolling')}
+          </Badge>
         </div>
       </div>
 

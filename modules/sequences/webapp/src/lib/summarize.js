@@ -18,6 +18,10 @@ export function summarizeEnrollments(enrollments = [], sequences = []) {
       key: s.key,
       name: s.name || s.key,
       enabled: !!s.enabled,
+      // המנוע אוכף לפי שני המתגים האלה בלבד; `enabled` הוא נגזרת שאיש לא מתחזק,
+      // ורצף ששולח בפועל יכול לשבת עליה כ-false. הכרטיס מציג את מה שקובע.
+      sendEnabled: s.sendEnabled !== false,
+      enrollEnabled: s.enrollEnabled !== false,
       steps: Array.isArray(s.steps) ? s.steps.length : 0,
       total: 0, active: 0, completed: 0, stopped: 0, failed: 0,
     });
@@ -30,6 +34,8 @@ export function summarizeEnrollments(enrollments = [], sequences = []) {
         key,
         name: e.sequence_name || key,
         enabled: false,
+        sendEnabled: false,
+        enrollEnabled: false,
         steps: Number(e.total_steps) || 0,
         total: 0, active: 0, completed: 0, stopped: 0, failed: 0,
       });
