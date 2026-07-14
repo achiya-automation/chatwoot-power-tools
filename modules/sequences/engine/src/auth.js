@@ -17,6 +17,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { sign, verify, burn, TICKET, SESSION } from './sso.js';
 
 /**
  * Pull the devise-token-auth credentials out of a forwarded Cookie header.
@@ -212,6 +213,28 @@ export function authGate(config) {
   const fetchImpl = config.fetchImpl || globalThis.fetch;
   const master = config.masterAccountId || MASTER_DEFAULT;
   const TTL_MS = 30_000;
+
+  // ── the mobile door (see src/sso.js) ───────────────────────────────────────
+  // Empty secret = this door does not exist. Never default it: a guessable secret here would let
+  // anyone mint themselves a ticket into any account.
+  const ssoSecret = config.ssoSecret || '';
+  // The session cookie is scoped to the panel's own path, so it is never sent to Chatwoot itself.
+  // Derived from PUBLIC_BASE_URL (…/drip) — in dev, where the panel is served at the root, '/'.
+  const cookiePath = (() => {
+    try { return new URL(config.publicBase).pathname.replace(/\/+$/, '') || '/'; } catch { return '/'; }
+  })();
+  const SESSION_MS = 60 * 24 * 60 * 60 * 1000;   // 60d — matches Chatwoot's own token_lifespan
+
+  // Turn ticket/session claims into the same shape resolveUserAccess() returns, so everything
+  // downstream (tenant isolation, the accounts picker) is identical whichever door was used.
+  // Chatwoot signed these claims, so they are as trustworthy as its /profile answer — but they
+  // name exactly ONE account: the tab the ticket was minted for. Never a super-admin.
+  const accessFromClaims = (c) => ({
+    ok: true,
+    userId: c.u ?? null,
+    accounts: [{ id: Number(c.a), role: '' }],
+    isSuperAdmin: false,
+  });
   // Positive-only cache: sha256(cookie) → { access, expiry }. We never store the raw cookie,
   // and failures are never cached, so a logged-out/expired session is re-checked at once.
   const cache = new Map();
@@ -245,8 +268,49 @@ export function authGate(config) {
     return res.status(status).json({ ok: false, error });
   };
 
+  // Our own session cookie — minted after a ticket was accepted, then presented on every later
+  // request. We signed it, so it needs no Chatwoot round-trip.
+  const sessionFromCookie = (cookie) => {
+    if (!ssoSecret || !cookie) return null;
+    const part = cookie.split(';').map((s) => s.trim()).find((s) => s.startsWith('drip_session='));
+    if (!part) return null;
+    const claims = verify(SESSION, part.slice('drip_session='.length), ssoSecret);
+    return claims ? accessFromClaims(claims) : null;
+  };
+
+  // A ticket in the URL — the phone's FIRST request, carrying no cookie at all. Verify it was
+  // signed by Chatwoot, spend it (single use), and hand back a session cookie so the SPA's
+  // subsequent fetch() calls authenticate normally.
+  const sessionFromTicket = async (req, res) => {
+    const k = req.query?.k;
+    if (!ssoSecret || !k || !config.pool) return null;
+    const claims = verify(TICKET, k, ssoSecret);
+    if (!claims) return null;
+    if (!(await burn(config.pool, claims.jti, claims.exp))) return null;   // already spent → refuse
+
+    const exp = Date.now() + SESSION_MS;
+    res.cookie('drip_session', sign(SESSION, { u: claims.u, a: claims.a, exp }, ssoSecret), {
+      httpOnly: true,          // a dashboard-app script must never be able to read the session
+      secure: true,
+      sameSite: 'lax',
+      path: cookiePath,        // scoped to the panel — not sent to Chatwoot
+      maxAge: SESSION_MS,
+    });
+    return accessFromClaims(claims);
+  };
+
   return async function gate(req, res, next) {
     const cookie = req.headers.cookie || '';
+
+    // The mobile doors, cheapest first. Both are self-signed, so neither costs a Chatwoot call.
+    const mobile = sessionFromCookie(cookie) || (await sessionFromTicket(req, res));
+    if (mobile) {
+      req.dripAccess = mobile;
+      const acc0 = parseInt(req.query?.account_id || '0', 10);
+      if (acc0 && !canAccessAccount(mobile, acc0)) return deny(req, res, 403, 'forbidden');
+      return next();
+    }
+
     if (!cookie) return deny(req, res, 401, 'unauthorized');
 
     const key = createHash('sha256').update(cookie).digest('hex');

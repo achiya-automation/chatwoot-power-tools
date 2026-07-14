@@ -20,9 +20,11 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { isAuthenticated, authGate, resolveUserAccess, canAccessAccount } from '../src/auth.js';
+import { sign, newJti, TICKET, SESSION } from '../src/sso.js';
 import { createApp } from '../src/api.js';
 
 const BASE = 'http://chatwoot.test';
+const SSO_SECRET = 'secret-shared-with-chatwoot';
 
 // Build a realistic cw_d_session_info cookie (URL-encoded JSON, exactly as the
 // browser sends it), wrapped with another cookie so parsing must pick it out.
@@ -43,11 +45,13 @@ function runGate(gate, headers, query = {}, { method = 'GET', path = '/drip-api'
     statusCode: 200,
     body: undefined,
     headers: {},
+    cookies: [],                                            // [name, value, opts] per res.cookie()
     status(c) { this.statusCode = c; return this; },
     json(b) { this.body = b; return this; },
     send(b) { this.body = b; return this; },
     type(t) { this.headers['Content-Type'] = t; return this; },
     set(k, v) { this.headers[k] = v; return this; },
+    cookie(n, v, o) { this.cookies.push([n, v, o]); return this; },
   };
   let nexted = false;
   return gate(req, res, () => { nexted = true; }).then(() => ({
@@ -55,6 +59,8 @@ function runGate(gate, headers, query = {}, { method = 'GET', path = '/drip-api'
     status: res.statusCode,
     body: res.body,
     headers: res.headers,
+    cookies: res.cookies,
+    access: req.dripAccess,                                 // what the gate resolved the caller to
   }));
 }
 
@@ -227,6 +233,99 @@ test('authGate answers a forbidden tenant with JSON even on a navigation', async
   const r = await runGate(gate, { ...NAV_ACCEPT, cookie: sessionCookie() }, { account_id: '99' }, NAV);
   assert.equal(r.status, 403);
   assert.deepEqual(r.body, { ok: false, error: 'forbidden' }, 'signing in again would not help');
+});
+
+// ───────────── mobile sign-in tickets: the phone gets in with no login at all ─────────────
+//
+// Chatwoot's mobile WebView has an empty cookie jar, so it can never present a session. But the
+// app FETCHES the tab's URL from `GET /api/v1/accounts/:id/dashboard_apps` **with its devise
+// headers** — Rails knows who is asking. A jbuilder override there signs a ticket into that URL.
+// The gate below verifies it (Chatwoot is the signer, so Chatwoot is still the authority on
+// identity), burns it so it can never be replayed, and mints a real session cookie.
+
+const ssoGate = (over = {}) => {
+  const burned = new Set();
+  const pool = {
+    query: async (sql, params) => {
+      if (sql.startsWith('INSERT')) {
+        if (burned.has(params[0])) return { rowCount: 0 };
+        burned.add(params[0]);
+        return { rowCount: 1 };
+      }
+      return { rowCount: 0 };
+    },
+  };
+  return authGate({
+    chatwootBaseUrl: BASE,
+    fetchImpl: async () => ({ status: 401 }),   // Chatwoot would REJECT — the ticket must stand alone
+    ssoSecret: SSO_SECRET,
+    pool,
+    publicBase: 'https://cw.example.com/drip',
+    ...over,
+  });
+};
+const ticketFor = (claims = {}) =>
+  sign(TICKET, { u: 42, a: 7, exp: Date.now() + 60_000, jti: newJti(), ...claims }, SSO_SECRET);
+
+test('a signed ticket in the URL lets the phone in — and mints a session cookie', async () => {
+  const gate = ssoGate();
+  const r = await runGate(gate, NAV_ACCEPT, { account_id: '7', k: ticketFor() }, NAV);
+  assert.equal(r.passed, true, 'the phone is in, with no login and no Chatwoot cookie');
+  assert.equal(r.access.userId, 42, 'identity comes from the ticket Chatwoot signed');
+
+  const setCookie = String(r.cookies[0]?.[0] || '');
+  assert.equal(setCookie, 'drip_session', 'a real session cookie is issued for the next request');
+  const opts = r.cookies[0]?.[2] || {};
+  assert.equal(opts.httpOnly, true, 'script must not be able to read the session');
+  assert.equal(opts.secure, true);
+  assert.equal(opts.path, '/drip', 'scoped to the panel — never sent to Chatwoot itself');
+});
+
+test('the session cookie it minted is then accepted on its own (no ticket, no Chatwoot call)', async () => {
+  let chatwootCalls = 0;
+  const gate = ssoGate({ fetchImpl: async () => { chatwootCalls++; return { status: 401 }; } });
+  const session = sign(SESSION, { u: 42, a: 7, exp: Date.now() + 60_000 }, SSO_SECRET);
+  const r = await runGate(gate, { cookie: `drip_session=${session}` }, { account_id: '7' });
+  assert.equal(r.passed, true);
+  assert.equal(r.access.userId, 42);
+  assert.equal(chatwootCalls, 0, 'we signed it ourselves — no need to ask Rails');
+});
+
+// A URL leaks: into the proxy's access log, the app's store, a crash report. Single use is the
+// whole defence — by the time anyone could replay a scraped ticket, the agent's phone spent it.
+test('a ticket is SINGLE USE — the replay is refused', async () => {
+  const gate = ssoGate();
+  const k = ticketFor();
+  const first = await runGate(gate, NAV_ACCEPT, { account_id: '7', k }, NAV);
+  assert.equal(first.passed, true);
+
+  const replay = await runGate(gate, NAV_ACCEPT, { account_id: '7', k }, NAV);
+  assert.equal(replay.passed, false, 'a stolen ticket is worthless once the phone has used it');
+  assert.equal(replay.status, 401);
+});
+
+test('a forged / expired ticket is refused', async () => {
+  const gate = ssoGate();
+  const forged = sign(TICKET, { u: 1, a: 7, exp: Date.now() + 60_000, jti: 'x' }, 'attacker-guess');
+  assert.equal((await runGate(gate, {}, { account_id: '7', k: forged })).passed, false);
+
+  const expired = ticketFor({ exp: Date.now() - 1 });
+  assert.equal((await runGate(gate, {}, { account_id: '7', k: expired })).passed, false);
+});
+
+// Tenant isolation must survive the new door: a ticket for account 7 is not a ticket for 99.
+test('a ticket does not open an account it was not signed for', async () => {
+  const gate = ssoGate();
+  const r = await runGate(gate, {}, { account_id: '99', k: ticketFor({ a: 7 }) });
+  assert.equal(r.passed, false);
+  assert.equal(r.status, 403);
+});
+
+// If the operator never set a secret, this door must be WELDED SHUT — not open with a default.
+test('with no shared secret configured, tickets are refused outright', async () => {
+  const gate = ssoGate({ ssoSecret: '' });
+  const r = await runGate(gate, {}, { account_id: '7', k: ticketFor() });
+  assert.equal(r.passed, false, 'no secret → the ticket path does not exist');
 });
 
 // ── valid cookie passes, and a repeat is served from cache (one Chatwoot call) ──
