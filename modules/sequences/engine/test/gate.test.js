@@ -23,7 +23,11 @@ function spyClient() {
   const sent = [];
   return {
     sent,
-    sendTemplate: async (cid, t) => { sent.push({ cid, ...t }); return { id: 900 + sent.length, content: 'x' }; },
+    sendTemplate: async (cid, t) => { sent.push({ cid, via: 'template', ...t }); return { id: 900 + sent.length, content: 'x' }; },
+    // The free-form path exists only when config.freeformInSession is on. It was missing
+    // here, so any test that opened a service window died on "sendFreeform is not a function"
+    // instead of asserting anything.
+    sendFreeform: async (cid, t) => { sent.push({ cid, via: 'freeform', ...t }); return { id: 950 + sent.length, content: 'x' }; },
     createConversation: async () => ({ id: 700 }),
     getContact: async () => ({ name: 'דנה', phone: '+972541234567' }),
     patchAttrs: async () => {},
@@ -239,8 +243,9 @@ test('SCAN: an ordinary reply is NOT an opt-out, but it DOES open the 24h window
 });
 
 test('SCAN: an in-session send bypasses consent AND is excluded from the 24h tier budget', async () => {
-  // Meta: a message delivered inside an open customer-service window counts against
-  // neither the per-user marketing limit nor the portfolio messaging limit.
+  // Meta: a FREE-FORM message delivered inside an open customer-service window counts against
+  // neither the per-user marketing limit nor the portfolio messaging limit. That exemption is
+  // the whole point of the window — hence freeformInSession must be on for it to apply.
   await seed({ consent: false });          // deliberately NO consent
   await pool.query(
     `INSERT INTO public.messages(id, conversation_id, account_id, message_type, content, created_at)
@@ -249,11 +254,36 @@ test('SCAN: an in-session send bypasses consent AND is excluded from the 24h tie
   await scanInbound(pool, ACCT, new Date());
 
   const c = spyClient();
-  await run(c);
+  await run(c, { freeformInSession: true });
   assert.equal(c.sent.length, 1, 'a reply opens the window — the send is allowed');
+  assert.equal(c.sent[0].via, 'freeform', 'the exemption only exists for a free-form message');
 
   const sm = (await query('SELECT in_session FROM drip.sent_messages WHERE account_id=$1', [ACCT]))[0];
   assert.equal(sm.in_session, true, 'and must be flagged so it does not consume the tier');
+});
+
+// ── ⭐ default: NO free-form. A window must not cost the message its buttons ──
+// Free-form carries only BODY text: no template BUTTONS, and media degrades to a file
+// attachment with a raw UUID filename. Once every step's template has Quick-Reply buttons
+// (banana-book, 2026-07-14), the lead who JUST REPLIED — the hottest one — was the only one
+// receiving a button-less message with a bare .mp4 dangling off it. Default is now a normal
+// template, which also means Meta counts it, so it must NOT be flagged in_session.
+test('⭐ by default an open window still sends a TEMPLATE (keeps buttons) and DOES consume the tier', async () => {
+  await seed({ consent: true });
+  await pool.query(
+    `INSERT INTO public.messages(id, conversation_id, account_id, message_type, content, created_at)
+     VALUES (1, 501, $1, 0, 'היי, יש לי שאלה', now())`, [ACCT]
+  );
+  await scanInbound(pool, ACCT, new Date());
+
+  const c = spyClient();
+  await run(c);                                    // no freeformInSession → default OFF
+  assert.equal(c.sent.length, 1, 'still sends');
+  assert.equal(c.sent[0].via, 'template', 'a template — so the buttons and media header survive');
+
+  const sm = (await query('SELECT in_session FROM drip.sent_messages WHERE account_id=$1', [ACCT]))[0];
+  assert.equal(sm.in_session, false,
+    'a template is counted by Meta ⇒ flagging it in_session would silently overrun the tier');
 });
 
 test('SCAN: the watermark advances — the same message is not processed twice', async () => {

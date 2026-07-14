@@ -165,6 +165,7 @@ async function tick() {
         maxDeliveryRetries: config.maxDeliveryRetries,
         deliveryRetryHours: config.deliveryRetryHours,
         mmLiteExperiment: config.mmLiteExperiment,
+        freeformInSession: config.freeformInSession,
       });
 
       // ── Phase 3: התראה על כל ליד חדש שנסגר ────────────────────────────────────

@@ -22,6 +22,15 @@ export function loadConfig(env = process.env) {
     // Meta's marketing API instead of Cloud API, and compare delivery. OFF by default —
     // this is an experiment, not a default. Turn on only while measuring.
     mmLiteExperiment: String(env.MM_LITE_EXPERIMENT || '').toLowerCase() === 'true',
+    // Inside an open 24h service window, send FREE-FORM instead of a template: Meta exempts
+    // it from the per-user marketing cap (131049) and from the 24h tier. OFF by default.
+    // ⚠️ Free-form carries only the BODY text — it CANNOT carry the template's BUTTONS, and
+    // its media goes out as a file attachment (raw UUID filename) instead of an inline media
+    // header. Once every step's template has Quick-Reply buttons, the exemption buys delivery
+    // at the price of the message itself — and the lead who just replied (the hottest one)
+    // is exactly who receives the mangled version. Turn on only for button-less, media-less
+    // sequences. (banana-book, 2026-07-14: all 41 steps have buttons ⇒ stays off.)
+    freeformInSession: String(env.FREEFORM_IN_SESSION || '').toLowerCase() === 'true',
     // Webhook that turns "Meta answered about a new lead" into a WhatsApp ping to the operator.
     // The URL's path IS the secret (n8n webhook, no credential). Empty = alerts off.
     notifyWebhookUrl: String(env.NOTIFY_WEBHOOK_URL || ''),
