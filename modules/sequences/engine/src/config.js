@@ -22,9 +22,6 @@ export function loadConfig(env = process.env) {
     // Meta's marketing API instead of Cloud API, and compare delivery. OFF by default —
     // this is an experiment, not a default. Turn on only while measuring.
     mmLiteExperiment: String(env.MM_LITE_EXPERIMENT || '').toLowerCase() === 'true',
-    // Meta app id — needed to open a resumable upload session when the engine re-creates a
-    // worn-out template (POST /{app-id}/uploads). Empty = template rotation is off.
-    metaAppId: String(env.META_APP_ID || ''),
     // Webhook that turns "Meta answered about a new lead" into a WhatsApp ping to the operator.
     // The URL's path IS the secret (n8n webhook, no credential). Empty = alerts off.
     notifyWebhookUrl: String(env.NOTIFY_WEBHOOK_URL || ''),
