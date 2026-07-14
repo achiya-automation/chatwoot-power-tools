@@ -14,10 +14,13 @@ export function loadConfig(env = process.env) {
     // drains promptly (preserving each step's schedule) without blasting Meta in one tick.
     // NOT a 24h spread — that would delay steps far past their intended send time.
     spreadWindowMs: Number(env.SPREAD_WINDOW_MS || 3600000), // 1h
-    // Transient per-user marketing-cap (131049/130472) retry policy: re-send the step
-    // after deliveryRetryHours×attempt, up to maxDeliveryRetries, then give up.
-    maxDeliveryRetries: Number(env.MAX_DELIVERY_RETRIES || 3),
-    deliveryRetryHours: Number(env.DELIVERY_RETRY_HOURS || 24),
+    // (MAX_DELIVERY_RETRIES / DELIVERY_RETRY_HOURS removed — they were dead config.)
+    // A 131049 retry policy is exactly the wrong instinct: Meta states that resending a
+    // marketing message to someone already at her cap makes further delivery unavailable
+    // for another 24h and lowers the sender's delivery rate. The retry MANUFACTURES the
+    // block it is fighting. What replaced it: an escalating cooldown on the SAME step
+    // (3 → 6 → 9 … capped at 12 days), and a lead who is never failed over a soft cap.
+    // Don't reintroduce a retry knob here without reading reconcileDeliveries' `cap` branch.
     // MM Lite A/B: route a deterministic 50% of MARKETING sends (contact_id even) through
     // Meta's marketing API instead of Cloud API, and compare delivery. OFF by default —
     // this is an experiment, not a default. Turn on only while measuring.
