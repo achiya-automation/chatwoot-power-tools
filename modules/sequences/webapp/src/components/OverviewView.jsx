@@ -51,6 +51,11 @@ const M = {
     successRate: 'לא נחסמו',
     ofDecided: 'ממה שהוכרע',
     notCounted: 'מטא עוד לא אישרה · לא נספרות באחוז',
+    srcNew: 'לידים חדשים',
+    srcNewHint: 'ההודעה הראשונה בחייהם',
+    srcSeq: 'המשך הרצף',
+    srcSeqHint: 'כבר קיבלו מאיתנו',
+    blockedOf: 'נחסמו',
     todayOutcome: 'תוצאות היום',
     nothingToday: 'עוד לא נשלחו הודעות היום',
     // מי מהרשימה עוד ניתן להשגה
@@ -113,6 +118,11 @@ const M = {
     successRate: 'Not blocked',
     ofDecided: 'of decided',
     notCounted: 'Meta has not confirmed · not in the rate',
+    srcNew: 'New leads',
+    srcNewHint: 'first message of their life',
+    srcSeq: 'Later in the sequence',
+    srcSeqHint: 'already heard from us',
+    blockedOf: 'blocked',
     todayOutcome: "Today's outcome",
     nothingToday: 'No messages sent today yet',
     reachTitle: 'Who is still reachable',
@@ -327,6 +337,12 @@ function DeliveryCard({ stats }) {
     { key: 'failed', label: tr('mBlocked'), value: failed, cls: 'text-n-ruby-9' },
   ];
 
+  const empty = { sent: 0, arrived: 0, blocked: 0 };
+  const bySrc = {
+    newLead: stats.bySource?.newLead || empty,
+    inSequence: stats.bySource?.inSequence || empty,
+  };
+
   const reasons = [
     { label: tr('reasonCap'), n: t.block_cap || 0 },
     { label: tr('reasonInvalid'), n: t.block_invalid || 0 },
@@ -382,6 +398,17 @@ function DeliveryCard({ stats }) {
           </div>
         </div>
       )}
+
+      {/* ⭐ מי נחסם: ליד חדש או מישהו שכבר ברצף.
+          שתי בעיות שונות לגמרי, ומספר אחד מסתיר את שתיהן — ליד חדש שנחסם בהודעה
+          הראשונה בחייו הגיע רווי מעסקים אחרים (בעיית מקור לידים), וחסימה בהמשך הרצף
+          היא משהו שאנחנו עשינו. שורת אחוזים מספיקה: אין כאן צורך בגרף. */}
+      {sent > 0 && (bySrc.newLead.sent > 0 || bySrc.inSequence.sent > 0) ? (
+        <div className="mt-4 space-y-2 border-t border-n-weak pt-3">
+          <SourceRow label={tr('srcNew')} hint={tr('srcNewHint')} src={bySrc.newLead} tr={tr} />
+          <SourceRow label={tr('srcSeq')} hint={tr('srcSeqHint')} src={bySrc.inSequence} tr={tr} />
+        </div>
+      ) : null}
 
       {reasons.length > 0 ? (
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -482,6 +509,50 @@ function Donut({ slices, size = 132, thickness = 17, centerValue, centerLabel })
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className="text-2xl font-semibold leading-none text-n-slate-12">{centerValue}</span>
         <span className="mt-1 text-[10px] text-n-slate-10">{centerLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * SourceRow — שורה אחת: כמה נחסמו מקבוצה זו, ומה החלק שלה מתוך מה שהוכרע.
+ *
+ * מד (meter) ולא עוגה: זה יחס בודד מול תקרה, וזה בדיוק המקום שבו עוגה של שתי פרוסות
+ * היא הצורה הלא נכונה. הפס הוא באורך אחוז החסימה — כך ששורה ארוכה יותר = בעיה גדולה
+ * יותר, גם בלי לקרוא את המספר.
+ */
+function SourceRow({ label, hint, src, tr }) {
+  const sent = Number(src.sent) || 0;
+  const blocked = Number(src.blocked) || 0;
+  const arrived = Number(src.arrived) || 0;
+  const decided = arrived + blocked;
+  const pct = decided > 0 ? Math.round((blocked / decided) * 100) : 0;
+
+  return (
+    <div className="flex items-center gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-xs text-n-slate-11">
+            {label}<span className="text-n-slate-10"> · {hint}</span>
+          </span>
+          <span className="shrink-0 text-xs tabular-nums text-n-slate-11">
+            {decided === 0 ? (
+              <span className="text-n-slate-10">{sent} {tr('mSent')}</span>
+            ) : (
+              <>
+                <b className={`font-semibold ${blocked > 0 ? 'text-n-ruby-11' : 'text-n-slate-12'}`}>
+                  {blocked}
+                </b>
+                <span className="text-n-slate-10"> / {decided} {tr('blockedOf')} · {pct}%</span>
+              </>
+            )}
+          </span>
+        </div>
+        {/* מסילה באותה משפחת צבע כמו המילוי (ordinal), לא אפור נייטרלי */}
+        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-n-alpha-2">
+          <div className="h-full rounded-full bg-current text-n-ruby-9"
+               style={{ width: `${decided > 0 ? pct : 0}%` }} />
+        </div>
       </div>
     </div>
   );
