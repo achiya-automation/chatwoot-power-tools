@@ -10,15 +10,19 @@
 
   // i18n: Hebrew for RTL (he) users, English otherwise — same #app[dir] signal the
   // campaign-modal enhancement and the import wizard use. he→Hebrew, ltr→English.
-  var DRIP_LOCALE = (function () {
+  // ⚠️ חייב להיות עצל. DASHBOARD_SCRIPTS רץ בתחתית <body> — לפני ש-Vue מרנדר, ולכן לפני
+  // ש-#app[dir]="rtl" בכלל קיים (יש שני #app: העוטף של Vue, בלי dir, והשורש המרונדר, איתו).
+  // חישוב חד-פעמי כאן ננעל על 'en' לנצח, וממשק עברי מקבל כפתור באנגלית. קוראים בזמן רינדור,
+  // כמו sequences-nav ו-campaign-stats.
+  function dripLocale() {
     var a = document.querySelector('#app[dir]');
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
-  })();
+  }
   var I18N = {
     he: { smartImport: 'ייבוא חכם', authError: 'שגיאת הזדהות — רענן את העמוד ונסה שוב', loadFailed: 'טעינת הכלי נכשלה: ' },
     en: { smartImport: 'Smart import', authError: 'Authentication error — refresh the page and try again', loadFailed: 'Failed to load the tool: ' },
   };
-  function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
+  function t(k) { return (I18N[dripLocale()] || I18N.en)[k] || I18N.en[k] || k; }
 
   function accountId() { var m = location.pathname.match(/\/accounts\/(\d+)/); return m ? m[1] : ''; }
 

@@ -37,8 +37,12 @@ function scriptBodies(html) {
   return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
 }
 
+// ⚠️ ה-DOM ההתחלתי מכיל #app *בלי* dir — בדיוק כמו Chatwoot ברגע שבו DASHBOARD_SCRIPTS רץ.
+// Vue טרם רינדר, ולכן #app[dir]="rtl" עוד לא קיים. renderPage() הוא זה שיוצר אותו, בדיוק כמו
+// שקורה בדפדפן (Chatwoot מרנדר #app פנימי, עם dir, בתוך ה-#app שהוא נקודת ההרכבה של Vue).
+// fixture שמגדיר dir מראש מחביא באג אמיתי: כל תרגום שמחושב בזמן טעינה ננעל על אנגלית.
 function makeDom(path) {
-  const dom = new JSDOM('<!doctype html><html><body><div id="app" dir="rtl"></div></body></html>', {
+  const dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', {
     url: `https://chatwoot.test${path}`,
     runScripts: 'outside-only',
   });
@@ -66,33 +70,47 @@ async function runDashboardScript(dom, renderPage) {
   return w;
 }
 
+// Vue מרנדר, ורק עכשיו מופיע dir="rtl" על #app — האות היחיד שממנו ה-injectors גוזרים שפה.
+// זהו לב הבאג, והוא בתזמון: כל תרגום שחושב לפני הרגע הזה ננעל על אנגלית לנצח.
+// (בדפדפן האמיתי Chatwoot מקנן #app פנימי עם ה-dir בתוך נקודת ההרכבה של Vue; jsdom לא מתאים
+//  סלקטור מורכב כמו '#app[dir]' כששני אלמנטים חולקים id, אז כאן מדובר ב-#app יחיד. התזמון —
+//  מה שנבדק — זהה.)
+function mountVueRoot(doc, innerHtml) {
+  const app = doc.querySelector('#app');
+  app.setAttribute('dir', 'rtl');
+  app.innerHTML = innerHtml;
+}
+
 test('artifact: כפתור "ייבוא חכם" נוצר בעמוד אנשי הקשר אחרי שה-DOM משתנה', async () => {
   const { dom, errors } = makeDom('/app/accounts/1/contacts');
-  const w = await runDashboardScript(dom, (doc) => {
-    const row = doc.createElement('div');
-    row.innerHTML = '<button id="toggleContactsFilterButton">סינון</button>';
-    doc.querySelector('#app').appendChild(row);
-  });
+  const w = await runDashboardScript(dom, (doc) =>
+    mountVueRoot(doc, '<div><button id="toggleContactsFilterButton">סינון</button></div>')
+  );
 
-  assert.ok(
-    w.document.getElementById('cwi-open-btn'),
-    'כפתור הייבוא חייב להופיע — היעדרו הוא הבאג של התנגשות t/setTimeout'
+  const btn = w.document.getElementById('cwi-open-btn');
+  assert.ok(btn, 'כפתור הייבוא חייב להופיע — היעדרו הוא הבאג של התנגשות t/setTimeout');
+  assert.match(
+    btn.textContent,
+    /ייבוא חכם/,
+    'הכפתור חייב להיות בעברית: הממשק RTL. תווית באנגלית = השפה חושבה בזמן טעינה, לפני ש-Vue רינדר'
   );
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 
 test('artifact: דשבורד הקמפיינים מזריק KPI + כפתור סטטיסטיקה + שורת סטטיסטיקה על הכרטיס', async () => {
   const { dom, errors } = makeDom('/app/accounts/1/campaigns/whatsapp');
-  const w = await runDashboardScript(dom, (doc) => {
-    doc.querySelector('#app').innerHTML = `
+  const w = await runDashboardScript(dom, (doc) =>
+    mountVueRoot(doc, `
       <div class="h-20 justify-between"><span>קמפיינים</span><div><button>+ קמפיין חדש</button></div></div>
       <main><div class="max-w-5xl">
         <div class="group/cardLayout"><div><span class="text-base font-medium capitalize">מבצע קיץ</span></div></div>
-      </div></main>`;
-  });
+      </div></main>`)
+  );
 
   const doc = w.document;
-  assert.ok(doc.getElementById('cwpt-overview-btn'), 'כפתור "סטטיסטיקה" חייב להופיע בכותרת');
+  const overview = doc.getElementById('cwpt-overview-btn');
+  assert.ok(overview, 'כפתור "סטטיסטיקה" חייב להופיע בכותרת');
+  assert.match(overview.textContent, /סטטיסטיקה/, 'גם הוא חייב להיות בעברית בממשק RTL');
   assert.ok(doc.querySelector('.cwpt-stats'), 'שורת הסטטיסטיקה חייבת לנחות על כרטיס הקמפיין');
   assert.match(doc.querySelector('main .max-w-5xl').textContent, /10/, 'סרגל ה-KPI חייב להציג את הסך');
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
