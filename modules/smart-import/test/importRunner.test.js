@@ -69,6 +69,32 @@ test('assigns a contact label when Chatwoot returns the real nested create respo
   assert.deepEqual(labeled, [{ id: 321, labels: ['לקוחות-חדשים'] }]);
 });
 
+test('bulk import labels all 320 contacts, including 310 newly created contacts', async () => {
+  const labeled = [];
+  let nextCreatedId = 2000;
+  const contacts = Array.from({ length: 320 }, (_, i) => ({
+    name: `Contact ${i + 1}`,
+    phone_number: `+9725${String(i).padStart(7, '0')}`,
+    __row: i + 2,
+    __match: i < 10 ? { id: 1000 + i } : null,
+  }));
+  const api = fakeApi({
+    createContact: async () => ({ payload: { contact: { id: nextCreatedId++ } } }),
+    assignLabels: async (id, labels) => { labeled.push({ id, labels }); return {}; },
+  });
+
+  const log = await runImport({
+    contacts,
+    api,
+    labelTitle: 'ייבוא-גדול',
+    sleep: async () => {},
+  });
+
+  assert.deepEqual(log.summary(), { created: 310, updated: 10, skipped: 0, failed: 0, total: 320 });
+  assert.equal(labeled.length, 320);
+  assert.ok(labeled.every(({ labels }) => labels.includes('ייבוא-גדול')));
+});
+
 test('reports progress', async () => {
   const seen = [];
   await runImport({ contacts: [{ name: 'a', phone_number: '+97250', __row: 1 }, { name: 'b', phone_number: '+97251', __row: 2 }], api: fakeApi(), onProgress: (d, t) => seen.push([d, t]), sleep: async () => {} });
