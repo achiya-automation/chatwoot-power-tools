@@ -44,9 +44,24 @@ function applyTheme(theme) {
   // ערך לא מוכר (null/auto) — לא נוגעים.
 }
 
+// ברירת המחדל כשאין הורה (Chatwoot) ואין ?theme= מפורש.
+// בנייד ה-WebView של אפליקציית Chatwoot הוא top-level (אין injector שמסנכרן theme), וברירת
+// המחדל שלו כהה — prefers-color-scheme מדווח כהה גם כשהמכשיר בהיר (ה-theme הפנימי של האפליקציה
+// נעול). לכן ב-embed top-level מעדיפים בהיר במקום לרשת את הכהה השקרי. זה גם עוקף מטמון: גם אם
+// האפליקציה מגישה URL ישן בלי theme=, הפאנל עדיין בהיר. במחשב הפאנל תמיד ב-iframe (themeFromParent
+// גובר וזה לא נכנס), ובפיתוח עצמאי (בלי embed) שומרים על העדפת המערכת.
+function defaultTheme() {
+  try {
+    if (new URLSearchParams(window.location.search).has('embed') && window.parent === window) {
+      return 'light';
+    }
+  } catch { /* ignore */ }
+  return prefersDark();
+}
+
 // הנושא האפקטיבי, לפי סדר העדיפויות
 function resolveTheme() {
-  return themeFromParent() || themeFromUrl() || prefersDark();
+  return themeFromParent() || themeFromUrl() || defaultTheme();
 }
 
 // החלה סינכרונית לפני render — אין הבזק (flash) של נושא שגוי.
