@@ -753,8 +753,14 @@ async function actionDeliveryStats(accountId) {
   // "awaiting Meta". Measured 2026-07-14 (banana-book, hours after an inbox swap): Chatwoot
   // held 6 failures for the day, the dashboard showed 1 — four of the five it lost were
   // 131049 caps on brand-new leads. The success rate read 97% when it was 91%.
-  // `read` has no column of its own, so it still needs the message row; a message that was
-  // deleted simply cannot be known to have been read, which is a floor, never an inflation.
+  // ⭐ `delivery_status` has FOUR values, not three: reconcileDeliveries writes 'delivered'
+  // and 'failed', but a read receipt (Meta status 2) is recorded as 'read' — and 'read' means
+  // the message both ARRIVED and was opened. Counting only ds='delivered' as arrived dropped
+  // every read message from the arrived total (banana-book 2026-07-15: top card said 6 arrived,
+  // the source split said 0/4 — the missing one was 'read'). notify.js already treats
+  // ('delivered','read') as delivered; the dashboard must too. `read` is still detected via the
+  // message row (status=2) OR the ds value, so a deleted message that we last saw as 'read'
+  // still counts — and a read is by definition also arrived.
   const today = (await query(
     `WITH t AS (
        SELECT sm.error_code                     AS ec,
@@ -765,8 +771,8 @@ async function actionDeliveryStats(accountId) {
         WHERE sm.account_id = $1 AND sm.sent_at >= ${dayStart}
      )
      SELECT count(*)::int AS sent,
-            count(*) FILTER (WHERE ds = 'delivered')::int AS delivered,
-            count(*) FILTER (WHERE s = 2)::int            AS read,
+            count(*) FILTER (WHERE ds IN ('delivered','read'))::int AS delivered,
+            count(*) FILTER (WHERE ds = 'read' OR s = 2)::int        AS read,
             count(*) FILTER (WHERE ds = 'failed')::int    AS failed,
             count(*) FILTER (WHERE ds = 'pending')::int   AS pending,
             count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131049','130472'))::int AS block_cap,
@@ -807,8 +813,8 @@ async function actionDeliveryStats(accountId) {
   const trend = (await query(
     `SELECT to_char(sm.sent_at AT TIME ZONE '${TZ}', 'DD/MM') AS day,
             count(*)::int AS sent,
-            count(*) FILTER (WHERE sm.delivery_status = 'delivered')::int AS delivered,
-            count(*) FILTER (WHERE sm.delivery_status = 'failed')::int    AS failed
+            count(*) FILTER (WHERE sm.delivery_status IN ('delivered','read'))::int AS delivered,
+            count(*) FILTER (WHERE sm.delivery_status = 'failed')::int              AS failed
        FROM drip.sent_messages sm
       WHERE sm.account_id = $1 AND sm.sent_at >= ${dayStart} - interval '6 days'
       GROUP BY 1, date_trunc('day', sm.sent_at AT TIME ZONE '${TZ}')
@@ -839,10 +845,10 @@ async function actionDeliveryStats(accountId) {
          FROM drip.sent_messages sm
         WHERE sm.account_id = $1
      )
-     SELECT is_first_ever                                  AS "isNewLead",
-            count(*)::int                                  AS sent,
-            count(*) FILTER (WHERE ds = 'delivered')::int  AS arrived,
-            count(*) FILTER (WHERE ds = 'failed')::int     AS blocked
+     SELECT is_first_ever                                        AS "isNewLead",
+            count(*)::int                                        AS sent,
+            count(*) FILTER (WHERE ds IN ('delivered','read'))::int AS arrived,
+            count(*) FILTER (WHERE ds = 'failed')::int           AS blocked
        FROM s
       WHERE sent_at >= ${dayStart}
       GROUP BY 1`,

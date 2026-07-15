@@ -79,6 +79,29 @@ test('⭐ a blocked send whose message row was deleted is still counted as BLOCK
     'success rate is computed over what was DECIDED — deleting a row must not flatter it');
 });
 
+// ── ⭐ delivery_status='read' means arrived AND opened — it must count as arrived ──
+// delivery_status has FOUR values, not three: something outside the reconciler (a WhatsApp
+// read receipt) records 'read'. Counting only ds='delivered' as arrived silently dropped every
+// read message. banana-book 2026-07-15: the top card showed 6 arrived, the source split 0/4 —
+// the one that vanished was 'read'. A read is, by definition, also delivered.
+test('⭐ a read receipt (delivery_status=read) counts as arrived everywhere', async () => {
+  await sent({ id: 1, messageId: null, status: 'delivered' });
+  await sent({ id: 2, messageId: null, status: 'read' });      // arrived AND opened
+  await sent({ id: 3, messageId: null, status: 'failed', code: '131049' });
+
+  const { data } = await handleAction(1, 'delivery_stats', {});
+  assert.equal(data.today.delivered, 2, 'delivered + read both count as arrived');
+  assert.equal(data.today.read, 1, 'and read is also reported on its own');
+  assert.equal(data.today.failed, 1);
+
+  // the split must agree with the top card — a read lead is not lost from either bucket
+  assert.equal(data.bySource.newLead.arrived, 2, 'read counts as arrived in the source split too');
+  assert.equal(data.bySource.newLead.blocked, 1);
+
+  // the trend chart, likewise
+  assert.equal(data.trend.at(-1).delivered, 2);
+});
+
 test('a NULL delivery_status (row written, reconciler has not run yet) counts as awaiting', async () => {
   await sent({ id: 1, messageId: null, status: null });
   const { data } = await handleAction(1, 'delivery_stats', {});
