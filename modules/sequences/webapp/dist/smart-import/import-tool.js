@@ -287,7 +287,8 @@ var __cwImport = (() => {
           status = "updated";
         } else {
           const created = await api.createContact(body);
-          contactId = created.id;
+          contactId = created?.payload?.contact?.id ?? created?.id;
+          if (!contactId) throw new Error("Chatwoot create response is missing the contact id");
           status = "created";
         }
         if (labelTitle && contactId) {

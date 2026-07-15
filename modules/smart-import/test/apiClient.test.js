@@ -60,3 +60,18 @@ test('createLabel wraps title in the label object required by Chatwoot', async (
     label: { title: 'לקוחות-חדשים' },
   });
 });
+
+test('assignLabels writes labels to the contact endpoint, not a conversation', async () => {
+  const calls = [];
+  const fakeFetch = async (url, opts) => {
+    calls.push({ url, opts });
+    return { ok: true, status: 200, json: async () => ({ payload: ['לקוחות-חדשים'] }) };
+  };
+  const api = createApiClient(10, {}, fakeFetch);
+
+  await api.assignLabels(321, ['לקוחות-חדשים']);
+
+  assert.equal(calls[0].url, '/api/v1/accounts/10/contacts/321/labels');
+  assert.doesNotMatch(calls[0].url, /conversations/);
+  assert.deepEqual(JSON.parse(calls[0].opts.body), { labels: ['לקוחות-חדשים'] });
+});
