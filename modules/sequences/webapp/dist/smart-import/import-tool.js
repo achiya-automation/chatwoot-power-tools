@@ -344,7 +344,9 @@ var __cwImport = (() => {
       getContactLabels: (id) => req("GET", `/contacts/${id}/labels`),
       assignLabels: (id, labels) => req("POST", `/contacts/${id}/labels`, { labels }),
       listLabels: () => req("GET", "/labels"),
-      createLabel: (title) => req("POST", "/labels", { title }),
+      // Chatwoot's LabelsController requires the attributes under `label`:
+      // params.require(:label).permit(:title, ...).
+      createLabel: (title) => req("POST", "/labels", { label: { title } }),
       listCustomAttributes: () => req("GET", "/custom_attribute_definitions?attribute_model=contact_attribute"),
       createCustomAttribute: (def) => req("POST", "/custom_attribute_definitions", { custom_attribute_definition: def })
     };
@@ -352,6 +354,15 @@ var __cwImport = (() => {
 
   // lib/basepath.js
   var vendorUrl = (base) => (base || "/chatwoot-addons") + "/smart-import/xlsx.mini.min.js";
+
+  // lib/labelTitle.js
+  var VALID_LABEL_TITLE = /^[\p{L}\p{N}][\p{L}\p{N}_-]+$/u;
+  function normalizeLabelTitle(value) {
+    return String(value ?? "").trim().replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/_+/g, "_").replace(/^[_-]+/, "").replace(/[_-]+$/, "");
+  }
+  function isValidLabelTitle(value) {
+    return VALID_LABEL_TITLE.test(String(value ?? ""));
+  }
 
   // ui/styles.js
   var STYLES = `
@@ -421,6 +432,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       newLabelPlaceholder: "\u05D0\u05D5 \u05E6\u05E8\u05D5 \u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4",
       selectLabel: "\u05D1\u05D7\u05E8 \u05EA\u05D5\u05D5\u05D9\u05EA:",
       newLabelField: "\u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4:",
+      labelNameInvalid: "\u05E9\u05DD \u05D4\u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D9\u05D9\u05D1 \u05DC\u05D4\u05EA\u05D7\u05D9\u05DC \u05D1\u05D0\u05D5\u05EA \u05D0\u05D5 \u05DE\u05E1\u05E4\u05E8 \u05D5\u05DC\u05DB\u05DC\u05D5\u05DC \u05DC\u05E4\u05D7\u05D5\u05EA \u05E9\u05E0\u05D9 \u05EA\u05D5\u05D5\u05D9\u05DD.",
+      labelCreateFailed: "\u05D9\u05E6\u05D9\u05E8\u05EA \u05D4\u05EA\u05D5\u05D5\u05D9\u05EA \u05E0\u05DB\u05E9\u05DC\u05D4. \u05D7\u05D6\u05E8\u05D5 \u05D5\u05D1\u05D3\u05E7\u05D5 \u05D0\u05EA \u05E9\u05DD \u05D4\u05EA\u05D5\u05D5\u05D9\u05EA.",
       // step 4 — preview
       previewTitle: "\u05D1\u05D3\u05D9\u05E7\u05D4 \u05DC\u05E4\u05E0\u05D9 \u05D9\u05D9\u05D1\u05D5\u05D0",
       checkingDupes: "\u05D1\u05D5\u05D3\u05E7 \u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA\u2026",
@@ -487,6 +500,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       newLabelPlaceholder: "Or create a new label",
       selectLabel: "Select a label:",
       newLabelField: "New label:",
+      labelNameInvalid: "The label must start with a letter or number and contain at least two characters.",
+      labelCreateFailed: "The label could not be created. Go back and check the label name.",
       previewTitle: "Review before import",
       checkingDupes: "Checking for duplicates\u2026",
       readyToImport: "Ready to import:",
@@ -542,7 +557,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
   function openWizard({ accountId, authHeaders, assetBase }) {
     injectStyles();
     const api = createApiClient(accountId, authHeaders);
-    const state = { table: null, mapping: [], customMap: [], labelTitle: "" };
+    const state = { table: null, mapping: [], customMap: [], labelTitle: "", labelNeedsCreation: false };
     var dlg = document.createElement("dialog");
     dlg.className = "cwi-dlg";
     const pageIsDark = document.documentElement.classList.contains("dark") || document.body.classList.contains("dark");
@@ -1029,11 +1044,20 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       let selValue = "";
       const options = [{ value: "", label: t("noLabel") }];
       (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
+      const existingLabelTitles = new Set((labels || []).map((l) => String(l.title).toLowerCase()));
       const newInput = el(
         "input",
         "h-8 w-full px-3 py-2 text-sm rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand border-0 outline-offset-[-1px]"
       );
       newInput.placeholder = t("newLabelPlaceholder");
+      const labelError = el("div", "min-h-5 text-sm text-n-ruby-11");
+      newInput.addEventListener("input", () => {
+        labelError.textContent = "";
+      });
+      newInput.addEventListener("blur", () => {
+        const normalized = normalizeLabelTitle(newInput.value);
+        if (normalized) newInput.value = normalized;
+      });
       const cs = customSelect({
         options,
         value: "",
@@ -1043,15 +1067,26 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         onSelect: (v) => {
           selValue = v;
           if (v) newInput.value = "";
+          labelError.textContent = "";
         }
       });
       modal.append(
         formRow(t("selectLabel"), cs.el),
         formRow(t("newLabelField"), newInput),
+        labelError,
         footer({
           onBack: stepMapping,
           onNext: () => {
-            state.labelTitle = newInput.value.trim() || selValue;
+            const rawTitle = newInput.value.trim();
+            const enteredTitle = normalizeLabelTitle(rawTitle);
+            if (rawTitle && !isValidLabelTitle(enteredTitle)) {
+              labelError.textContent = t("labelNameInvalid");
+              newInput.focus({ preventScroll: true });
+              return;
+            }
+            if (enteredTitle) newInput.value = enteredTitle;
+            state.labelTitle = enteredTitle || selValue;
+            state.labelNeedsCreation = Boolean(enteredTitle) && !existingLabelTitles.has(enteredTitle.toLowerCase());
             stepPreview();
           },
           nextLabel: t("continue")
@@ -1065,7 +1100,13 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       status.textContent = t("checkingDupes");
       modal.appendChild(status);
       await ensureCustomAttributes();
-      await ensureLabel();
+      try {
+        await ensureLabel();
+      } catch {
+        status.textContent = t("labelCreateFailed");
+        modal.appendChild(footer({ onBack: stepLabel }));
+        return;
+      }
       const contacts = state.table.rows.map((row, idx) => ({
         ...buildContactPayload(row, state.mapping, state.customMap),
         __row: idx + 2
@@ -1109,11 +1150,10 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       }
     }
     async function ensureLabel() {
-      if (!state.labelTitle) return;
-      try {
-        await api.createLabel(state.labelTitle);
-      } catch {
-      }
+      if (!state.labelTitle || !state.labelNeedsCreation) return;
+      const created = await api.createLabel(state.labelTitle);
+      state.labelTitle = created?.title || state.labelTitle;
+      state.labelNeedsCreation = false;
     }
     async function stepRun() {
       modal.replaceChildren();

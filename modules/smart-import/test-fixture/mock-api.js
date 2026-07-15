@@ -14,7 +14,14 @@ window.fetch = async (url, opts = {}) => {
   if (/\/contacts$/.test(url) && opts.method === 'POST') { const c = { id: store.nextId++, ...body }; store.contacts.push(c); return json(c); }
   if (/\/contacts\/\d+$/.test(url) && opts.method === 'PUT') return json({ id: 1, ...body });
   if (/\/labels$/.test(url) && (!opts.method || opts.method === 'GET')) return json({ payload: store.labels });
-  if (/\/labels$/.test(url)) { store.labels.push({ title: body.title }); return json(body); }
+  if (/\/labels$/.test(url)) {
+    if (!body.label?.title) {
+      return { ok: false, status: 400, text: async () => 'param is missing or the value is empty: label' };
+    }
+    const created = { title: body.label.title };
+    store.labels.push(created);
+    return json(created);
+  }
   if (/\/contacts\/\d+\/labels/.test(url)) return json({ payload: body.labels });
   if (/custom_attribute_definitions/.test(url) && opts.method === 'POST') { store.customAttrs.push(body); return json(body); }
   if (/custom_attribute_definitions/.test(url)) return json(store.customAttrs);
