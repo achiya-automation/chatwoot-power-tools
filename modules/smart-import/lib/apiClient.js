@@ -40,7 +40,9 @@ export function createApiClient(accountId, headers, fetchImpl = fetch) {
     getContactLabels: (id) => req('GET', `/contacts/${id}/labels`),
     assignLabels: (id, labels) => req('POST', `/contacts/${id}/labels`, { labels }),
     listLabels: () => req('GET', '/labels'),
-    createLabel: (title) => req('POST', '/labels', { title }),
+    // Chatwoot's LabelsController requires the attributes under `label`:
+    // params.require(:label).permit(:title, ...).
+    createLabel: (title) => req('POST', '/labels', { label: { title } }),
     listCustomAttributes: () => req('GET', '/custom_attribute_definitions?attribute_model=contact_attribute'),
     createCustomAttribute: (def) => req('POST', '/custom_attribute_definitions', { custom_attribute_definition: def }),
   };

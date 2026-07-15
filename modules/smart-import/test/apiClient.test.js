@@ -43,3 +43,20 @@ test('listCustomAttributes filters by contact_attribute model', async () => {
   await api.listCustomAttributes();
   assert.match(calls[0], /custom_attribute_definitions\?attribute_model=contact_attribute/);
 });
+
+test('createLabel wraps title in the label object required by Chatwoot', async () => {
+  const calls = [];
+  const fakeFetch = async (url, opts) => {
+    calls.push({ url, opts });
+    return { ok: true, status: 200, json: async () => ({ id: 9, title: 'לקוחות-חדשים' }) };
+  };
+  const api = createApiClient(6, {}, fakeFetch);
+
+  await api.createLabel('לקוחות-חדשים');
+
+  assert.equal(calls[0].url, '/api/v1/accounts/6/labels');
+  assert.equal(calls[0].opts.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].opts.body), {
+    label: { title: 'לקוחות-חדשים' },
+  });
+});

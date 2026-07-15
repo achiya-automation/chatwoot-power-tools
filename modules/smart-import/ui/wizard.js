@@ -5,6 +5,7 @@ import { runImport } from '../lib/importRunner.js';
 import { createApiClient } from '../lib/apiClient.js';
 import { buildFilterPayload, pickMatch } from '../lib/dedup.js';
 import { vendorUrl } from '../lib/basepath.js';
+import { isValidLabelTitle, normalizeLabelTitle } from '../lib/labelTitle.js';
 import { STYLES } from './styles.js';
 
 // ── i18n: Hebrew for RTL (he) users, English for everyone else. Same signal the
@@ -40,6 +41,8 @@ const I18N = {
     labelStepDesc: 'תוקצה לכל אנשי הקשר המיובאים (לא תמחק תוויות קיימות)',
     noLabel: '— ללא תווית —', newLabelPlaceholder: 'או צרו תווית חדשה',
     selectLabel: 'בחר תווית:', newLabelField: 'תווית חדשה:',
+    labelNameInvalid: 'שם התווית חייב להתחיל באות או מספר ולכלול לפחות שני תווים.',
+    labelCreateFailed: 'יצירת התווית נכשלה. חזרו ובדקו את שם התווית.',
     // step 4 — preview
     previewTitle: 'בדיקה לפני ייבוא', checkingDupes: 'בודק כפילויות…',
     readyToImport: 'מוכן לייבוא:', newWord: 'חדשים', existingWillUpdate: 'קיימים (יעודכנו)',
@@ -72,6 +75,8 @@ const I18N = {
     labelStepDesc: 'Applied to all imported contacts (existing labels are kept)',
     noLabel: '— No label —', newLabelPlaceholder: 'Or create a new label',
     selectLabel: 'Select a label:', newLabelField: 'New label:',
+    labelNameInvalid: 'The label must start with a letter or number and contain at least two characters.',
+    labelCreateFailed: 'The label could not be created. Go back and check the label name.',
     previewTitle: 'Review before import', checkingDupes: 'Checking for duplicates…',
     readyToImport: 'Ready to import:', newWord: 'new', existingWillUpdate: 'existing (will be updated)',
     importVerb: 'Import', contactsWord: 'contacts',
@@ -110,7 +115,7 @@ function loadXlsx(assetBase) {
 export function openWizard({ accountId, authHeaders, assetBase }) {
   injectStyles();
   const api = createApiClient(accountId, authHeaders);
-  const state = { table: null, mapping: [], customMap: [], labelTitle: '' };
+  const state = { table: null, mapping: [], customMap: [], labelTitle: '', labelNeedsCreation: false };
 
   // FIX 1: native <dialog> opened with showModal() — goes to browser top layer,
   // above any Chatwoot native dialog.
@@ -636,25 +641,50 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
     const options = [{ value: '', label: t('noLabel') }];
     (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
+    const existingLabelTitles = new Set((labels || []).map((l) => String(l.title).toLowerCase()));
 
     const newInput = el('input',
       'h-8 w-full px-3 py-2 text-sm rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand border-0 outline-offset-[-1px]');
     newInput.placeholder = t('newLabelPlaceholder');
+    const labelError = el('div', 'min-h-5 text-sm text-n-ruby-11');
+    newInput.addEventListener('input', () => { labelError.textContent = ''; });
+    newInput.addEventListener('blur', () => {
+      const normalized = normalizeLabelTitle(newInput.value);
+      if (normalized) newInput.value = normalized;
+    });
 
     const cs = customSelect({
       options,
       value: '',
       placeholder: t('noLabel'),
       size: 'field', // roomier single-select field for the label step
-      onSelect: (v) => { selValue = v; if (v) newInput.value = ''; },
+      onSelect: (v) => {
+        selValue = v;
+        if (v) newInput.value = '';
+        labelError.textContent = '';
+      },
     });
 
     modal.append(
       formRow(t('selectLabel'), cs.el),
       formRow(t('newLabelField'), newInput),
+      labelError,
       footer({
         onBack: stepMapping,
-        onNext: () => { state.labelTitle = newInput.value.trim() || selValue; stepPreview(); },
+        onNext: () => {
+          const rawTitle = newInput.value.trim();
+          const enteredTitle = normalizeLabelTitle(rawTitle);
+          if (rawTitle && !isValidLabelTitle(enteredTitle)) {
+            labelError.textContent = t('labelNameInvalid');
+            newInput.focus({ preventScroll: true });
+            return;
+          }
+          if (enteredTitle) newInput.value = enteredTitle;
+          state.labelTitle = enteredTitle || selValue;
+          state.labelNeedsCreation = Boolean(enteredTitle) &&
+            !existingLabelTitles.has(enteredTitle.toLowerCase());
+          stepPreview();
+        },
         nextLabel: t('continue'),
       }),
     );
@@ -670,7 +700,13 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     modal.appendChild(status);
 
     await ensureCustomAttributes();
-    await ensureLabel();
+    try {
+      await ensureLabel();
+    } catch {
+      status.textContent = t('labelCreateFailed');
+      modal.appendChild(footer({ onBack: stepLabel }));
+      return;
+    }
 
     const contacts = state.table.rows.map((row, idx) => ({
       ...buildContactPayload(row, state.mapping, state.customMap),
@@ -720,8 +756,12 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   }
 
   async function ensureLabel() {
-    if (!state.labelTitle) return;
-    try { await api.createLabel(state.labelTitle); } catch { /* already exists → ignore */ }
+    if (!state.labelTitle || !state.labelNeedsCreation) return;
+    const created = await api.createLabel(state.labelTitle);
+    // Chatwoot normalizes label titles (for example, to lowercase). Use the
+    // canonical server value when assigning the label to imported contacts.
+    state.labelTitle = created?.title || state.labelTitle;
+    state.labelNeedsCreation = false;
   }
 
   // ── Step 5 — Run + Done ──────────────────────────────────────────────────────
