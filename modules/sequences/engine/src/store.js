@@ -743,6 +743,16 @@ async function actionDeliveryStats(accountId) {
   const TZ = 'Asia/Jerusalem';
   const dayStart = `date_trunc('day', now() AT TIME ZONE '${TZ}') AT TIME ZONE '${TZ}'`;
 
+  // ⭐ "נחסמו" = מטא/הנמענת מנעה את המסירה, ולא כל כישלון.
+  // יש שני מיני כישלון שונים לגמרי, ומיזוגם למספר אחד גורם ל"רשימה שרופה" מזויפת:
+  //   • חסימת מטא — תקרת שיווק, opt-out, מספר לא קיים. הנמענת אבודה, זה סיפור הרשימה.
+  //   • שגיאת שליחה שלנו — פרמטרים לא תואמים לתבנית, מדיה שבורה. ההודעה מעולם לא יצאה
+  //     כי הבקשה שגויה, וזה משהו שמתקנים בקוד/בתבנית, לא סימן שהנמענת שרופה.
+  // נמדד בבננה בוק 15/07: כל 8 "החסימות" של היום היו 132000 (חוסר פרמטר ב-bb_existing_07)
+  // — אפס חסימות מטא אמיתיות. הצגתן כ"נחסמו" ניפחה את שיעור החסימה מ-0% ל-22%.
+  // הרשימה מתואמת ל-classifyError ('cap' / 'optout' / 'invalid' — כולם צד הנמענת).
+  const META_BLOCK = `('131049','130472','131056','131050','131026','131021')`;
+
   // Today: totals + WhatsApp block-reason breakdown
   //
   // ⚠️ The outcome is read from `sent_messages.delivery_status` — the engine's OWN column,
@@ -774,26 +784,37 @@ async function actionDeliveryStats(accountId) {
             count(*) FILTER (WHERE ds IN ('delivered','read'))::int AS delivered,
             count(*) FILTER (WHERE ds = 'read' OR s = 2)::int        AS read,
             count(*) FILTER (WHERE ds = 'failed')::int    AS failed,
+            -- "נחסמו" = מטא/הנמענת בלבד; שגיאת שליחה שלנו נספרת בנפרד
+            count(*) FILTER (WHERE ds = 'failed' AND ec IN ${META_BLOCK})::int        AS blocked,
+            count(*) FILTER (WHERE ds = 'failed' AND (ec IS NULL OR ec NOT IN ${META_BLOCK}))::int AS send_error,
             count(*) FILTER (WHERE ds = 'pending')::int   AS pending,
-            count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131049','130472'))::int AS block_cap,
-            count(*) FILTER (WHERE ds = 'failed' AND ec = '131026')::int             AS block_invalid,
-            count(*) FILTER (WHERE ds = 'failed' AND ec = '131050')::int             AS block_optout,
-            count(*) FILTER (WHERE ds = 'failed' AND (ec IS NULL OR ec NOT IN ('131049','130472','131026','131050')))::int AS block_other
+            count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131049','130472','131056'))::int AS block_cap,
+            count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131026','131021'))::int  AS block_invalid,
+            count(*) FILTER (WHERE ds = 'failed' AND ec = '131050')::int              AS block_optout,
+            -- סיבות שגיאת השליחה (לא חסימה) — כדי שאפשר להראות מה לתקן
+            count(*) FILTER (WHERE ds = 'failed' AND ec IN ('132000','132012','132001','132005','132007'))::int AS err_template,
+            count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131052','131053'))::int  AS err_media,
+            count(*) FILTER (WHERE ds = 'failed' AND ec NOT IN ${META_BLOCK}
+                          AND (ec IS NULL OR ec NOT IN ('132000','132012','132001','132005','132007','131052','131053')))::int AS err_other
        FROM t`,
     [accountId]
   ))[0];
 
-  // Failed-by-template today (top 5) — which message clusters the blocks.
-  // Same rule as above: delivery_status, never a JOIN to a message row that may be gone.
+  // Failed-by-template today (top 5) — which message clusters the failures, and whether each
+  // cluster is a Meta block or OUR send error (so the UI can label bb_existing_07's parameter
+  // mismatch as "fix the template", not "the recipients are burned").
   const byTemplate = (await query(
     `SELECT sm.template_name AS template,
-            count(*)::int AS sent,
-            count(*) FILTER (WHERE sm.delivery_status = 'failed')::int AS failed
+            count(*) FILTER (WHERE sm.delivery_status = 'failed')::int AS failed,
+            count(*) FILTER (WHERE sm.delivery_status = 'failed'
+                             AND sm.error_code IN ${META_BLOCK})::int  AS blocked,
+            count(*) FILTER (WHERE sm.delivery_status = 'failed'
+                             AND (sm.error_code IS NULL OR sm.error_code NOT IN ${META_BLOCK}))::int AS send_error
        FROM drip.sent_messages sm
       WHERE sm.account_id = $1 AND sm.sent_at >= ${dayStart}
       GROUP BY sm.template_name
      HAVING count(*) FILTER (WHERE sm.delivery_status = 'failed') > 0
-      ORDER BY 3 DESC LIMIT 5`,
+      ORDER BY 2 DESC LIMIT 5`,
     [accountId]
   ));
 
@@ -814,7 +835,9 @@ async function actionDeliveryStats(accountId) {
     `SELECT to_char(sm.sent_at AT TIME ZONE '${TZ}', 'DD/MM') AS day,
             count(*)::int AS sent,
             count(*) FILTER (WHERE sm.delivery_status IN ('delivered','read'))::int AS delivered,
-            count(*) FILTER (WHERE sm.delivery_status = 'failed')::int              AS failed
+            -- המגמה מראה חסימות מטא בלבד; שגיאת תבנית שלנו אינה "חסימה"
+            count(*) FILTER (WHERE sm.delivery_status = 'failed'
+                             AND sm.error_code IN ${META_BLOCK})::int               AS failed
        FROM drip.sent_messages sm
       WHERE sm.account_id = $1 AND sm.sent_at >= ${dayStart} - interval '6 days'
       GROUP BY 1, date_trunc('day', sm.sent_at AT TIME ZONE '${TZ}')
@@ -838,7 +861,7 @@ async function actionDeliveryStats(accountId) {
   // ליד חדש, גם למי שברצף כבר חודש.
   const bySource = (await query(
     `WITH s AS (
-       SELECT sm.sent_at,
+       SELECT sm.sent_at, sm.error_code AS ec,
               COALESCE(sm.delivery_status, 'pending') AS ds,
               row_number() OVER (PARTITION BY sm.contact_id ORDER BY sm.sent_at, sm.id) = 1
                 AS is_first_ever
@@ -848,7 +871,9 @@ async function actionDeliveryStats(accountId) {
      SELECT is_first_ever                                        AS "isNewLead",
             count(*)::int                                        AS sent,
             count(*) FILTER (WHERE ds IN ('delivered','read'))::int AS arrived,
-            count(*) FILTER (WHERE ds = 'failed')::int           AS blocked
+            -- "נחסמו" בפיצול = חסימת מטא בלבד, כמו הכרטיס העליון
+            count(*) FILTER (WHERE ds = 'failed' AND ec IN ${META_BLOCK})::int AS blocked,
+            count(*) FILTER (WHERE ds = 'failed' AND (ec IS NULL OR ec NOT IN ${META_BLOCK}))::int AS "sendError"
        FROM s
       WHERE sent_at >= ${dayStart}
       GROUP BY 1`,
@@ -877,7 +902,7 @@ async function actionDeliveryStats(accountId) {
 
   // bySource → { newLead: {...}, inSequence: {...} } — צורה יציבה גם כשאחד מהם ריק
   const src = (isNew) => bySource.find((r) => r.isNewLead === isNew)
-    || { sent: 0, arrived: 0, blocked: 0 };
+    || { sent: 0, arrived: 0, blocked: 0, sendError: 0 };
 
   return {
     data: {

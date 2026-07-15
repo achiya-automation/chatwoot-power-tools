@@ -102,6 +102,36 @@ test('⭐ a read receipt (delivery_status=read) counts as arrived everywhere', a
   assert.equal(data.trend.at(-1).delivered, 2);
 });
 
+// ── ⭐ a template error is NOT a Meta block — "נחסמו" counts only recipient blocks ──
+// Two failures are two different problems: 131049 means Meta blocked a burned recipient
+// (the list's story); 132000 means our request was malformed — a parameter missing from the
+// template — and the message never left. banana-book 2026-07-15: all 8 of the day's failures
+// were 132000 on bb_existing_07, and showing them as "blocked" inflated the block rate 0%→22%.
+test('⭐ a template error (132000) counts as send_error, not as a Meta block', async () => {
+  await sent({ id: 1, messageId: null, status: 'delivered' });
+  await sent({ id: 2, messageId: null, status: 'failed', code: '131049' });   // real Meta block
+  await sent({ id: 3, messageId: null, status: 'failed', code: '132000' });   // OUR template bug
+  await sent({ id: 4, messageId: null, status: 'failed', code: '135000' });   // OUR request error
+
+  const { data } = await handleAction(1, 'delivery_stats', {});
+  assert.equal(data.today.blocked, 1, 'only the 131049 counts as a Meta block');
+  assert.equal(data.today.send_error, 2, '132000 + 135000 are our send errors');
+  assert.equal(data.today.failed, 3, 'the raw failed total still includes everything');
+  assert.equal(data.today.err_template, 1, '132000 is a template error');
+
+  // success rate ("not blocked") is measured against Meta-decided only: 1 arrived, 1 blocked
+  // → 50%. The two template errors must NOT drag it down (they never reached Meta).
+  const decided = data.today.delivered + data.today.blocked;
+  assert.equal(Math.round((data.today.delivered / decided) * 100), 50);
+
+  // the split, likewise — a template error is not a block in either bucket
+  assert.equal(data.bySource.newLead.blocked, 1);
+  assert.equal(data.bySource.newLead.sendError, 2);
+
+  // the trend chart shows Meta blocks only
+  assert.equal(data.trend.at(-1).failed, 1, 'trend failed = Meta blocks only');
+});
+
 test('a NULL delivery_status (row written, reconciler has not run yet) counts as awaiting', async () => {
   await sent({ id: 1, messageId: null, status: null });
   const { data } = await handleAction(1, 'delivery_stats', {});

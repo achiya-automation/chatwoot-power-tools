@@ -57,6 +57,13 @@ const M = {
     srcSeqHint: 'כבר קיבלו מאיתנו',
     blockedOf: 'נחסמו',
     noneBlocked: 'אף אחד לא נחסם',
+    sendError: 'שגיאת שליחה',
+    sendErrorHint: 'בעיה בתבנית · לתקן',
+    sendErrTitle: 'שגיאות שליחה (לתקן):',
+    errTemplate: 'פרמטרים בתבנית',
+    errMedia: 'מדיה',
+    errOther: 'אחר',
+    failedMessages: 'הודעות שנכשלו:',
     todayOutcome: 'תוצאות היום',
     nothingToday: 'עוד לא נשלחו הודעות היום',
     // מי מהרשימה עוד ניתן להשגה
@@ -125,6 +132,13 @@ const M = {
     srcSeqHint: 'already heard from us',
     blockedOf: 'blocked',
     noneBlocked: 'none blocked',
+    sendError: 'send error',
+    sendErrorHint: 'template issue · fix it',
+    sendErrTitle: 'Send errors (to fix):',
+    errTemplate: 'template parameters',
+    errMedia: 'media',
+    errOther: 'other',
+    failedMessages: 'Failed messages:',
     todayOutcome: "Today's outcome",
     nothingToday: 'No messages sent today yet',
     reachTitle: 'Who is still reachable',
@@ -316,30 +330,30 @@ function DeliveryCard({ stats }) {
   // הפירוק כאן הוא היחיד שמסתכם: הגיעו + ממתינות + נחסמו = נשלחו.
   const arrived = Number(t.delivered) || 0;      // נמסרו + נקראו
   const read = Number(t.read) || 0;              // תת-קבוצה של arrived
-  const failed = Number(t.failed) || 0;
+  const blocked = Number(t.blocked) || 0;        // ⭐ חסימת מטא בלבד (הנמענת)
+  const sendError = Number(t.send_error) || 0;   // ⭐ שגיאת שליחה שלנו (תבנית/מדיה)
   const waiting = Number(t.pending) || 0;
 
   const readOfArrived = arrived > 0 ? Math.round((read / arrived) * 100) : 0;
 
-  // ⭐ המכנה הוא מה שהוכרע, לא מה שנשלח.
-  // "ממתינה" איננה כישלון: מטא כבר קיבלה את ההודעה (יש wamid, אין שגיאה) והיא פשוט
-  // טרם החזירה אישור מסירה — 98% מהממתינות נפתרות תוך שש שעות. לספור אותן במכנה
-  // מוריד את שיעור ההצלחה מ-97% ל-64%, ומודד את קצב הדיווח של מטא במקום את הקמפיין.
-  // אבל גם אסור לזקוף אותן כהצלחה: חסימה כן מגיעה באיחור (1,680 מהן הוכרעו ככישלון
-  // בטווח 6ש'-7 ימים). לכן הן נשארות בעוגה — הן באמת נשלחו — אך מחוץ לאחוז.
-  const decided = arrived + failed;
+  // ⭐ המכנה הוא מה שהוכרע ע"י מטא, לא מה שנשלח.
+  // "ממתינה" איננה כישלון (מטא עוד לא אישרה — 98% נפתרות תוך 6ש'), ו**שגיאת שליחה
+  // שלנו איננה חסימה** (הבקשה הייתה שגויה, ההודעה מעולם לא יצאה — זה באג לתקן, לא
+  // נמענת שרופה). שיעור "לא נחסמו" נמדד רק מול מה שמטא הכריעה: הגיע או חסמה.
+  const decided = arrived + blocked;
   const successRate = decided > 0 ? Math.round((arrived / decided) * 100) : 0;
 
-  // גוון מקבץ משמעות: שתי דרגות הוודאות של "לא נחסם" הן אותה משפחת צבע (רמפת teal),
-  // והחסימה — הכישלון היחיד — היא ההפרדה החדה היחידה. כך העין קולטת "כמעט הכל עבר"
-  // לפני שהיא קוראת מספר אחד.
+  // ארבע פרוסות: שתי דרגות "בסדר" (הגיע/ממתין) באותה משפחת teal, ואז שני מיני
+  // כישלון נפרדים — שגיאת שליחה שלנו (כתום, "לתקן") וחסימת מטא (אדום, "הנמענת").
+  // כל פרוסה עם תווית ישירה: כתום↔אדום בטריטנופיה קרובים, הצבע לבדו לא מספיק.
   const slices = [
     { key: 'arrived', label: tr('arrived'), value: arrived, cls: 'text-n-teal-9' },
     { key: 'waiting', label: tr('waiting'), value: waiting, cls: 'text-n-teal-8' },
-    { key: 'failed', label: tr('mBlocked'), value: failed, cls: 'text-n-ruby-9' },
+    { key: 'sendError', label: tr('sendError'), value: sendError, cls: 'text-n-amber-9' },
+    { key: 'blocked', label: tr('mBlocked'), value: blocked, cls: 'text-n-ruby-9' },
   ];
 
-  const empty = { sent: 0, arrived: 0, blocked: 0 };
+  const empty = { sent: 0, arrived: 0, blocked: 0, sendError: 0 };
   const bySrc = {
     newLead: stats.bySource?.newLead || empty,
     inSequence: stats.bySource?.inSequence || empty,
@@ -349,7 +363,12 @@ function DeliveryCard({ stats }) {
     { label: tr('reasonCap'), n: t.block_cap || 0 },
     { label: tr('reasonInvalid'), n: t.block_invalid || 0 },
     { label: tr('reasonOptout'), n: t.block_optout || 0 },
-    { label: tr('reasonOther'), n: t.block_other || 0 },
+  ].filter((r) => r.n > 0);
+  // שגיאות שליחה שלנו — קטגוריה נפרדת מהחסימות, עם קריאה לפעולה ("לתקן")
+  const sendErrors = [
+    { label: tr('errTemplate'), n: t.err_template || 0 },
+    { label: tr('errMedia'), n: t.err_media || 0 },
+    { label: tr('errOther'), n: t.err_other || 0 },
   ].filter((r) => r.n > 0);
   const trend = stats.trend || [];
   const maxTrend = Math.max(1, ...trend.map((d) => d.sent || 0));
@@ -377,9 +396,13 @@ function DeliveryCard({ stats }) {
               כאן יש דבר אחד להסתכל עליו, והשאר הוא ההקשר שלו. */}
           <div className="flex items-center gap-4">
             <Donut slices={slices} centerValue={`${successRate}%`} centerLabel={tr('successRate')} />
-            <div className="min-w-0 space-y-1.5 sm:w-48">
+            <div className="min-w-0 space-y-1.5 sm:w-52">
               <LegendRow cls="text-n-teal-9" label={tr('arrived')} value={String(arrived)} />
-              <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')} value={String(failed)} />
+              <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')} value={String(blocked)} />
+              {sendError > 0 ? (
+                <LegendRow cls="text-n-amber-9" label={tr('sendError')} hint={tr('sendErrorHint')}
+                           value={String(sendError)} />
+              ) : null}
               {waiting > 0 ? (
                 <LegendRow cls="text-n-teal-8" label={tr('waiting')} hint={tr('notCounted')}
                            value={String(waiting)} />
@@ -425,12 +448,31 @@ function DeliveryCard({ stats }) {
         </div>
       ) : null}
 
+      {/* ⚠️ שגיאות שליחה שלנו — נפרד מהחסימות, עם קריאה לפעולה. אלה לא נמענות שרופות
+          אלא בקשות שגויות (פרמטר חסר בתבנית, מדיה שבורה) — משהו לתקן בקוד/בתבנית. */}
+      {sendErrors.length > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span className="inline-flex items-center gap-1 font-medium text-n-amber-11">
+            <AlertCircle size={12} aria-hidden="true" />{tr('sendErrTitle')}
+          </span>
+          {sendErrors.map((r) => (
+            <span key={r.label} className="text-n-slate-11">
+              {r.label}: <span className="font-medium text-n-slate-12">{r.n}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       {stats.byTemplate && stats.byTemplate.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-n-slate-11">
-          <span className="text-n-slate-10">{tr('blockedMessages')}</span>
+          <span className="text-n-slate-10">{tr('failedMessages')}</span>
           {stats.byTemplate.map((x) => (
             <span key={x.template} className="font-mono">
-              {x.template} <span className="text-n-ruby-11">({x.failed})</span>
+              {x.template}{' '}
+              {/* אדום = חסימת מטא, כתום = שגיאה שלנו. שם התבנית עם המספר הדומיננטי. */}
+              <span className={x.blocked >= x.send_error ? 'text-n-ruby-11' : 'text-n-amber-11'}>
+                ({x.failed})
+              </span>
             </span>
           ))}
         </div>
@@ -525,11 +567,12 @@ function Donut({ slices, size = 132, thickness = 17, centerValue, centerLabel })
  */
 function SourceRow({ label, hint, src, tr }) {
   const sent = Number(src.sent) || 0;
-  const blocked = Number(src.blocked) || 0;
+  const blocked = Number(src.blocked) || 0;        // חסימת מטא בלבד (ה-backend כבר סינן)
+  const sendError = Number(src.sendError) || 0;    // שגיאת שליחה שלנו
   const arrived = Number(src.arrived) || 0;
   const decided = arrived + blocked;
-  // אחוז החסימה נמדד מתוך מה שהוכרע (הגיע או נחסם), לא מתוך הכול — שליחה שעדיין
-  // ממתינה לתשובת מטא אינה כישלון ואסור שתרכך את האחוז. ראה DeliveryCard.
+  // אחוז החסימה נמדד מתוך מה שמטא הכריעה (הגיע או חסמה). ממתינות ושגיאות-שלנו
+  // אינן חסימה ולא במכנה. ראה DeliveryCard.
   const pct = decided > 0 ? Math.round((blocked / decided) * 100) : 0;
 
   if (sent === 0) return null;   // קבוצה בלי שליחות היום — אין מה להראות, שורה ריקה היא רעש
@@ -540,8 +583,8 @@ function SourceRow({ label, hint, src, tr }) {
         <span className="truncate text-xs text-n-slate-11">
           {label}<span className="text-n-slate-10"> · {hint}</span>
         </span>
-        {/* לשון מפורשת: "נשלחו X · נחסמו Y". השבר הקודם ("0 / 4 נחסמו") נקרא הפוך —
-            כאילו 4 נחסמו. כל מספר נושא את התווית שלו, ואפס-חסימות נאמר במילים. */}
+        {/* לשון מפורשת: "נשלחו X · נחסמו Y". "נחסמו" = מטא בלבד; שגיאת שליחה שלנו
+            מצוינת בנפרד בכתום, כדי לא להיקרא כחסימה של הנמענת. */}
         <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-n-slate-11">
           {tr('mSent')} <b className="font-semibold text-n-slate-12">{sent}</b>
           <span className="text-n-slate-10"> · </span>
@@ -553,9 +596,12 @@ function SourceRow({ label, hint, src, tr }) {
               <span className="text-n-slate-10"> · {pct}%</span>
             </>
           )}
+          {sendError > 0 ? (
+            <span className="text-n-amber-11"> · {sendError} {tr('sendError')}</span>
+          ) : null}
         </span>
       </div>
-      {/* מסילת חסימה: הפס באורך אחוז החסימה. קבוצה נקייה = מסילה ריקה, בלי אדום. */}
+      {/* מסילה: אחוז החסימה (מטא) באדום. קבוצה נקייה = מסילה ריקה. */}
       <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-n-alpha-2">
         <div className="h-full rounded-full bg-current text-n-ruby-9"
              style={{ width: `${pct}%` }} />
