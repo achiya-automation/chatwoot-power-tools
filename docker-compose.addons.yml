@@ -47,6 +47,11 @@ services:
       PORT: "3100"
       RECONCILE_INTERVAL: "60000"
       MEDIA_DIR: /app/media
+      # Shared secret with the Chatwoot-side jbuilder (deploy/chatwoot-sso-jbuilder) that signs a
+      # single-use sign-in ticket into the mobile app's dashboard-app URL — the only way the mobile
+      # WebView (empty cookie jar) reaches the panel without a second login. Empty = feature off;
+      # never defaulted (a guessable value would let anyone mint a ticket into any account).
+      DRIP_SSO_SECRET: ${DRIP_SSO_SECRET:-}
       # Optional: POST {text} here the moment Meta resolves a NEW lead's first message, and the
       # operator gets a WhatsApp ping (delivered / blocked). The path is the shared secret —
       # anyone holding this URL can push a notification. Unset = alerts off.
