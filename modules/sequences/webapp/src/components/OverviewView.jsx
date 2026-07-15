@@ -371,7 +371,6 @@ function DeliveryCard({ stats }) {
     { label: tr('errOther'), n: t.err_other || 0 },
   ].filter((r) => r.n > 0);
   const trend = stats.trend || [];
-  const maxTrend = Math.max(1, ...trend.map((d) => d.sent || 0));
 
   return (
     <div className="mb-5 rounded-xl border border-n-weak bg-n-surface-1 p-4">
@@ -478,30 +477,7 @@ function DeliveryCard({ stats }) {
         </div>
       ) : null}
 
-      {trend.length > 0 ? (
-        <div className="mt-4">
-          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-n-slate-11">
-            <span className="inline-flex items-center gap-1"><TrendingUp size={12} aria-hidden="true" />{tr('trend7')}</span>
-            <span className="inline-flex items-center gap-1 text-n-slate-10"><Dot c="bg-n-teal-9" />{tr('mDelivered')}</span>
-            <span className="inline-flex items-center gap-1 text-n-slate-10"><Dot c="bg-n-ruby-9" />{tr('mBlocked')}</span>
-          </div>
-          <div className="flex items-end gap-1.5">
-            {trend.map((d) => {
-              const okH = Math.round(((d.delivered || 0) / maxTrend) * 44);
-              const failH = Math.round(((d.failed || 0) / maxTrend) * 44);
-              return (
-                <div key={d.day} className="flex flex-1 flex-col items-center gap-1">
-                  <div className="flex w-full max-w-[28px] flex-col justify-end" style={{ height: '48px' }}>
-                    <div className="w-full rounded-t bg-n-ruby-9" style={{ height: `${failH}px` }} title={`${d.day}: ${tr('mBlocked')} ${d.failed || 0}`} />
-                    <div className="w-full bg-n-teal-9" style={{ height: `${okH}px` }} title={`${d.day}: ${tr('mDelivered')} ${d.delivered || 0}`} />
-                  </div>
-                  <span className="text-[10px] text-n-slate-10">{d.day}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
+      {trend.length > 0 ? <TrendChart trend={trend} tr={tr} /> : null}
     </div>
   );
 }
@@ -731,4 +707,81 @@ function SequenceCard({ s }) {
 
 function Dot({ c }) {
   return <span className={`inline-block h-2 w-2 rounded-full ${c}`} aria-hidden="true" />;
+}
+
+/**
+ * TrendChart — נמסר / שגיאת שליחה / חסימת מטא, ליום, לאורך שבוע.
+ *
+ * ⚠️ קנה מידה מרוכך (√), לא לינארי. יום בודד יכול להיות פי 30 משכנו — 12/07 שלח
+ * 1,658 בסופת retry, ושאר הימים 40–170. בקנה מידה לינארי היום הענק מוחץ את כולם
+ * לפיקסל, והמגמה — שכל תפקידה להשוות ימים — הופכת לעמודה אחת וחמישה קווים. השורש
+ * √ נותן ליום הגדול להישאר הגדול ביותר בלי למחוק את הקטנים; המספר המדויק על כל
+ * עמודה מחזיר את הדיוק שהעין מאבדת. (ponytail: √-scale, לוג אם הטווח יגדל מעבר ל-×100.)
+ *
+ * הגובה מייצג נפח (√), והחלוקה הפנימית לינארית — כך שהפרופורציה ירוק/כתום/אדום
+ * בתוך העמודה נאמנה. 2px רווח-משטח בין המקטעים כמו בעוגה.
+ */
+function TrendChart({ trend, tr }) {
+  const H = 104;               // גובה מרבי — היה 48, נמוך מכדי לראות ימים קטנים
+  const total = (d) => (d.delivered || 0) + (d.send_error || 0) + (d.failed || 0);
+  const maxTotal = Math.max(1, ...trend.map(total));
+  const scale = (v) => (v <= 0 ? 0 : Math.round((Math.sqrt(v) / Math.sqrt(maxTotal)) * H));
+
+  const legend = [
+    { cls: 'bg-n-teal-9', label: tr('mDelivered') },
+    { cls: 'bg-n-amber-9', label: tr('sendError') },
+    { cls: 'bg-n-ruby-9', label: tr('mBlocked') },
+  ];
+
+  return (
+    <div className="mt-5 border-t border-n-weak pt-4">
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-n-slate-11">
+        <span className="inline-flex items-center gap-1 font-medium text-n-slate-12">
+          <TrendingUp size={13} aria-hidden="true" />{tr('trend7')}
+        </span>
+        {legend.map((l) => (
+          <span key={l.label} className="inline-flex items-center gap-1 text-n-slate-10">
+            <Dot c={l.cls} />{l.label}
+          </span>
+        ))}
+      </div>
+
+      <div className="flex items-end justify-between gap-2 sm:gap-3" style={{ height: `${H + 22}px` }}>
+        {trend.map((d) => {
+          const n = total(d);
+          const barH = scale(n);
+          // גובה מינימלי 3px למקטע לא-אפס: תוצאה אמיתית (בעיקר שגיאת שליחה, שיכולה
+          // להיות זעירה מול נפח גדול) לא תיעלם לקו של פיקסל.
+          const seg = (v) => (v <= 0 ? 0 : Math.max(3, Math.round((v / n) * barH)));
+          const title = `${d.day} · ${tr('mSent')} ${d.sent || 0} · `
+            + `${tr('mDelivered')} ${d.delivered || 0} · ${tr('mBlocked')} ${d.failed || 0}`
+            + ((d.send_error || 0) > 0 ? ` · ${tr('sendError')} ${d.send_error}` : '');
+          return (
+            <div key={d.day} className="flex flex-1 flex-col items-center gap-1.5" title={title}>
+              {/* נפח היום — המספר שהעין מאבדת בקנה מידה מרוכך */}
+              <span className="text-[10px] font-medium tabular-nums text-n-slate-11">
+                {n > 0 ? n : ''}
+              </span>
+              <div className="flex w-full max-w-[40px] flex-col justify-end gap-px"
+                   style={{ height: `${H}px` }}>
+                {seg(d.failed || 0) > 0 ? (
+                  <div className="w-full rounded-t-md bg-n-ruby-9" style={{ height: `${seg(d.failed || 0)}px` }} />
+                ) : null}
+                {seg(d.send_error || 0) > 0 ? (
+                  <div className={`w-full bg-n-amber-9 ${seg(d.failed || 0) === 0 ? 'rounded-t-md' : ''}`}
+                       style={{ height: `${seg(d.send_error || 0)}px` }} />
+                ) : null}
+                {seg(d.delivered || 0) > 0 ? (
+                  <div className={`w-full bg-n-teal-9 ${seg(d.failed || 0) === 0 && seg(d.send_error || 0) === 0 ? 'rounded-t-md' : ''}`}
+                       style={{ height: `${seg(d.delivered || 0)}px` }} />
+                ) : null}
+                {n === 0 ? <div className="w-full rounded bg-n-alpha-2" style={{ height: '3px' }} /> : null}
+              </div>
+              <span className="text-[11px] tabular-nums text-n-slate-10">{d.day}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
