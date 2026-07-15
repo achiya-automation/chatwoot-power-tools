@@ -484,7 +484,11 @@ after(() => new Promise((resolve) => server.close(resolve)));
 test('GET /drip-api/health is public (200) without any cookie', async () => {
   const res = await fetch(`${srvUrl}/drip-api/health`);
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { ok: true });
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  // Also carries the served build id (empty here — the test app has no dist) so the SPA can
+  // detect a stale tab. Must stay public: the version banner has to work before any login.
+  assert.equal('build' in body, true, 'health reports the build id for the update check');
 });
 
 // ── the leak the brief is about: enrollments (real phone numbers) blocked for a stranger ──

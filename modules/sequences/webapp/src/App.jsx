@@ -38,6 +38,8 @@ import CampaignsView from './components/CampaignsView.jsx';
 import CampaignDetailView from './components/CampaignDetailView.jsx';
 import ComplianceView from './components/ComplianceView.jsx';
 import useChatwootContext from './useChatwootContext.js';
+import useVersionCheck from './useVersionCheck.js';
+import UpdateBanner from './components/UpdateBanner.jsx';
 import {
   listSequences,
   saveSequence,
@@ -163,6 +165,7 @@ export default function App() {
   const t = useT(M);
   const locale = useLocale(); // כיוון (rtl/ltr) ריאקטיבי
   const dir = dirFor(locale);
+  const updateAvailable = useVersionCheck(); // נפרסה גרסה חדשה? → באנר רענון (עוקף מטמון נייד)
 
   const [sequences, setSequences] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -383,6 +386,7 @@ export default function App() {
     return (
       <div dir={dir} className="min-h-screen bg-n-background font-inter text-n-slate-12">
         <div className="mx-auto w-full max-w-[360px] p-4">
+          {updateAvailable && <UpdateBanner />}
           <ConversationStatus
             conversationId={conversation.id}
             accountId={accountId}
@@ -399,6 +403,7 @@ export default function App() {
           embedded ? 'py-4' : 'py-6 sm:py-8'
         }`}
       >
+        {updateAvailable && <UpdateBanner />}
         {/* כותרת — במצב sideNav הכותרת מגיעה מסרגל-הכותרת למטה (לפי טאב); במצב embed
             כותרת נקייה; אחרת הכותרת הגדולה עם האייקון. */}
         {sideNav ? null : embedded ? (
