@@ -835,9 +835,11 @@ async function actionDeliveryStats(accountId) {
     `SELECT to_char(sm.sent_at AT TIME ZONE '${TZ}', 'DD/MM') AS day,
             count(*)::int AS sent,
             count(*) FILTER (WHERE sm.delivery_status IN ('delivered','read'))::int AS delivered,
-            -- המגמה מראה חסימות מטא בלבד; שגיאת תבנית שלנו אינה "חסימה"
+            -- המגמה מפרידה חסימת מטא משגיאת שליחה שלנו, כמו שאר הכרטיס
             count(*) FILTER (WHERE sm.delivery_status = 'failed'
-                             AND sm.error_code IN ${META_BLOCK})::int               AS failed
+                             AND sm.error_code IN ${META_BLOCK})::int               AS failed,
+            count(*) FILTER (WHERE sm.delivery_status = 'failed'
+                             AND (sm.error_code IS NULL OR sm.error_code NOT IN ${META_BLOCK}))::int AS send_error
        FROM drip.sent_messages sm
       WHERE sm.account_id = $1 AND sm.sent_at >= ${dayStart} - interval '6 days'
       GROUP BY 1, date_trunc('day', sm.sent_at AT TIME ZONE '${TZ}')
