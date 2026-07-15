@@ -56,6 +56,7 @@ const M = {
     srcSeq: 'המשך הרצף',
     srcSeqHint: 'כבר קיבלו מאיתנו',
     blockedOf: 'נחסמו',
+    noneBlocked: 'אף אחד לא נחסם',
     todayOutcome: 'תוצאות היום',
     nothingToday: 'עוד לא נשלחו הודעות היום',
     // מי מהרשימה עוד ניתן להשגה
@@ -123,6 +124,7 @@ const M = {
     srcSeq: 'Later in the sequence',
     srcSeqHint: 'already heard from us',
     blockedOf: 'blocked',
+    noneBlocked: 'none blocked',
     todayOutcome: "Today's outcome",
     nothingToday: 'No messages sent today yet',
     reachTitle: 'Who is still reachable',
@@ -526,33 +528,37 @@ function SourceRow({ label, hint, src, tr }) {
   const blocked = Number(src.blocked) || 0;
   const arrived = Number(src.arrived) || 0;
   const decided = arrived + blocked;
+  // אחוז החסימה נמדד מתוך מה שהוכרע (הגיע או נחסם), לא מתוך הכול — שליחה שעדיין
+  // ממתינה לתשובת מטא אינה כישלון ואסור שתרכך את האחוז. ראה DeliveryCard.
   const pct = decided > 0 ? Math.round((blocked / decided) * 100) : 0;
 
+  if (sent === 0) return null;   // קבוצה בלי שליחות היום — אין מה להראות, שורה ריקה היא רעש
+
   return (
-    <div className="flex items-center gap-3">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-xs text-n-slate-11">
-            {label}<span className="text-n-slate-10"> · {hint}</span>
-          </span>
-          <span className="shrink-0 text-xs tabular-nums text-n-slate-11">
-            {decided === 0 ? (
-              <span className="text-n-slate-10">{sent} {tr('mSent')}</span>
-            ) : (
-              <>
-                <b className={`font-semibold ${blocked > 0 ? 'text-n-ruby-11' : 'text-n-slate-12'}`}>
-                  {blocked}
-                </b>
-                <span className="text-n-slate-10"> / {decided} {tr('blockedOf')} · {pct}%</span>
-              </>
-            )}
-          </span>
-        </div>
-        {/* מסילה באותה משפחת צבע כמו המילוי (ordinal), לא אפור נייטרלי */}
-        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-n-alpha-2">
-          <div className="h-full rounded-full bg-current text-n-ruby-9"
-               style={{ width: `${decided > 0 ? pct : 0}%` }} />
-        </div>
+    <div className="min-w-0">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="truncate text-xs text-n-slate-11">
+          {label}<span className="text-n-slate-10"> · {hint}</span>
+        </span>
+        {/* לשון מפורשת: "נשלחו X · נחסמו Y". השבר הקודם ("0 / 4 נחסמו") נקרא הפוך —
+            כאילו 4 נחסמו. כל מספר נושא את התווית שלו, ואפס-חסימות נאמר במילים. */}
+        <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-n-slate-11">
+          {tr('mSent')} <b className="font-semibold text-n-slate-12">{sent}</b>
+          <span className="text-n-slate-10"> · </span>
+          {blocked === 0 ? (
+            <span className="text-n-teal-11">{tr('noneBlocked')}</span>
+          ) : (
+            <>
+              {tr('blockedOf')} <b className="font-semibold text-n-ruby-11">{blocked}</b>
+              <span className="text-n-slate-10"> · {pct}%</span>
+            </>
+          )}
+        </span>
+      </div>
+      {/* מסילת חסימה: הפס באורך אחוז החסימה. קבוצה נקייה = מסילה ריקה, בלי אדום. */}
+      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-n-alpha-2">
+        <div className="h-full rounded-full bg-current text-n-ruby-9"
+             style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
