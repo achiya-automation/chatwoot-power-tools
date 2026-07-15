@@ -30,6 +30,16 @@ import { validateWhatsAppMedia, extForMime } from './media.js';
  *   templates         → data = templates array      (store.data)
  */
 
+/**
+ * buildIdFromHtml(html) → the 14-digit build id of the served bundle, or '' if none.
+ * Vite names assets `[name]-[hash]-${BUILD_ID}.<ext>` (see webapp/vite.config.js) and index.html
+ * references them, so the id rides on the asset suffix. Matching the `-<id>.<ext>` shape (not any
+ * 14 digits on the page) keeps an unrelated number from being mistaken for a build id.
+ */
+export function buildIdFromHtml(html) {
+  return (String(html || '').match(/-(\d{14})\.(?:js|css)\b/) || [])[1] || '';
+}
+
 export function createApp(config) {
   // Initialize store so it can access Chatwoot (needed for templates / enrollment_status)
   initStore(config);
@@ -41,8 +51,16 @@ export function createApp(config) {
   // תמיד יקבל root תקין ולא יזרוק "root path required".
   const mediaDir = config.mediaDir || '/app/media';
 
+  // The build id of the SPA we serve, read once from index.html. The dashboard polls it on
+  // /drip-api/health and shows a "refresh" banner when its own compiled-in __BUILD_ID__ differs —
+  // so a client on a cached old bundle (the mobile WebView especially) learns an update shipped.
+  const buildId = (() => {
+    try { return buildIdFromHtml(fs.readFileSync(`${config.webappDist}/index.html`, 'utf8')); }
+    catch { return ''; }   // dev / no dist → empty, banner simply never fires
+  })();
+
   // ── health check (PUBLIC — registered before the auth gate) ────────────────
-  app.get('/drip-api/health', (_req, res) => res.json({ ok: true }));
+  app.get('/drip-api/health', (_req, res) => res.json({ ok: true, build: buildId }));
 
   // ── uploaded media (PUBLIC — Meta must fetch it, so it bypasses the auth gate) ──
   // Served from a persistent volume at <publicBase>/media/<file>. Only static GETs;
