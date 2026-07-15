@@ -36,7 +36,13 @@ export async function runImport({ contacts, api, labelTitle, onProgress, sleep =
         contactId = match.id; status = 'updated';
       } else {
         const created = await api.createContact(body);
-        contactId = created.id; status = 'created';
+        // Chatwoot wraps a newly-created contact as
+        // `{ payload: { contact: { id, ... } } }`. Older tests used a flat
+        // `{ id }` response, which hid this production-only mismatch and made
+        // label assignment silently skip every newly-created contact.
+        contactId = created?.payload?.contact?.id ?? created?.id;
+        if (!contactId) throw new Error('Chatwoot create response is missing the contact id');
+        status = 'created';
       }
       if (labelTitle && contactId) {
         if (match) {

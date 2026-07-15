@@ -52,6 +52,23 @@ test('assigns label to created/updated contacts', async () => {
   assert.deepEqual(labeled[0], { id: 100, labels: ['ייבוא-יוני'] });
 });
 
+test('assigns a contact label when Chatwoot returns the real nested create response', async () => {
+  const labeled = [];
+  const api = fakeApi({
+    createContact: async () => ({ payload: { contact: { id: 321 } } }),
+    assignLabels: async (id, labels) => { labeled.push({ id, labels }); return {}; },
+  });
+
+  await runImport({
+    contacts: [{ name: 'דנה', phone_number: '+97250', __row: 1 }],
+    api,
+    labelTitle: 'לקוחות-חדשים',
+    sleep: async () => {},
+  });
+
+  assert.deepEqual(labeled, [{ id: 321, labels: ['לקוחות-חדשים'] }]);
+});
+
 test('reports progress', async () => {
   const seen = [];
   await runImport({ contacts: [{ name: 'a', phone_number: '+97250', __row: 1 }, { name: 'b', phone_number: '+97251', __row: 2 }], api: fakeApi(), onProgress: (d, t) => seen.push([d, t]), sleep: async () => {} });
