@@ -27,11 +27,15 @@ export async function setupDb(pool) {
     custom_attributes jsonb DEFAULT '{}'::jsonb)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.conversations (
     id int PRIMARY KEY, display_id int, account_id int, contact_id int,
-    contact_inbox_id int, inbox_id int,
+    contact_inbox_id int, inbox_id int, campaign_id int,
     custom_attributes jsonb DEFAULT '{}'::jsonb, cached_label_list text)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.messages (
     id int, conversation_id int, account_id int, message_type int, content text,
-    status int, content_attributes json, created_at timestamp)`);
+    status int, content_attributes json, source_id text, created_at timestamp)`);
+  await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS contact_inbox_id int');
+  await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS inbox_id int');
+  await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS campaign_id int');
+  await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS source_id text');
   await pool.query(`CREATE TABLE IF NOT EXISTS public.inboxes (
     id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.channel_whatsapp (
