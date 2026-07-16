@@ -291,6 +291,169 @@ test('the session cookie it minted is then accepted on its own (no ticket, no Ch
   assert.equal(chatwootCalls, 0, 'we signed it ourselves — no need to ask Rails');
 });
 
+test('a fresh ticket replaces a valid session cookie when the user switches accounts', async () => {
+  const gate = ssoGate();
+  const previousSession = sign(
+    SESSION,
+    { u: 42, a: 7, exp: Date.now() + 60_000 },
+    SSO_SECRET
+  );
+  const r = await runGate(
+    gate,
+    { cookie: `drip_session=${previousSession}` },
+    { account_id: '10', k: ticketFor({ a: 10 }) },
+    NAV
+  );
+
+  assert.equal(r.passed, true, 'the fresh account ticket must supersede the old account session');
+  assert.deepEqual(r.access.accounts.map((a) => a.id), [10]);
+  assert.equal(r.cookies[0]?.[0], 'drip_session', 'the gate replaces the cookie for the new account');
+});
+
+test('a ticket for another account does not displace or burn the matching session', async () => {
+  let burns = 0;
+  const gate = ssoGate({
+    pool: {
+      query: async () => {
+        burns += 1;
+        return { rowCount: 1 };
+      },
+    },
+  });
+  const currentSession = sign(
+    SESSION,
+    { u: 42, a: 10, exp: Date.now() + 60_000 },
+    SSO_SECRET
+  );
+  const r = await runGate(
+    gate,
+    { cookie: `drip_session=${currentSession}` },
+    { account_id: '10', k: ticketFor({ a: 7 }) }
+  );
+
+  assert.equal(r.passed, true, 'the credential matching the requested account must win');
+  assert.deepEqual(r.access.accounts.map((a) => a.id), [10]);
+  assert.equal(r.cookies.length, 0, 'an unrelated ticket must not replace the matching session');
+  assert.equal(burns, 0, 'an unrelated ticket must remain usable for its own account');
+});
+
+test('a stale mobile session falls back to the Chatwoot browser session for another account', async () => {
+  let profileCalls = 0;
+  const gate = ssoGate({
+    fetchImpl: async () => {
+      profileCalls += 1;
+      return {
+        status: 200,
+        json: async () => ({ id: 1, accounts: [{ id: 1, role: 'administrator' }] }),
+      };
+    },
+  });
+  const staleMobile = sign(
+    SESSION,
+    { u: 42, a: 7, exp: Date.now() + 60_000 },
+    SSO_SECRET
+  );
+  const cookie = `drip_session=${staleMobile}; ${sessionCookie()}`;
+  const r = await runGate(gate, { cookie }, { account_id: '10' });
+
+  assert.equal(r.passed, true, 'desktop navigation must not be trapped by a stale mobile cookie');
+  assert.equal(r.access.isSuperAdmin, true);
+  assert.equal(profileCalls, 1, 'the gate must fall back to Chatwoot profile authorization');
+});
+
+test('browser fallback preserves regular-member tenant isolation after a stale mobile session', async () => {
+  const gate = ssoGate({
+    fetchImpl: async () => ({
+      status: 200,
+      json: async () => ({ id: 9, accounts: [{ id: 10, role: 'agent' }] }),
+    }),
+  });
+  const staleMobile = sign(
+    SESSION,
+    { u: 42, a: 7, exp: Date.now() + 60_000 },
+    SSO_SECRET
+  );
+  const cookie = `drip_session=${staleMobile}; ${sessionCookie()}`;
+
+  const member = await runGate(gate, { cookie }, { account_id: '10' });
+  assert.equal(member.passed, true, 'a regular member may reach their target account');
+  assert.equal(member.access.isSuperAdmin, false);
+
+  const nonMember = await runGate(gate, { cookie }, { account_id: '99' });
+  assert.equal(nonMember.passed, false, 'browser fallback must not widen tenant access');
+  assert.equal(nonMember.status, 403);
+});
+
+test('an invalid or replayed ticket does not displace a valid account session', async () => {
+  const gate = ssoGate();
+  const session = sign(SESSION, { u: 42, a: 7, exp: Date.now() + 60_000 }, SSO_SECRET);
+  const forged = sign(
+    TICKET,
+    { u: 42, a: 7, exp: Date.now() + 60_000, jti: newJti() },
+    'wrong-secret'
+  );
+  const forgedResult = await runGate(
+    gate,
+    { cookie: `drip_session=${session}` },
+    { account_id: '7', k: forged }
+  );
+  assert.equal(forgedResult.passed, true);
+  assert.equal(forgedResult.cookies.length, 0, 'a forged ticket must not rotate the valid session');
+
+  const k = ticketFor();
+  const first = await runGate(gate, {}, { account_id: '7', k });
+  assert.equal(first.passed, true);
+  const issued = first.cookies[0]?.[1];
+  const replay = await runGate(
+    gate,
+    { cookie: `drip_session=${issued}` },
+    { account_id: '7', k }
+  );
+  assert.equal(replay.passed, true, 'a spent URL ticket must not invalidate its issued session');
+  assert.equal(replay.cookies.length, 0, 'a replay must never mint another cookie');
+});
+
+test('a ticket-store failure is fail-closed while existing sessions remain usable', async () => {
+  const gate = ssoGate({ pool: { query: async () => { throw new Error('db unavailable'); } } });
+  const session = sign(SESSION, { u: 42, a: 7, exp: Date.now() + 60_000 }, SSO_SECRET);
+
+  const existing = await runGate(
+    gate,
+    { cookie: `drip_session=${session}` },
+    { account_id: '7', k: ticketFor() }
+  );
+  assert.equal(existing.passed, true, 'a DB outage must not evict an already-valid session');
+  assert.equal(existing.cookies.length, 0, 'the unspent ticket must not mint a cookie');
+
+  const ticketOnly = await runGate(gate, {}, { account_id: '7', k: ticketFor() });
+  assert.equal(ticketOnly.passed, false, 'an unburnable ticket must never grant access');
+  assert.equal(ticketOnly.status, 401);
+});
+
+test('a ticket-store failure still allows a valid Chatwoot browser session', async () => {
+  let profileCalls = 0;
+  const gate = ssoGate({
+    pool: { query: async () => { throw new Error('db unavailable'); } },
+    fetchImpl: async () => {
+      profileCalls += 1;
+      return {
+        status: 200,
+        json: async () => ({ id: 9, accounts: [{ id: 10, role: 'agent' }] }),
+      };
+    },
+  });
+  const r = await runGate(
+    gate,
+    { cookie: sessionCookie() },
+    { account_id: '10', k: ticketFor({ a: 10 }) }
+  );
+
+  assert.equal(r.passed, true, 'a ticket-store outage must not block browser authorization');
+  assert.equal(r.access.isSuperAdmin, false);
+  assert.equal(r.cookies.length, 0, 'an unspent ticket must never mint a session');
+  assert.equal(profileCalls, 1);
+});
+
 // A URL leaks: into the proxy's access log, the app's store, a crash report. Single use is the
 // whole defence — by the time anyone could replay a scraped ticket, the agent's phone spent it.
 test('a ticket is SINGLE USE — the replay is refused', async () => {

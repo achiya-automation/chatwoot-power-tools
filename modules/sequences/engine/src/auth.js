@@ -278,15 +278,24 @@ export function authGate(config) {
     return claims ? accessFromClaims(claims) : null;
   };
 
-  // A ticket in the URL — the phone's FIRST request, carrying no cookie at all. Verify it was
-  // signed by Chatwoot, spend it (single use), and hand back a session cookie so the SPA's
-  // subsequent fetch() calls authenticate normally.
-  const sessionFromTicket = async (req, res) => {
+  // Inspect a URL ticket without consuming it. The gate first decides which mobile credential
+  // authorizes the requested account; an unrelated but valid ticket must not burn itself or
+  // overwrite a session that already matches the request.
+  const claimsFromTicket = (req) => {
     const k = req.query?.k;
     if (!ssoSecret || !k || !config.pool) return null;
-    const claims = verify(TICKET, k, ssoSecret);
+    return verify(TICKET, k, ssoSecret);
+  };
+
+  // Consume the selected ticket (single use), then hand back a session cookie so the SPA's
+  // subsequent fetch() calls authenticate normally.
+  const sessionFromTicket = async (claims, res) => {
     if (!claims) return null;
-    if (!(await burn(config.pool, claims.jti, claims.exp))) return null;   // already spent → refuse
+    // Express 4 does not catch a rejected async middleware promise. A ticket-store outage must
+    // fail closed here while still allowing an already-valid cookie/browser session to continue.
+    let spent = false;
+    try { spent = await burn(config.pool, claims.jti, claims.exp); } catch { return null; }
+    if (!spent) return null;                                             // already spent → refuse
 
     const exp = Date.now() + SESSION_MS;
     res.cookie('drip_session', sign(SESSION, { u: claims.u, a: claims.a, exp }, ssoSecret), {
@@ -301,17 +310,41 @@ export function authGate(config) {
 
   return async function gate(req, res, next) {
     const cookie = req.headers.cookie || '';
+    const acc = parseInt(req.query?.account_id || '0', 10);
 
-    // The mobile doors, cheapest first. Both are self-signed, so neither costs a Chatwoot call.
-    const mobile = sessionFromCookie(cookie) || (await sessionFromTicket(req, res));
-    if (mobile) {
-      req.dripAccess = mobile;
-      const acc0 = parseInt(req.query?.account_id || '0', 10);
-      if (acc0 && !canAccessAccount(mobile, acc0)) return deny(req, res, 403, 'forbidden');
+    // Pick the credential that authorizes this account. A fresh matching URL ticket beats a stale
+    // cookie when the WebView moves from account A to B; a ticket for A must not displace a cookie
+    // that already authorizes B. Only the selected ticket is consumed and allowed to mint a cookie.
+    const ticketClaims = claimsFromTicket(req);
+    const ticketCandidate = ticketClaims ? accessFromClaims(ticketClaims) : null;
+    const cookieAccess = sessionFromCookie(cookie);
+
+    if (ticketCandidate && (!acc || canAccessAccount(ticketCandidate, acc))) {
+      const ticketAccess = await sessionFromTicket(ticketClaims, res);
+      if (ticketAccess) {
+        req.dripAccess = ticketAccess;
+        return next();
+      }
+    }
+
+    if (cookieAccess && (!acc || canAccessAccount(cookieAccess, acc))) {
+      req.dripAccess = cookieAccess;
       return next();
     }
 
-    if (!cookie) return deny(req, res, 401, 'unauthorized');
+    // If neither mobile credential authorizes the requested account, fall through to the regular
+    // Chatwoot browser session. This is required by injected surfaces (campaign statistics,
+    // sequences navigation), which carry cw_d_session_info but no URL ticket of their own.
+    const mobileMismatch = Boolean(acc && (
+      (ticketCandidate && !canAccessAccount(ticketCandidate, acc)) ||
+      (cookieAccess && !canAccessAccount(cookieAccess, acc))
+    ));
+
+    if (!cookie) {
+      return mobileMismatch
+        ? deny(req, res, 403, 'forbidden')
+        : deny(req, res, 401, 'unauthorized');
+    }
 
     const key = createHash('sha256').update(cookie).digest('hex');
     let access = null;
@@ -326,13 +359,16 @@ export function authGate(config) {
       try { access = await p; } finally { inflight.delete(key); }
       if (access && access.ok) cache.set(key, { access, expiry: Date.now() + TTL_MS });
     }
-    if (!access || !access.ok) return deny(req, res, 401, 'unauthorized');
+    if (!access || !access.ok) {
+      return mobileMismatch
+        ? deny(req, res, 403, 'forbidden')
+        : deny(req, res, 401, 'unauthorized');
+    }
 
     req.dripAccess = access;
 
     // Tenant isolation: a logged-in user may only act on accounts they belong to (a
     // super-admin on any). Stops ?account_id=N from reading another tenant's leads.
-    const acc = parseInt(req.query?.account_id || '0', 10);
     if (acc && !canAccessAccount(access, acc)) {
       return deny(req, res, 403, 'forbidden');
     }
