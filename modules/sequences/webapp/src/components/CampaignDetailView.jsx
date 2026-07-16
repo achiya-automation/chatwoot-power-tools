@@ -13,26 +13,26 @@ import { translate } from '../i18n.js';
 
 // מילון co-located (he/en) — כל הטקסטים הגלויים של תצוגת פרטי הקמפיין (רמה 2).
 const M = {
-  he: { back: 'חזרה', audience: 'קהל', sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו',
+  he: { back: 'חזרה', audience: 'קהל יעד', attempted: 'נוסו לשליחה', sent: 'נשלחו בהצלחה', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו',
         funnel: 'משפך מסירה', replied: 'הגיבו', replyRate: 'שיעור תגובה', costTitle: 'עלות משוערת',
         costNote: 'אומדן: תעריף Meta לישראל ($ להודעה), ללא חלון שירות חינם/הנחות נפח · עודכן',
         costUnknown: 'לתבנית אין קטגוריה מסונכרנת — אין אומדן עלות',
         readNote: 'אחוז הקריאה תלוי באישורי קריאה אצל הנמענים — נמענים שכיבו אותם לא נספרים',
-        recipients: 'נמענים', notSent: 'לא נשלחו', notSentNote: 'לפי חברות בתווית כרגע — לא בזמן השליחה',
-        name: 'שם', phone: 'טלפון', status: 'סטטוס', when: 'זמן', reason: 'סיבה',
+        recipients: 'נמענים', notSent: 'לא נוסו לשליחה', snapshotNote: 'לפי תמונת הקהל שנשמרה בזמן הקמפיין', currentLabelNote: 'לפי החברות בתווית כרגע — לקמפיין הישן אין תמונת קהל שמורה',
+        name: 'שם', phone: 'טלפון', status: 'סטטוס', attempts: 'ניסיונות', when: 'זמן', reason: 'סיבה', conversation: 'קישור לשיחה', noAttempt: 'לא נוצר ניסיון שליחה',
         export: 'ייצוא CSV', print: 'הדפסה / PDF', printedAt: 'הופק', openConv: 'פתיחת השיחה ב-Chatwoot',
         noReplyText: '(מדיה או הודעה ללא טקסט)', errLoad: 'שגיאה בטעינת הקמפיין', notFound: 'הקמפיין לא נמצא', retry: 'ניסיון חוזר',
-        s_sent: 'נשלח', s_delivered: 'נמסר', s_read: 'נקרא', s_failed: 'נכשל', s_pending: 'ממתין', s_notsent: 'לא נשלח' },
-  en: { back: 'Back', audience: 'Audience', sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed',
+        s_sent: 'נשלח — ממתין למסירה', s_delivered: 'נמסר', s_read: 'נקרא', s_failed: 'נכשל', s_pending: 'ממתין', s_notsent: 'לא נוסה לשליחה' },
+  en: { back: 'Back', audience: 'Target audience', attempted: 'Attempted', sent: 'Sent successfully', delivered: 'Delivered', read: 'Read', failed: 'Failed',
         funnel: 'Delivery funnel', replied: 'Replied', replyRate: 'Reply rate', costTitle: 'Estimated cost',
         costNote: 'Estimate: Meta IL rate ($/msg), excl. free service window / volume discounts · updated',
         costUnknown: 'The template has no synced category — no cost estimate',
         readNote: "Read rate depends on recipients' read receipts — recipients who disabled them are not counted",
-        recipients: 'Recipients', notSent: 'Not sent', notSentNote: 'by current label membership — not as of send time',
-        name: 'Name', phone: 'Phone', status: 'Status', when: 'Time', reason: 'Reason',
+        recipients: 'Recipients', notSent: 'Not attempted', snapshotNote: 'from the audience snapshot captured at campaign time', currentLabelNote: 'from current label membership — this legacy campaign has no saved audience snapshot',
+        name: 'Name', phone: 'Phone', status: 'Status', attempts: 'Attempts', when: 'Time', reason: 'Reason', conversation: 'Conversation link', noAttempt: 'No send attempt was created',
         export: 'Export CSV', print: 'Print / PDF', printedAt: 'Generated', openConv: 'Open the conversation in Chatwoot',
         noReplyText: '(media or empty message)', errLoad: 'Failed to load campaign', notFound: 'Campaign not found', retry: 'Retry',
-        s_sent: 'Sent', s_delivered: 'Delivered', s_read: 'Read', s_failed: 'Failed', s_pending: 'Pending', s_notsent: 'Not sent' },
+        s_sent: 'Sent — awaiting delivery', s_delivered: 'Delivered', s_read: 'Read', s_failed: 'Failed', s_pending: 'Pending', s_notsent: 'Not attempted' },
 };
 // Status enum (messages.status, ראו engine/src/campaigns.js): sent:0, delivered:1, read:2, failed:3.
 const STATUS_KEY = { 0: 's_sent', 1: 's_delivered', 2: 's_read', 3: 's_failed' };
@@ -90,28 +90,37 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   );
   if (!d) return <div className="py-16 text-center text-sm text-n-slate-11">{t('notFound')}</div>;
 
-  const { campaign, funnel, engagement, recipients, not_sent } = d;
-  const cost = estimateCost({ category: campaign.category, sent: funnel.sent });
+  const { campaign, funnel, engagement, recipients, not_sent, audience_source } = d;
+  // Meta charges for delivered template messages; failed/pending attempts must not inflate cost.
+  const cost = estimateCost({ category: campaign.category, sent: funnel.delivered });
 
   // ייצוא CSV צד-לקוח: BOM (פתיחה תקינה בעברית ב-Excel) + בריחה מלאה דרך lib/csv.js
   // (ציטוט, הכפלת גרשיים, ומגן הזרקת-נוסחאות CWE-1236 — שם/טלפון מפרופיל וואטסאפ אינם מהימנים).
   // כולל עמודת סיבת-כשל מתורגמת, ואת רשימת "לא נשלחו" כשורות עם סטטוס משלהן.
   const exportCsv = () => {
-    const head = [t('name'), t('phone'), t('status'), t('when'), t('reason')];
-    const body = recipients.map((r) => [r.contact_name || '', r.phone || '', t(STATUS_KEY[r.status] || 's_pending'), r.sent_at || '', r.status === 3 ? errorLabel(r.error_title) : '']);
-    const missed = (not_sent || []).map((c) => [c.contact_name || '', c.phone || '', t('s_notsent'), '', '']);
-    const csv = '﻿' + [head, ...body, ...missed].map(csvRow).join('\n');
+    const head = [t('name'), t('phone'), t('status'), t('attempts'), t('when'), t('reason'), t('conversation')];
+    const body = recipients.map((r) => {
+      const conversationUrl = Number.isInteger(r.conversation_display_id)
+        ? `${window.location.origin}/app/accounts/${accountId}/conversations/${r.conversation_display_id}` : '';
+      return [r.contact_name || '', r.phone || '', t(STATUS_KEY[r.status] || 's_pending'), r.attempt_count || 1, r.sent_at || '', r.status === 3 ? errorLabel(r.error_title) : '', conversationUrl];
+    });
+    const missed = (not_sent || []).map((c) => [c.contact_name || '', c.phone || '', t('s_notsent'), 0, '', t('noAttempt'), '']);
+    const csv = '﻿' + [head, ...body, ...missed].map(csvRow).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const a = document.createElement('a'); a.href = url; a.download = `campaign-${campaign.id}.csv`; a.click();
-    URL.revokeObjectURL(url);
+    const safeTitle = String(campaign.title || `campaign-${campaign.id}`).replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 70);
+    const date = String(campaign.created_at || '').slice(0, 10) || campaign.id;
+    const a = document.createElement('a'); a.href = url; a.download = `דוח-${safeTitle}-${date}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const FUNNEL = [
     { label: t('audience'), value: funnel.audience, text: 'text-n-slate-12' },
+    { label: t('attempted'), value: funnel.attempted, text: 'text-n-slate-12' },
     { label: t('sent'), value: funnel.sent, text: 'text-n-slate-12' },
     { label: t('delivered'), value: funnel.delivered, sub: `${pct(funnel.delivered, funnel.sent)}%`, text: 'text-n-teal-11' },
     { label: t('read'), value: funnel.read, sub: `${pct(funnel.read, funnel.sent)}%`, text: 'text-n-blue-11' },
-    { label: t('failed'), value: funnel.failed, sub: `${pct(funnel.failed, funnel.sent)}%`, text: 'text-n-ruby-11' },
+    { label: t('failed'), value: funnel.failed, sub: `${pct(funnel.failed, funnel.attempted)}%`, text: 'text-n-ruby-11' },
   ];
 
   return (
@@ -142,7 +151,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
       {/* funnel — דפוס DeliveryMetric מ-OverviewView (grid + ערך גדול + תת-אחוז) */}
       <div className="mb-5 rounded-xl border border-n-weak bg-n-surface-1 p-4">
         <h2 className="mb-3 text-sm font-medium text-n-slate-12">{t('funnel')}</h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {FUNNEL.map((m) => (
             <div key={m.label} className="flex flex-col items-start rounded-lg bg-n-alpha-1 px-3 py-2 ring-1 ring-n-weak">
               <span className={`text-xl font-semibold leading-none ${m.text}`}>{m.value}</span>
@@ -190,7 +199,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
       {/* נמענים */}
       <h2 className="mb-2 text-sm font-medium text-n-slate-12">{t('recipients')} ({recipients.length})</h2>
       <Table>
-        <THead><TR className="hover:bg-transparent"><TH>{t('name')}</TH><TH>{t('phone')}</TH><TH>{t('status')}</TH><TH>{t('when')}</TH></TR></THead>
+        <THead><TR className="hover:bg-transparent"><TH>{t('name')}</TH><TH>{t('phone')}</TH><TH>{t('status')}</TH><TH>{t('attempts')}</TH><TH>{t('when')}</TH></TR></THead>
         <TBody>
           {recipients.map((r, i) => (
             <TR
@@ -207,6 +216,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
               <TD><Badge color={r.status === 3 ? 'ruby' : r.status === 2 ? 'blue' : r.status === 1 ? 'teal' : 'slate'}>{t(STATUS_KEY[r.status] || 's_pending')}</Badge>
                 {/* ההסבר המתורגם מוצג; המחרוזת הגולמית של Meta נשמרת ב-title לרחיפה (תמיכה/דיבוג) */}
                 {r.error_title ? <span title={r.error_title} className="mt-0.5 block text-xs text-n-ruby-11">{errorLabel(r.error_title)}</span> : null}</TD>
+              <TD><span className="text-xs text-n-slate-11">{r.attempt_count || 1}</span></TD>
               <TD><span className="text-xs text-n-slate-11">{r.sent_at || '—'}</span></TD>
             </TR>
           ))}
@@ -216,7 +226,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
       {/* לא נשלחו — קהל היעד שלא קיבל הודעה (למשל: הצטרף לתווית אחרי השליחה) */}
       {not_sent && not_sent.length > 0 ? (
         <div className="mt-5">
-          <h2 className="mb-2 text-sm font-medium text-n-slate-12">{t('notSent')} ({not_sent.length}) <span className="font-normal text-xs text-n-slate-10">· {t('notSentNote')}</span></h2>
+          <h2 className="mb-2 text-sm font-medium text-n-slate-12">{t('notSent')} ({not_sent.length}) <span className="font-normal text-xs text-n-slate-10">· {t(audience_source === 'snapshot' ? 'snapshotNote' : 'currentLabelNote')}</span></h2>
           <div className="flex flex-wrap gap-1.5">
             {not_sent.map((c, i) => (
               <span key={i} className="rounded-full bg-n-alpha-2 px-2.5 py-1 text-xs text-n-slate-11">{c.contact_name || c.phone}</span>
