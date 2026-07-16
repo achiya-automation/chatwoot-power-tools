@@ -61,8 +61,9 @@ export default function CampaignsView({ accountId, onSelect }) {
   useEffect(() => { load(); }, [load]);
 
   const totals = useMemo(() => rows.reduce((a, c) => ({
-    sent: a.sent + c.sent, delivered: a.delivered + c.delivered, read: a.read + c.read, failed: a.failed + c.failed,
-  }), { sent: 0, delivered: 0, read: 0, failed: 0 }), [rows]);
+    attempted: a.attempted + (c.attempted || 0), sent: a.sent + c.sent,
+    delivered: a.delivered + c.delivered, read: a.read + c.read, failed: a.failed + c.failed,
+  }), { attempted: 0, sent: 0, delivered: 0, read: 0, failed: 0 }), [rows]);
 
   const ranked = useMemo(
     () => [...rows].filter((c) => c.sent > 0).sort((a, b) => pct(b.read, b.sent) - pct(a.read, a.sent)).slice(0, 5),
@@ -81,7 +82,7 @@ export default function CampaignsView({ accountId, onSelect }) {
     { label: t('kSent'), value: totals.sent, text: 'text-n-slate-12' },
     { label: t('kDelivered'), value: `${pct(totals.delivered, totals.sent)}%`, text: 'text-n-teal-11' },
     { label: t('kRead'), value: `${pct(totals.read, totals.sent)}%`, text: 'text-n-blue-11' },
-    { label: t('kFailed'), value: `${pct(totals.failed, totals.sent)}%`, text: 'text-n-ruby-11' },
+    { label: t('kFailed'), value: `${pct(totals.failed, totals.attempted)}%`, text: 'text-n-ruby-11' },
   ];
   // Preflight — תקציב 24h מול תקרת ה-tier: מונע קמפיין שינחת על 131049 המוני.
   if (tier) {
@@ -94,7 +95,7 @@ export default function CampaignsView({ accountId, onSelect }) {
   }
 
   // מחושב פעם אחת לכל הגרף (לא בכל איטרציה של ה-map) — הגובה המקסימלי לנרמול העמודות.
-  const maxT = Math.max(1, ...trend.map((x) => x.sent || 0));
+  const maxT = Math.max(1, ...trend.map((x) => x.attempted || x.sent || 0));
 
   return (
     <>
