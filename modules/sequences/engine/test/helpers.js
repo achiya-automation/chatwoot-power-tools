@@ -27,6 +27,7 @@ export async function setupDb(pool) {
     custom_attributes jsonb DEFAULT '{}'::jsonb)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.conversations (
     id int PRIMARY KEY, display_id int, account_id int, contact_id int,
+    contact_inbox_id int, inbox_id int,
     custom_attributes jsonb DEFAULT '{}'::jsonb, cached_label_list text)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.messages (
     id int, conversation_id int, account_id int, message_type int, content text,
