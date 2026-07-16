@@ -196,9 +196,12 @@
     }
   }
 
-  // Native aggregate-KPI bar at the top of the campaigns list (totals across all campaigns), so the
-  // headline numbers are visible without opening the overview overlay. Same card design as the
-  // webapp's KPI row. Idempotent (guarded by id + __sig).
+  // Native aggregate-KPI strip at the top of the campaigns list (totals across all campaigns), so
+  // the headline numbers stay visible without opening the overview overlay. This intentionally is
+  // ONE compact flex row rather than a grid of cards: injected responsive Tailwind grid classes are
+  // not guaranteed to exist in Chatwoot's precompiled CSS and previously fell back to two columns,
+  // pushing the actual campaign list several hundred pixels below the fold. Idempotent (guarded by
+  // id + __sig).
   function renderKpiBar() {
     if (!onPage()) return;
     if (!statsList.length) return; // stats not loaded yet
@@ -237,11 +240,13 @@
         cls: !statsTier.unlimited && statsTier.remaining === 0 ? 'text-n-ruby-11' : 'text-n-teal-11',
       });
     }
-    bar.className = 'grid grid-cols-2 gap-3 mb-5 ' + (KPIS.length > 5 ? 'sm:grid-cols-6' : 'sm:grid-cols-5');
-    bar.innerHTML = KPIS.map(function (k) {
-      return '<div class="flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak"' + (k.title ? ' title="' + k.title + '"' : '') + '>' +
-               '<span class="text-2xl font-semibold leading-none ' + k.cls + '">' + k.value + '</span>' +
-               '<span class="mt-1 text-xs text-n-slate-11">' + k.label + '</span>' +
+    bar.className = 'flex flex-wrap items-center rounded-xl bg-n-alpha-1 px-2 py-1.5 ring-1 ring-n-weak mb-4';
+    bar.setAttribute('aria-label', t('overview'));
+    bar.innerHTML = KPIS.map(function (k, i) {
+      var separator = i ? 'border-inline-start:1px solid rgb(var(--slate-6)/0.55);' : '';
+      return '<div class="flex items-center justify-center gap-2 px-3 py-1.5" style="flex:1 1 108px;min-width:0;' + separator + '"' + (k.title ? ' title="' + k.title + '"' : '') + '>' +
+               '<span class="text-sm font-semibold leading-none ' + k.cls + '">' + k.value + '</span>' +
+               '<span class="text-xs text-n-slate-11" style="white-space:nowrap">' + k.label + '</span>' +
              '</div>';
     }).join('');
   }

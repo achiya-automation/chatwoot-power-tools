@@ -62,6 +62,12 @@ test('injector: KPI bar aggregates all campaigns and lands in .max-w-5xl', async
   assert.ok(bar, 'KPI bar should exist');
   assert.match(bar.textContent, /6/); // sent total = 2+4
   assert.doesNotMatch(bar.textContent, /נותרו להיום/); // אין מידע tier → אין אריח
+  assert.ok(bar.classList.contains('flex'), 'KPI summary should be one compact flex strip');
+  assert.ok(!bar.classList.contains('grid'), 'the old multi-row card grid must not return');
+  assert.ok(bar.classList.contains('py-1.5'), 'compact strip should use shallow vertical padding');
+  assert.equal(bar.children.length, 5, 'one inline metric per aggregate KPI');
+  assert.equal(bar.children[0].style.flex, '1 1 108px');
+  assert.equal(bar.children[0].querySelector('.text-sm').textContent, '2');
 });
 
 test('injector: tier preflight tile shows remaining daily budget', async () => {
