@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
-import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from '../src/campaigns.js';
+import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo, normalizeCampaignPhone } from '../src/campaigns.js';
 import { DEFAULT_CAP, _resetHealthCache } from '../src/meta.js';
 import { handleAction } from '../src/store.js';
 
@@ -16,8 +16,9 @@ beforeEach(async () => {
   await setupDb(pool); // schema drip
   await pool.query(`
     CREATE TABLE IF NOT EXISTS public.campaigns (id int PRIMARY KEY, display_id int, account_id int, inbox_id int, title text, message text, campaign_type int, campaign_status int, audience jsonb DEFAULT '[]'::jsonb, template_params jsonb DEFAULT '{}'::jsonb, scheduled_at timestamp, created_at timestamp);
-    CREATE TABLE IF NOT EXISTS public.messages (id int, conversation_id int, account_id int, message_type int, content text, status int, content_attributes json, created_at timestamp);
-    CREATE TABLE IF NOT EXISTS public.conversations (id int PRIMARY KEY, display_id int, account_id int, contact_id int);
+    CREATE TABLE IF NOT EXISTS public.messages (id int, conversation_id int, account_id int, message_type int, content text, status int, content_attributes json, source_id text, created_at timestamp);
+    CREATE TABLE IF NOT EXISTS public.conversations (id int PRIMARY KEY, display_id int, account_id int, contact_id int, contact_inbox_id int, inbox_id int, campaign_id int);
+    CREATE TABLE IF NOT EXISTS public.contact_inboxes (id int PRIMARY KEY, contact_id int, inbox_id int, source_id text);
     CREATE TABLE IF NOT EXISTS public.contacts (id int PRIMARY KEY, account_id int, name text, phone_number text, email text);
     CREATE TABLE IF NOT EXISTS public.inboxes (id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int);
     CREATE TABLE IF NOT EXISTS public.labels (id int PRIMARY KEY, account_id int, title text);
@@ -26,7 +27,7 @@ beforeEach(async () => {
   `);
   // drip.sent_messages משתתפת בחישוב ה-tier (union) — מנקים גם אותה כדי שבדיקות מקבצים
   // אחרים (delivery/send_cap) לא ידלפו לספירת ה-24h.
-  await pool.query('TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations, public.inboxes, public.labels, public.tags, public.taggings, drip.sent_messages');
+  await pool.query('TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations, public.contact_inboxes, public.inboxes, public.labels, public.tags, public.taggings, drip.sent_messages, drip.campaign_audience_snapshots, drip.campaign_send_snapshots');
 });
 
 test('scaffold: campaigns table is queryable', async () => {
@@ -45,11 +46,11 @@ async function seedCampaign({ id, account = 1, inbox = 10, type = 1, status = 1,
   // WhatsApp inbox so the join filters it in
   await query(`INSERT INTO public.inboxes(id, account_id, name, channel_type, channel_id) VALUES ($1,$2,'WA','Channel::Whatsapp',$1) ON CONFLICT (id) DO NOTHING`, [inbox, account]);
 }
-async function seedCampaignMessage({ id, account = 1, conv = 500, campaignId, status }) {
-  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
-               VALUES ($1,$2,$3,1,$4,$5, now())`,
+async function seedCampaignMessage({ id, account = 1, conv = 500, campaignId, status, sourceId = `wamid-${id}` }) {
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, source_id, created_at)
+               VALUES ($1,$2,$3,1,$4,$5,$6, now())`,
     // prod stores content_attributes DOUBLE-ENCODED (a JSON string, not an object) — mirror it
-    [id, conv, account, status, JSON.stringify(JSON.stringify({ campaign_id: campaignId }))]);
+    [id, conv, account, status, JSON.stringify(JSON.stringify({ campaign_id: campaignId })), sourceId]);
 }
 
 test('listCampaigns: aggregates status counts per campaign', async () => {
@@ -60,7 +61,8 @@ test('listCampaigns: aggregates status counts per campaign', async () => {
   const list = await listCampaigns(query, 1);
   assert.equal(list.length, 1);
   assert.equal(list[0].title, 'השקה');
-  assert.equal(list[0].sent, 3);
+  assert.equal(list[0].attempted, 3);
+  assert.equal(list[0].sent, 2); // failed is an attempt, not a successful send
   assert.equal(list[0].delivered, 2); // status 1 + 2
   assert.equal(list[0].read, 1);
   assert.equal(list[0].failed, 1);
@@ -100,6 +102,7 @@ test('getCampaignDetail: funnel + recipients + engagement', async () => {
 
   const d = await getCampaignDetail(query, 1, 20);
   assert.equal(d.campaign.title, 'מבצע');
+  assert.equal(d.funnel.attempted, 2);
   assert.equal(d.funnel.sent, 2);
   assert.equal(d.funnel.delivered, 2); // status 1 + 2
   assert.equal(d.funnel.read, 1);
@@ -151,6 +154,113 @@ test('getCampaignDetail: not_sent = labeled audience minus recipients; excludes 
   assert.equal(d.not_sent.length, 1);
   assert.equal(d.not_sent[0].phone, '+972500000011'); // איתי — לא קיבל
   assert.equal(d.funnel.audience, 2); // sent(1) + not_sent(1)
+  assert.equal(d.audience_source, 'current_label');
+});
+
+test('getCampaignDetail: snapshot restores canonical names/phones and collapses retries', async () => {
+  await seedCampaign({ id: 22, title: 'מקור אמת' });
+  // Original imported audience contacts (correct business data).
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES
+    (20,1,'לקוחה מקורית','0501234567'),
+    (21,1,'לא נוסתה','+972501234568'),
+    (120,1,'WhatsApp 972501234567',NULL)`);
+  await query(`INSERT INTO public.contact_inboxes(id, contact_id, inbox_id, source_id) VALUES
+    (220,120,10,'972501234567')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id, contact_inbox_id, inbox_id) VALUES
+    (520,9520,1,120,220,10)`);
+  await query(`INSERT INTO drip.campaign_audience_snapshots(account_id,campaign_id,contact_id,contact_name,phone) VALUES
+    (1,22,20,'לקוחה מקורית','0501234567'),
+    (1,22,21,'לא נוסתה','+972501234568')`);
+  // Same logical contact: first attempt failed, retry was read. String campaign_id must match too.
+  await query(`INSERT INTO public.messages(id,conversation_id,account_id,message_type,status,content_attributes,created_at) VALUES
+    (2201,520,1,1,3,$1,now()),
+    (2202,520,1,1,2,$2,now() + interval '1 minute')`, [
+    JSON.stringify(JSON.stringify({ campaign_id: 22, external_error: '131049: failed' })),
+    JSON.stringify(JSON.stringify({ campaign_id: '22' })),
+  ]);
+
+  const d = await getCampaignDetail(query, 1, 22);
+  assert.equal(d.audience_source, 'snapshot');
+  assert.deepEqual(d.funnel, { audience: 2, attempted: 1, sent: 1, delivered: 1, read: 1, failed: 0, pending: 0 });
+  assert.equal(d.recipients.length, 1);
+  assert.equal(d.recipients[0].contact_name, 'לקוחה מקורית');
+  assert.equal(d.recipients[0].phone, '+972501234567');
+  assert.equal(d.recipients[0].attempt_count, 2);
+  assert.equal(d.recipients[0].status, 2);
+  assert.equal(d.not_sent.length, 1);
+  assert.equal(d.not_sent[0].contact_name, 'לא נוסתה');
+
+  const summary = (await listCampaigns(query, 1)).find((c) => c.id === 22);
+  assert.equal(summary.attempted, 1);
+  assert.equal(summary.sent, 1);
+  assert.equal(summary.failed, 0);
+});
+
+test('getCampaignDetail: durable send ledger recovers an untagged echo and preserves failure', async () => {
+  await seedCampaign({ id: 24, title: 'היסטוריה יציבה' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES
+    (30,1,'לקוח מקורי','0501234570'),
+    (130,1,'WhatsApp 972501234570',NULL)`);
+  await query(`INSERT INTO public.contact_inboxes(id, contact_id, inbox_id, source_id) VALUES
+    (230,130,10,'972501234570')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id, contact_inbox_id, inbox_id, campaign_id) VALUES
+    (530,9530,1,130,230,10,24)`);
+  await query(`INSERT INTO drip.campaign_audience_snapshots(account_id,campaign_id,contact_id,contact_name,phone) VALUES
+    (1,24,30,'לקוח מקורי','0501234570')`);
+
+  // Chatwoot's outgoing echo has no campaign_id and currently says sent, but the durable ledger
+  // retained the final Meta failure and the original target identity.
+  await query(`INSERT INTO public.messages(id,conversation_id,account_id,message_type,status,content_attributes,source_id,created_at) VALUES
+    (2401,530,1,1,0,NULL,'wamid-24',now())`);
+  await query(`INSERT INTO drip.campaign_send_snapshots
+    (account_id,campaign_id,contact_id,contact_name,phone,source_id,conversation_id,message_id,status,error_title)
+    VALUES (1,24,30,'לקוח מקורי','0501234570','wamid-24',530,2401,3,'131049: failed')`);
+
+  const d = await getCampaignDetail(query, 1, 24);
+  assert.deepEqual(d.funnel, { audience: 1, attempted: 1, sent: 0, delivered: 0, read: 0, failed: 1, pending: 0 });
+  assert.equal(d.not_sent.length, 0);
+  assert.equal(d.recipients[0].contact_name, 'לקוח מקורי');
+  assert.equal(d.recipients[0].phone, '+972501234570');
+  assert.equal(d.recipients[0].status, 3);
+  assert.equal(d.recipients[0].error_title, '131049: failed');
+
+  const summary = (await listCampaigns(query, 1)).find((c) => c.id === 24);
+  assert.equal(summary.attempted, 1);
+  assert.equal(summary.sent, 0);
+  assert.equal(summary.failed, 1);
+});
+
+test('listCampaigns: ledger and unmatched legacy retry collapse to one audience contact', async () => {
+  await seedCampaign({ id: 25, title: 'ניסיון חוזר' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES
+    (40,1,'מקור','0501234580'),
+    (140,1,'WhatsApp 972501234580',NULL)`);
+  await query(`INSERT INTO public.contact_inboxes(id, contact_id, inbox_id, source_id) VALUES
+    (240,140,10,'972501234580')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id, contact_inbox_id, inbox_id, campaign_id) VALUES
+    (540,9540,1,140,240,10,25)`);
+  await query(`INSERT INTO drip.campaign_audience_snapshots(account_id,campaign_id,contact_id,contact_name,phone) VALUES
+    (1,25,40,'מקור','0501234580')`);
+  await query(`INSERT INTO public.messages(id,conversation_id,account_id,message_type,status,content_attributes,source_id,created_at) VALUES
+    (2501,540,1,1,0,NULL,'wamid-25',now()),
+    (2502,540,1,1,2,$1,'wamid-25-retry',now() + interval '1 minute')`,
+    [JSON.stringify(JSON.stringify({ campaign_id: 25 }))]);
+  await query(`INSERT INTO drip.campaign_send_snapshots
+    (account_id,campaign_id,contact_id,contact_name,phone,source_id,conversation_id,message_id,status)
+    VALUES (1,25,40,'מקור','0501234580','wamid-25',540,2501,0)`);
+
+  const summary = (await listCampaigns(query, 1)).find((c) => c.id === 25);
+  assert.equal(summary.attempted, 1);
+  assert.equal(summary.sent, 1);
+  assert.equal(summary.read, 1);
+  assert.equal(summary.failed, 0);
+});
+
+test('normalizeCampaignPhone: local, international, JID, and blank values', () => {
+  assert.equal(normalizeCampaignPhone('050-123-4567'), '+972501234567');
+  assert.equal(normalizeCampaignPhone('00972 50 123 4567'), '+972501234567');
+  assert.equal(normalizeCampaignPhone('972501234567@s.whatsapp.net'), '+972501234567');
+  assert.equal(normalizeCampaignPhone(null), '');
 });
 
 // ── handleAction: campaigns + campaign_detail wiring (Task 4) ──
@@ -179,7 +289,8 @@ test('campaignsTrend: buckets campaign messages by day', async () => {
   const trend = await campaignsTrend(query, 1, 14);
   assert.ok(trend.length >= 1);
   const last = trend[trend.length - 1];
-  assert.equal(last.sent, 2);
+  assert.equal(last.attempted, 2);
+  assert.equal(last.sent, 1);
   assert.equal(last.delivered, 1);
   assert.equal(last.failed, 1);
 });
@@ -197,13 +308,15 @@ test('campaignsTrend: separates messages into distinct day buckets, zero-filled,
   );
   const trend = await campaignsTrend(query, 1, 14);
   assert.equal(trend.length, 14); // one row per day in the window, empty days included
-  const nonzero = trend.filter((r) => r.sent > 0);
+  const nonzero = trend.filter((r) => r.attempted > 0);
   assert.equal(nonzero.length, 2); // the two active days, still distinct buckets
   const [older, newer] = nonzero; // series order is oldest → newest
-  assert.equal(older.sent, 1);
+  assert.equal(older.sent, 0);
+  assert.equal(older.attempted, 1);
   assert.equal(older.failed, 1);
   assert.equal(older.delivered, 0);
   assert.equal(newer.sent, 1);
+  assert.equal(newer.attempted, 1);
   assert.equal(newer.delivered, 1);
   assert.equal(newer.failed, 0);
   // the day between them exists as an explicit zero row
