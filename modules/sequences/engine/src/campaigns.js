@@ -15,10 +15,10 @@ async function readCapFromHealth(query, accountId) {
 /**
  * campaigns.js — read-only campaign analytics from Chatwoot's own tables.
  *
- * Campaign→message link is ONLY messages.content_attributes.campaign_id (written by the
- * whatsapp_campaign_conversations initializer). We compare the parsed numeric value — never
- * LIKE/substring and never jsonb type-sensitive containment — so campaign 16 cannot swallow
- * 160/216 and legacy string campaign ids still match. conversations.campaign_id is NULL for WA.
+ * New sends are linked through drip.campaign_send_snapshots, an immutable per-attempt ledger
+ * keyed by Meta's message id. Legacy rows fall back to messages.content_attributes.campaign_id.
+ * We compare the parsed numeric value — never LIKE/substring and never jsonb type-sensitive
+ * containment — so campaign 16 cannot swallow 160/216 and string campaign ids still match.
  *
  * ⚠️ content_attributes in production is a DOUBLE-ENCODED JSON *string*
  * (e.g. "{\"campaign_id\":19,\"external_error\":\"131049: ...\"}"), not a jsonb object —
@@ -33,6 +33,17 @@ async function readCapFromHealth(query, accountId) {
 // Normalize a content_attributes column to a jsonb OBJECT (handles the double-encoded-string
 // production shape and a plain-object test/other shape identically).
 const caObj = (col) => `(${col}::jsonb #>> '{}')::jsonb`;
+
+// SQL equivalent of normalizeCampaignPhone for joins against the immutable audience. This is
+// used only to recover legacy retry rows that have no campaign_contact_id of their own.
+const sqlPhoneKey = (expr) => `(
+  CASE
+    WHEN regexp_replace(coalesce(${expr}, ''), '[^0-9]', '', 'g') LIKE '00%'
+      THEN substr(regexp_replace(coalesce(${expr}, ''), '[^0-9]', '', 'g'), 3)
+    WHEN regexp_replace(coalesce(${expr}, ''), '[^0-9]', '', 'g') LIKE '0%'
+      THEN '972' || substr(regexp_replace(coalesce(${expr}, ''), '[^0-9]', '', 'g'), 2)
+    ELSE regexp_replace(coalesce(${expr}, ''), '[^0-9]', '', 'g')
+  END)`;
 
 // Campaign ids have existed as both JSON numbers and JSON strings. Comparing ->> as a guarded
 // integer makes both shapes equivalent without accepting substrings or crashing on bad data.
@@ -147,15 +158,15 @@ function collapseRecipientAttempts(rawRecipients, audienceContacts) {
         : raw.contact_id ? `conversation-contact:${raw.contact_id}` : `message:${raw.message_id}`;
     const status = Number(raw.status);
     const item = {
-      message_id: raw.message_id,
+      message_id: asPositiveInt(raw.message_id),
       contact_id: canonicalId || asPositiveInt(raw.contact_id),
       contact_name: raw.campaign_contact_name || canonical?.contact_name || raw.contact_name || '',
       phone,
       status,
       error_title: raw.error_title || '',
       sent_at: raw.sent_at || '',
-      conversation_id: raw.conversation_id,
-      conversation_display_id: raw.conversation_display_id,
+      conversation_id: asPositiveInt(raw.conversation_id),
+      conversation_display_id: asPositiveInt(raw.conversation_display_id),
       attempt_count: 1,
     };
     const previous = grouped.get(key);
@@ -181,13 +192,34 @@ function collapseRecipientAttempts(rawRecipients, audienceContacts) {
 const TZ = 'Asia/Jerusalem';
 const localTs = (col) => `((${col}) AT TIME ZONE 'UTC' AT TIME ZONE '${TZ}')`;
 
-// Per-campaign status counts, aggregated in ONE pass over messages carrying a campaign_id.
+// Per-campaign status counts. The durable send ledger wins; explicitly tagged legacy messages
+// are included only when the same Meta/message id is not already represented in the ledger.
 const AGG_CTE = `
-  WITH raw_msg AS (
+  WITH snapshot_msg AS (
+    SELECT s.campaign_id,
+           coalesce(
+             CASE WHEN s.contact_id IS NOT NULL THEN 'contact:' || s.contact_id::text END,
+             CASE WHEN nullif(regexp_replace(coalesce(s.phone, ''), '[^0-9]', '', 'g'), '') IS NOT NULL
+                  THEN 'phone:' || regexp_replace(s.phone, '[^0-9]', '', 'g') END,
+             'source:' || s.source_id
+           ) AS recipient_key,
+           CASE WHEN s.status = 3 THEN 3
+                ELSE greatest(s.status, coalesce(current_message.status, 0)) END AS status
+      FROM drip.campaign_send_snapshots s
+      LEFT JOIN LATERAL (
+        SELECT m.status FROM public.messages m
+         WHERE m.account_id = s.account_id
+           AND (m.id = s.message_id OR (m.source_id IS NOT NULL AND m.source_id = s.source_id))
+         ORDER BY (m.id = s.message_id) DESC, m.id DESC
+         LIMIT 1
+      ) current_message ON true
+     WHERE s.account_id = $1
+  ), legacy_msg AS (
     SELECT (${caObj('m.content_attributes')} ->> 'campaign_id')::int AS campaign_id,
            coalesce(
              CASE WHEN nullif(${caObj('m.content_attributes')} ->> 'campaign_contact_id', '') IS NOT NULL
                   THEN 'contact:' || (${caObj('m.content_attributes')} ->> 'campaign_contact_id') END,
+             CASE WHEN aud.contact_id IS NOT NULL THEN 'contact:' || aud.contact_id::text END,
              CASE WHEN nullif(regexp_replace(coalesce(
                ${caObj('m.content_attributes')} ->> 'campaign_phone',
                ci.source_id,
@@ -206,8 +238,34 @@ const AGG_CTE = `
       LEFT JOIN public.conversations cv ON cv.id = m.conversation_id
       LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
       LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
+      LEFT JOIN LATERAL (
+        SELECT a.contact_id
+          FROM drip.campaign_audience_snapshots a
+         WHERE a.account_id = m.account_id
+           AND a.campaign_id = CASE
+             WHEN (${caObj('m.content_attributes')} ->> 'campaign_id') ~ '^[0-9]+$'
+             THEN (${caObj('m.content_attributes')} ->> 'campaign_id')::int
+           END
+           AND ${sqlPhoneKey('a.phone')} = ${sqlPhoneKey(`coalesce(
+             ${caObj('m.content_attributes')} ->> 'campaign_phone',
+             ci.source_id,
+             ct.phone_number,
+             '')`)}
+         ORDER BY a.contact_id
+         LIMIT 1
+      ) aud ON true
      WHERE m.account_id = $1
        AND (${caObj('m.content_attributes')} ->> 'campaign_id') ~ '^[0-9]+$'
+       AND NOT EXISTS (
+         SELECT 1 FROM drip.campaign_send_snapshots s
+          WHERE s.account_id = m.account_id
+            AND s.campaign_id = (${caObj('m.content_attributes')} ->> 'campaign_id')::int
+            AND (s.message_id = m.id OR (m.source_id IS NOT NULL AND s.source_id = m.source_id))
+       )
+  ), raw_msg AS (
+    SELECT campaign_id, recipient_key, status FROM snapshot_msg
+    UNION ALL
+    SELECT campaign_id, recipient_key, status FROM legacy_msg
   ), msg AS (
     SELECT campaign_id, recipient_key,
            CASE WHEN bool_or(status = 2) THEN 2
@@ -271,29 +329,68 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   const audienceContacts = await loadAudienceContacts(query, accountId, id);
   const audienceSource = audienceContacts[0]?.audience_source || 'none';
 
-  // Raw attempts. The conversation contact can be a channel-created duplicate with no useful
-  // name/phone, so canonical contact data is resolved against the captured audience below.
+  // Raw attempts. The durable ledger recovers sends where Chatwoot's outgoing-echo message lost
+  // campaign_id; tagged messages remain a compatibility fallback for campaigns predating it.
+  // The conversation contact can be a channel-created duplicate with no useful name/phone, so
+  // canonical contact data is resolved against the captured audience below.
   const rawRecipients = await query(
-    `SELECT m.id AS message_id,
-            cv.contact_id,
-            ct.name AS contact_name,
-            ct.phone_number AS contact_phone,
-            ci.source_id,
-            ${caObj('m.content_attributes')} ->> 'campaign_contact_id' AS campaign_contact_id,
-            ${caObj('m.content_attributes')} ->> 'campaign_contact_name' AS campaign_contact_name,
-            ${caObj('m.content_attributes')} ->> 'campaign_phone' AS campaign_phone,
-            m.status,
-            ${caObj('m.content_attributes')} ->> 'external_error' AS error_title,
-            to_char(${localTs('m.created_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
-            m.conversation_id,
-            cv.display_id AS conversation_display_id
-       FROM public.messages m
-       LEFT JOIN public.conversations cv ON cv.id = m.conversation_id
-       LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
-       LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
-      WHERE m.account_id = $1
-        AND ${campaignIdEquals('m.content_attributes')}
-      ORDER BY m.created_at, m.id`,
+    `WITH snapshot_rows AS (
+       SELECT coalesce(m.id, s.message_id) AS message_id,
+              cv.contact_id,
+              ct.name AS contact_name,
+              ct.phone_number AS contact_phone,
+              ci.source_id,
+              s.contact_id::text AS campaign_contact_id,
+              s.contact_name AS campaign_contact_name,
+              s.phone AS campaign_phone,
+              CASE WHEN s.status = 3 THEN 3
+                   ELSE greatest(s.status, coalesce(m.status, 0)) END AS status,
+              coalesce(s.error_title, ${caObj('m.content_attributes')} ->> 'external_error') AS error_title,
+              to_char(${localTs('s.attempted_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
+              coalesce(m.conversation_id, s.conversation_id) AS conversation_id,
+              cv.display_id AS conversation_display_id
+         FROM drip.campaign_send_snapshots s
+         LEFT JOIN LATERAL (
+           SELECT mm.* FROM public.messages mm
+            WHERE mm.account_id = s.account_id
+              AND (mm.id = s.message_id OR (mm.source_id IS NOT NULL AND mm.source_id = s.source_id))
+            ORDER BY (mm.id = s.message_id) DESC, mm.id DESC
+            LIMIT 1
+         ) m ON true
+         LEFT JOIN public.conversations cv ON cv.id = coalesce(m.conversation_id, s.conversation_id)
+         LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
+         LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
+        WHERE s.account_id = $1 AND s.campaign_id = $2
+     ), legacy_rows AS (
+       SELECT m.id AS message_id,
+              cv.contact_id,
+              ct.name AS contact_name,
+              ct.phone_number AS contact_phone,
+              ci.source_id,
+              ${caObj('m.content_attributes')} ->> 'campaign_contact_id' AS campaign_contact_id,
+              ${caObj('m.content_attributes')} ->> 'campaign_contact_name' AS campaign_contact_name,
+              ${caObj('m.content_attributes')} ->> 'campaign_phone' AS campaign_phone,
+              m.status,
+              ${caObj('m.content_attributes')} ->> 'external_error' AS error_title,
+              to_char(${localTs('m.created_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
+              m.conversation_id,
+              cv.display_id AS conversation_display_id
+         FROM public.messages m
+         LEFT JOIN public.conversations cv ON cv.id = m.conversation_id
+         LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
+         LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
+        WHERE m.account_id = $1
+          AND ${campaignIdEquals('m.content_attributes')}
+          AND NOT EXISTS (
+            SELECT 1 FROM drip.campaign_send_snapshots s
+             WHERE s.account_id = m.account_id AND s.campaign_id = $2
+               AND (s.message_id = m.id OR (m.source_id IS NOT NULL AND s.source_id = m.source_id))
+          )
+     )
+     SELECT * FROM snapshot_rows
+     UNION ALL
+     SELECT * FROM legacy_rows
+     ORDER BY sent_at, message_id`,
     [accountId, id]
   );
   const { recipients, attemptedAudienceIds } = collapseRecipientAttempts(rawRecipients, audienceContacts);
@@ -311,65 +408,65 @@ export async function getCampaignDetail(query, accountId, campaignId) {
     { audience: 0, attempted: 0, sent: 0, delivered: 0, read: 0, failed: 0, pending: 0 }
   );
 
-  // Engagement: distinct conversations with an INCOMING message after the campaign send.
-  const replied = Number((await query(
+  // Engagement uses all attempt conversations, including recovered outgoing-echo rows without
+  // campaign_id. Restrict incoming messages to after the campaign was created.
+  const conversationIds = [...new Set(rawRecipients.map((r) => asPositiveInt(r.conversation_id)).filter(Boolean))];
+  const replied = conversationIds.length ? Number((await query(
     `SELECT count(DISTINCT m_in.conversation_id)::int AS c
-       FROM public.messages m_out
-       JOIN public.messages m_in
-         ON m_in.conversation_id = m_out.conversation_id
+       FROM public.messages m_in
+      WHERE m_in.account_id = $1
         AND m_in.message_type = 0
-        AND m_in.created_at > m_out.created_at
-      WHERE m_out.account_id = $1
-        AND ${campaignIdEquals('m_out.content_attributes')}`,
-    [accountId, id]
-  ))[0]?.c || 0);
+        AND m_in.conversation_id = ANY($3::bigint[])
+        AND m_in.created_at > (SELECT created_at FROM public.campaigns WHERE account_id = $1 AND id = $2)`,
+    [accountId, id, conversationIds]
+  ))[0]?.c || 0) : 0;
 
   // The replies themselves (first incoming message per conversation, capped): who replied,
   // what they opened with, and the conversation display_id for a click-through into Chatwoot.
   // Best-effort — the count above stays exact even when this list is capped or fails.
   let replies = [];
   try {
+    if (!conversationIds.length) throw new Error('no campaign conversations');
     // הפנימי: התגובה הראשונה לכל שיחה (DISTINCT ON מחייב מיון לפי conversation_id);
     // החיצוני: טריות קודם — לידים חדשים למעלה, וב-overflow נשמרים ה-200 העדכניים.
     replies = await query(
-      `SELECT conversation_display_id, contact_id, contact_name, contact_phone, source_id,
-              campaign_contact_id, campaign_phone, content, replied_at FROM (
+      `SELECT conversation_id, conversation_display_id, contact_id, contact_name, contact_phone,
+              source_id, content, replied_at FROM (
          SELECT DISTINCT ON (m_in.conversation_id)
+                m_in.conversation_id,
                 cv.display_id AS conversation_display_id,
                 cv.contact_id,
                 ct.name AS contact_name,
                 ct.phone_number AS contact_phone,
                 ci.source_id,
-                ${caObj('m_out.content_attributes')} ->> 'campaign_contact_id' AS campaign_contact_id,
-                ${caObj('m_out.content_attributes')} ->> 'campaign_phone' AS campaign_phone,
                 left(m_in.content, 240) AS content,
                 to_char(${localTs('m_in.created_at')}, 'YYYY-MM-DD HH24:MI') AS replied_at,
                 m_in.created_at AS first_reply_at
-           FROM public.messages m_out
-           JOIN public.messages m_in
-             ON m_in.conversation_id = m_out.conversation_id
-            AND m_in.message_type = 0
-            AND m_in.created_at > m_out.created_at
+           FROM public.messages m_in
            JOIN public.conversations cv ON cv.id = m_in.conversation_id
            LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
            LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
-          WHERE m_out.account_id = $1
-            AND ${campaignIdEquals('m_out.content_attributes')}
+          WHERE m_in.account_id = $1
+            AND m_in.message_type = 0
+            AND m_in.conversation_id = ANY($3::bigint[])
+            AND m_in.created_at > (SELECT created_at FROM public.campaigns WHERE account_id = $1 AND id = $2)
           ORDER BY m_in.conversation_id, m_in.created_at
        ) r
        ORDER BY r.first_reply_at DESC
        LIMIT 200`,
-      [accountId, id]
+      [accountId, id, conversationIds]
     );
   } catch { replies = []; }
   const replyResolver = audienceResolver(audienceContacts);
+  const recipientByConversation = new Map(recipients.map((r) => [asPositiveInt(r.conversation_id), r]));
   replies = replies.map((reply) => {
-    const snapshotContactId = asPositiveInt(reply.campaign_contact_id);
-    const rawPhone = reply.campaign_phone || reply.contact_phone || reply.source_id || '';
+    const recipient = recipientByConversation.get(asPositiveInt(reply.conversation_id));
+    const snapshotContactId = asPositiveInt(recipient?.contact_id);
+    const rawPhone = recipient?.phone || reply.contact_phone || reply.source_id || '';
     const canonical = replyResolver.resolve({ snapshotContactId, phone: rawPhone });
     return {
       conversation_display_id: reply.conversation_display_id,
-      contact_name: canonical?.contact_name || reply.contact_name || '',
+      contact_name: recipient?.contact_name || canonical?.contact_name || reply.contact_name || '',
       phone: normalizeCampaignPhone(canonical?.phone || rawPhone),
       content: reply.content,
       replied_at: reply.replied_at,
@@ -398,8 +495,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
 }
 
 // Preflight: Meta's 24h send budget for the account — the tier cap, minus distinct
-// conversations messaged in the rolling 24h (drip sends + campaign sends; failed sends never
-// opened a conversation so they don't count).
+// conversations messaged in the rolling 24h (drip sends + durable campaign attempts).
 //
 // The cap is read from drip.account_health, which the reconcile loop refreshes from the Graph
 // API every ~30 minutes. A dashboard read must not trigger its own Graph call: it would be a
@@ -422,12 +518,24 @@ export async function campaignsTierInfo(query, _reads, accountId, deps = {}) {
             AND sm.sent_at > now() - interval '24 hours'
             AND (m.status IS NULL OR m.status <> 3)
          UNION
+         SELECT s.conversation_id
+           FROM drip.campaign_send_snapshots s
+          WHERE s.account_id = $1
+            AND s.attempted_at > now() - interval '24 hours'
+            AND s.status <> 3
+            AND s.conversation_id IS NOT NULL
+         UNION
          SELECT m.conversation_id
            FROM public.messages m
           WHERE m.account_id = $1
             AND m.created_at > now() - interval '24 hours'
             AND ${caObj('m.content_attributes')} ? 'campaign_id'
             AND m.status <> 3
+            AND NOT EXISTS (
+              SELECT 1 FROM drip.campaign_send_snapshots s
+               WHERE s.account_id = m.account_id
+                 AND (s.message_id = m.id OR (m.source_id IS NOT NULL AND s.source_id = m.source_id))
+            )
        ) u`,
       [accountId]
     ))[0]?.c || 0);
@@ -453,18 +561,38 @@ export async function campaignsTrend(query, accountId, days = 14) {
                 (now() AT TIME ZONE '${TZ}')::date - ($2::int - 1) * interval '1 day',
                 (now() AT TIME ZONE '${TZ}')::date,
                 interval '1 day') d
-     ), agg AS (
-       SELECT ${localTs('m.created_at')}::date AS day,
-              count(*)::int AS attempted,
-              count(*) FILTER (WHERE m.status IN (0,1,2))::int AS sent,
-              count(*) FILTER (WHERE m.status IN (1,2))::int AS delivered,
-              count(*) FILTER (WHERE m.status = 3)::int       AS failed
+     ), attempt_rows AS (
+       SELECT s.attempted_at AT TIME ZONE '${TZ}' AS local_created_at,
+              CASE WHEN s.status = 3 THEN 3
+                   ELSE greatest(s.status, coalesce(current_message.status, 0)) END AS status
+         FROM drip.campaign_send_snapshots s
+         LEFT JOIN LATERAL (
+           SELECT m.status FROM public.messages m
+            WHERE m.account_id = s.account_id
+              AND (m.id = s.message_id OR (m.source_id IS NOT NULL AND m.source_id = s.source_id))
+            ORDER BY (m.id = s.message_id) DESC, m.id DESC
+            LIMIT 1
+         ) current_message ON true
+        WHERE s.account_id = $1
+          AND s.attempted_at >= now() - ($2::int + 1) * interval '1 day'
+       UNION ALL
+       SELECT ${localTs('m.created_at')} AS local_created_at, m.status
          FROM public.messages m
         WHERE m.account_id = $1
           AND ${caObj('m.content_attributes')} ? 'campaign_id'
-          -- naive-UTC range, one day wider than needed (index-friendly; no per-row TZ math in
-          -- the WHERE) — the JOIN against \`days\` drops the spillover bucket.
           AND m.created_at >= (now() AT TIME ZONE '${TZ}')::date - $2::int * interval '1 day'
+          AND NOT EXISTS (
+            SELECT 1 FROM drip.campaign_send_snapshots s
+             WHERE s.account_id = m.account_id
+               AND s.campaign_id = (${caObj('m.content_attributes')} ->> 'campaign_id')::int
+          )
+     ), agg AS (
+       SELECT local_created_at::date AS day,
+              count(*)::int AS attempted,
+              count(*) FILTER (WHERE status IN (0,1,2))::int AS sent,
+              count(*) FILTER (WHERE status IN (1,2))::int AS delivered,
+              count(*) FILTER (WHERE status = 3)::int       AS failed
+         FROM attempt_rows
         GROUP BY 1
      )
      SELECT to_char(days.day, 'DD/MM') AS day,
