@@ -174,17 +174,19 @@ test('last step sends and sets completed', async () => {
   assert.ok(patchedStates.includes('completed'));
 });
 
-test('no send when isNoSendNow quiet hours', async () => {
+test('no follow-up send when isNoSendNow quiet hours', async () => {
   const seq = (await query(
     `INSERT INTO drip.sequences(account_id,key,display_name,quiet_start,quiet_end,skip_shabbat) VALUES (1,'q','Q','22:00','08:00',false) RETURNING id`
   ))[0].id;
   await query(
-    `INSERT INTO drip.sequence_steps(sequence_id,step_order,template_name,delay_days) VALUES ($1,1,'qt',0)`,
+    `INSERT INTO drip.sequence_steps(sequence_id,step_order,template_name,delay_days) VALUES
+       ($1,1,'first',0),
+       ($1,2,'qt',1)`,
     [seq]
   );
   await query(
     `INSERT INTO drip.enrollments(account_id,conversation_id,sequence_id,current_step,next_send_at,status)
-     VALUES (1,77,$1,1,'2020-01-01 00:00:00+00','active')`,
+     VALUES (1,77,$1,2,'2020-01-01 00:00:00+00','active')`,
     [seq]
   );
   const sent = [];
