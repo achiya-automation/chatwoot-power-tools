@@ -47,8 +47,8 @@ const M = {
     ofArrived: 'מאלה שהגיעו',
     waiting: 'ממתינות',
     waitingHint: 'מטא עוד לא אישרה',
-    burnPool: 'מאגר שריפה',
-    burnPoolHint: 'עותקים מתכלים ללידים חסומים — התעוררו / נחסמו. מתוכנן, לא נספר באחוז',
+    burnPool: 'לידים שחזרו',
+    burnPoolHint: 'לידים שוואטסאפ כבר חסמה בעבר — קיבלו עותק מתכלה והתעוררו. הצלחה, לא חסימה',
     arrivalRate: 'שיעור הגעה',
     successRate: 'לא נחסמו',
     ofDecided: 'ממה שהוכרע',
@@ -124,8 +124,8 @@ const M = {
     ofArrived: 'of arrived',
     waiting: 'Awaiting',
     waitingHint: 'Meta has not confirmed yet',
-    burnPool: 'Burn pool',
-    burnPoolHint: 'Disposable copies to capped leads — woke / blocked. By design, not in the rate',
+    burnPool: 'Revived',
+    burnPoolHint: 'Leads Meta had already capped — got a disposable copy and woke up. A win, not a block',
     arrivalRate: 'Arrival rate',
     successRate: 'Not blocked',
     ofDecided: 'of decided',
@@ -408,8 +408,8 @@ function DeliveryCard({ stats }) {
               <LegendRow cls="text-n-teal-9" label={tr('arrived')} value={String(cleanArrived)} />
               <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')} value={String(cleanBlocked)} />
               {(burnArrived + burnBlocked) > 0 ? (
-                <LegendRow cls="text-n-orange-9" label={tr('burnPool')} hint={tr('burnPoolHint')}
-                           value={`${burnArrived} / ${burnBlocked}`} />
+                <LegendRow cls="text-n-teal-9" label={tr('burnPool')} hint={tr('burnPoolHint')}
+                           value={`${burnArrived} 🎉`} />
               ) : null}
               {sendError > 0 ? (
                 <LegendRow cls="text-n-amber-9" label={tr('sendError')} hint={tr('sendErrorHint')}
