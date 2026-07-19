@@ -1186,6 +1186,14 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
       // delivery once Meta has capped a recipient, vs 60-84% before), and every failure
       // also burns the template for everyone else.
       case 'cap': {
+        // 130472 = "המספר בניסוי של מטא" — A/B זמני של מטא, לא תקרת שיווק מהקצב שלנו.
+        // חולף תוך יום-יומיים ואינו מושפע מריטריי, אז צינון של 3 ימים (כמו 131049) מעכב
+        // ליד חדש לחינם. ניסיון חוזר מהיר (6ש׳), ובלי להעלות cap_failures — הליד נקי, לא
+        // רווי, ואסור שינותב למאגר השריפה בגלל גחמה של מטא.
+        if (code === '130472') {
+          await rearm(row.enrollment_id, row.step_order, 6);
+          continue;
+        }
         let failures = 1;
         if (row.contact_id) {
           const st = (await pool.query(
