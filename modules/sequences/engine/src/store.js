@@ -775,7 +775,8 @@ async function actionDeliveryStats(accountId) {
     `WITH t AS (
        SELECT sm.error_code                     AS ec,
               COALESCE(sm.delivery_status, 'pending') AS ds,
-              m.status                          AS s
+              m.status                          AS s,
+              (sm.template_name LIKE '%burn%')  AS is_burn
          FROM drip.sent_messages sm
          LEFT JOIN public.messages m ON m.id = sm.message_id
         WHERE sm.account_id = $1 AND sm.sent_at >= ${dayStart}
@@ -795,7 +796,16 @@ async function actionDeliveryStats(accountId) {
             count(*) FILTER (WHERE ds = 'failed' AND ec IN ('132000','132012','132001','132005','132007'))::int AS err_template,
             count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131052','131053'))::int  AS err_media,
             count(*) FILTER (WHERE ds = 'failed' AND ec NOT IN ${META_BLOCK}
-                          AND (ec IS NULL OR ec NOT IN ('132000','132012','132001','132005','132007','131052','131053')))::int AS err_other
+                          AND (ec IS NULL OR ec NOT IN ('132000','132012','132001','132005','132007','131052','131053')))::int AS err_other,
+            -- ⭐ הפרדת מאגר השריפה: הקהל האמיתי (תבניות נקיות) מול העותקים המתכלים.
+            -- מאגר שריפה נשלח ללידים חסומים ונכשל בכוונה — ערבובו במדד ניפח את
+            -- "נחסמו" והציג אחוז שקרי (בדיוק מה שהפיל את הבלם ב-17/07).
+            count(*) FILTER (WHERE NOT is_burn)::int                                          AS clean_sent,
+            count(*) FILTER (WHERE NOT is_burn AND ds IN ('delivered','read'))::int           AS clean_arrived,
+            count(*) FILTER (WHERE NOT is_burn AND ds = 'failed' AND ec IN ${META_BLOCK})::int AS clean_blocked,
+            count(*) FILTER (WHERE is_burn)::int                                              AS burn_sent,
+            count(*) FILTER (WHERE is_burn AND ds IN ('delivered','read'))::int               AS burn_arrived,
+            count(*) FILTER (WHERE is_burn AND ds = 'failed' AND ec IN ${META_BLOCK})::int     AS burn_blocked
        FROM t`,
     [accountId]
   ))[0];
