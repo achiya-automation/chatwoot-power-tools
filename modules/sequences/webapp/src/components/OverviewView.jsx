@@ -399,10 +399,10 @@ function DeliveryCard({ stats }) {
       {sent === 0 ? (
         <p className="py-6 text-center text-sm text-n-slate-10">{tr('nothingToday')}</p>
       ) : (
-        <div className="flex flex-col items-center gap-5 sm:flex-row">
+        <div className="flex flex-col gap-4">
           {/* מספר-גיבור אחד. חמישה מספרים בגודל שווה נלחמים על העין ואף אחד לא נקרא;
               כאן יש דבר אחד להסתכל עליו, והשאר הוא ההקשר שלו. */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center justify-center gap-4 sm:justify-start">
             <Donut slices={slices} centerValue={`${successRate}%`} centerLabel={tr('successRate')} />
             <div className="min-w-0 space-y-1.5 sm:w-52">
               <LegendRow cls="text-n-teal-9" label={tr('arrived')} value={String(cleanArrived)} />
@@ -424,7 +424,7 @@ function DeliveryCard({ stats }) {
 
           {/* שורת ההקשר — משפט אחד במקום רשת מספרים. אחוז הקריאה נמדד מתוך מי שההודעה
               הגיעה אליה בכלל; מדידה מתוך "נשלחו" מענישה אותנו על חסימות של מטא. */}
-          <div className="flex flex-1 flex-wrap items-baseline justify-center gap-x-5 gap-y-2 text-sm sm:justify-start">
+          <div className="flex flex-wrap items-baseline justify-center gap-x-6 gap-y-2 border-t border-n-weak pt-4 text-sm sm:justify-start">
             <span className="text-n-slate-11">
               {tr('mSent')} <b className="font-semibold text-n-slate-12">{sent}</b>
             </span>
@@ -591,7 +591,7 @@ function SourceRow({ label, hint, src, tr }) {
         </span>
       </div>
       {/* מסילה: אחוז החסימה (מטא) באדום. קבוצה נקייה = מסילה ריקה. */}
-      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-n-alpha-2">
+      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-n-teal-3">
         <div className="h-full rounded-full bg-current text-n-ruby-9"
              style={{ width: `${pct}%` }} />
       </div>
@@ -710,7 +710,7 @@ function SequenceCard({ s }) {
           <span className="text-xs text-n-slate-11">{t('completionRate')}</span>
           <span className="text-xs font-medium text-n-slate-12">{s.completionPct}%</span>
         </div>
-        <div className="mt-1.5 h-1.5 w-full rounded-full bg-n-alpha-3" aria-hidden="true">
+        <div className="mt-1.5 h-1.5 w-full rounded-full bg-n-teal-3" aria-hidden="true">
           <div className="h-1.5 rounded-full bg-n-brand" style={{ width: `${s.completionPct}%` }} />
         </div>
       </div>
