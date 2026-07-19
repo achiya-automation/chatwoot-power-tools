@@ -47,6 +47,8 @@ const M = {
     ofArrived: 'מאלה שהגיעו',
     waiting: 'ממתינות',
     waitingHint: 'מטא עוד לא אישרה',
+    burnPool: 'מאגר שריפה',
+    burnPoolHint: 'עותקים מתכלים ללידים חסומים — התעוררו / נחסמו. מתוכנן, לא נספר באחוז',
     arrivalRate: 'שיעור הגעה',
     successRate: 'לא נחסמו',
     ofDecided: 'ממה שהוכרע',
@@ -122,6 +124,8 @@ const M = {
     ofArrived: 'of arrived',
     waiting: 'Awaiting',
     waitingHint: 'Meta has not confirmed yet',
+    burnPool: 'Burn pool',
+    burnPoolHint: 'Disposable copies to capped leads — woke / blocked. By design, not in the rate',
     arrivalRate: 'Arrival rate',
     successRate: 'Not blocked',
     ofDecided: 'of decided',
@@ -330,7 +334,6 @@ function DeliveryCard({ stats }) {
   // הפירוק כאן הוא היחיד שמסתכם: הגיעו + ממתינות + נחסמו = נשלחו.
   const arrived = Number(t.delivered) || 0;      // נמסרו + נקראו
   const read = Number(t.read) || 0;              // תת-קבוצה של arrived
-  const blocked = Number(t.blocked) || 0;        // ⭐ חסימת מטא בלבד (הנמענת)
   const sendError = Number(t.send_error) || 0;   // ⭐ שגיאת שליחה שלנו (תבנית/מדיה)
   const waiting = Number(t.pending) || 0;
 
@@ -340,17 +343,23 @@ function DeliveryCard({ stats }) {
   // "ממתינה" איננה כישלון (מטא עוד לא אישרה — 98% נפתרות תוך 6ש'), ו**שגיאת שליחה
   // שלנו איננה חסימה** (הבקשה הייתה שגויה, ההודעה מעולם לא יצאה — זה באג לתקן, לא
   // נמענת שרופה). שיעור "לא נחסמו" נמדד רק מול מה שמטא הכריעה: הגיע או חסמה.
-  const decided = arrived + blocked;
-  const successRate = decided > 0 ? Math.round((arrived / decided) * 100) : 0;
+  // ⭐ הקהל האמיתי בלבד — מאגר השריפה מופרד (store.js). מאגר שריפה נשלח ללידים
+  // חסומים ונכשל בכוונה; ערבובו ב"נחסמו" ניפח את המספר והציג אחוז שקרי.
+  const cleanArrived = Number(t.clean_arrived) || 0;
+  const cleanBlocked = Number(t.clean_blocked) || 0;
+  const burnArrived = Number(t.burn_arrived) || 0;
+  const burnBlocked = Number(t.burn_blocked) || 0;
+  const decided = cleanArrived + cleanBlocked;
+  const successRate = decided > 0 ? Math.round((cleanArrived / decided) * 100) : 0;
 
   // ארבע פרוסות: שתי דרגות "בסדר" (הגיע/ממתין) באותה משפחת teal, ואז שני מיני
   // כישלון נפרדים — שגיאת שליחה שלנו (כתום, "לתקן") וחסימת מטא (אדום, "הנמענת").
   // כל פרוסה עם תווית ישירה: כתום↔אדום בטריטנופיה קרובים, הצבע לבדו לא מספיק.
   const slices = [
-    { key: 'arrived', label: tr('arrived'), value: arrived, cls: 'text-n-teal-9' },
+    { key: 'arrived', label: tr('arrived'), value: cleanArrived, cls: 'text-n-teal-9' },
     { key: 'waiting', label: tr('waiting'), value: waiting, cls: 'text-n-teal-8' },
     { key: 'sendError', label: tr('sendError'), value: sendError, cls: 'text-n-amber-9' },
-    { key: 'blocked', label: tr('mBlocked'), value: blocked, cls: 'text-n-ruby-9' },
+    { key: 'blocked', label: tr('mBlocked'), value: cleanBlocked, cls: 'text-n-ruby-9' },
   ];
 
   const empty = { sent: 0, arrived: 0, blocked: 0, sendError: 0 };
@@ -396,8 +405,12 @@ function DeliveryCard({ stats }) {
           <div className="flex items-center gap-4">
             <Donut slices={slices} centerValue={`${successRate}%`} centerLabel={tr('successRate')} />
             <div className="min-w-0 space-y-1.5 sm:w-52">
-              <LegendRow cls="text-n-teal-9" label={tr('arrived')} value={String(arrived)} />
-              <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')} value={String(blocked)} />
+              <LegendRow cls="text-n-teal-9" label={tr('arrived')} value={String(cleanArrived)} />
+              <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')} value={String(cleanBlocked)} />
+              {(burnArrived + burnBlocked) > 0 ? (
+                <LegendRow cls="text-n-orange-9" label={tr('burnPool')} hint={tr('burnPoolHint')}
+                           value={`${burnArrived} / ${burnBlocked}`} />
+              ) : null}
               {sendError > 0 ? (
                 <LegendRow cls="text-n-amber-9" label={tr('sendError')} hint={tr('sendErrorHint')}
                            value={String(sendError)} />
