@@ -436,6 +436,15 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   const cPhones    = new Map(dueRows.map((r) => [r.contact_id, r.phone]));
   const cStates    = await compliance.loadContactStates(pool, accountId, dueContactIds);
   const cSentToday = await compliance.marketingSentToday(pool, accountId, dueContactIds, now);
+  // ליד "טרי" ל-fresh-opener: לא current_step=1 (שנאפס ב-re-enrollment של contact ותיק),
+  // אלא contact שמעולם לא נשלחה אליו הודעה יוצאת — מנוע או אנושי. נמדד 20/07: 2 מ-5 "חדשים"
+  // עם step=1 כבר קיבלו 3-13 הודעות (re-enroll). בלי זה fresh-opener היה שולח להם כפילות.
+  const everContacted = new Set((await q(
+    `SELECT DISTINCT c.contact_id FROM public.conversations c
+       JOIN public.messages m ON m.conversation_id = c.id
+      WHERE c.account_id = $1 AND c.contact_id = ANY($2::int[]) AND m.message_type = 1`,
+    [accountId, dueContactIds]
+  )).map((r) => r.contact_id));
 
   for (const enrollmentId of toSend) {
     try {
@@ -724,6 +733,14 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         // irreversible happens (no conversation opened, no message sent, no cost).
         // Runs BEFORE lazy conversation creation on purpose: a blocked lead must not
         // leave a stray empty conversation behind.
+        // ליד חדש שטרם קיבל פתיחה (current_step=1) ונרשם ממש לאחרונה — הפתיחה אליו
+        // עוברת גם כשהחשבון עצור על RED (ראה fresh_opener_hours). לא קהל ישן וקר
+        // (>החלון), שהוא בדיוק מה ששורף את המספר.
+        const freshOpenerH = Number(cSettings.fresh_opener_hours ?? 48);
+        const isFreshOpener = e.current_step === 1 && freshOpenerH > 0 && e.enrolled_at
+          && !everContacted.has(e.contact_id)   // מעולם לא נשלחה אליו הודעה — מגן מפני re-enroll
+          && (now.getTime() - new Date(e.enrolled_at).getTime()) < freshOpenerH * 3600000;
+
         const verdict = compliance.canSend({
           category:  step.category,
           contact:   cState,
@@ -735,6 +752,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
                      || null,
           sentToday: cSentToday.get(e.contact_id) || 0,
           inSession: session,
+          isFreshOpener,
         });
 
         if (!verdict.ok) {
