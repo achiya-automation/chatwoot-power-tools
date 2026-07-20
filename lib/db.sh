@@ -143,6 +143,9 @@ GRANT SELECT ON public.campaigns, public.labels, public.tags, public.taggings TO
 -- REVOKE clears any prior table-wide UPDATE from an earlier provision (idempotent tightening).
 REVOKE UPDATE ON public.contacts FROM drip_engine;
 GRANT UPDATE (custom_attributes) ON public.contacts TO drip_engine;
+-- WRITE to channel_whatsapp template columns: the engine updates message_templates and
+-- message_templates_last_updated when syncing approved templates from Meta's API cache.
+GRANT UPDATE (message_templates, message_templates_last_updated) ON public.channel_whatsapp TO drip_engine;
 SQL
   then
     echo "provision_db: grants failed" >&2
