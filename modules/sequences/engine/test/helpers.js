@@ -39,8 +39,10 @@ export async function setupDb(pool) {
   await pool.query(`CREATE TABLE IF NOT EXISTS public.inboxes (
     id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.channel_whatsapp (
-    id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb,
-    provider_config jsonb DEFAULT '{}'::jsonb)`);
+    id int PRIMARY KEY, phone_number text, provider text DEFAULT 'whatsapp_cloud',
+    provider_config jsonb DEFAULT '{}'::jsonb,
+    message_templates jsonb DEFAULT '{}'::jsonb,
+    message_templates_last_updated timestamp)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.contact_inboxes (
     id int PRIMARY KEY, contact_id int, inbox_id int, source_id text)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.tags (
