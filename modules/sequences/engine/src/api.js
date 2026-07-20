@@ -6,6 +6,7 @@ import { handleAction, initStore } from './store.js';
 import { authGate } from './auth.js';
 import { query, getPool } from './db.js';
 import { validateWhatsAppMedia, extForMime } from './media.js';
+import { uploadExampleMedia } from './templates.js';
 
 /**
  * createApp(config) — express app factory.
@@ -38,6 +39,24 @@ import { validateWhatsAppMedia, extForMime } from './media.js';
  */
 export function buildIdFromHtml(html) {
   return (String(html || '').match(/-(\d{14})\.(?:js|css)\b/) || [])[1] || '';
+}
+
+/**
+ * isTplAdmin(access, accountId) → boolean.
+ *
+ * Template Studio writes touch the client's REAL WhatsApp Business Account (create/edit/
+ * delete live templates, upload example media for review) — restricted to administrators,
+ * unlike the rest of the API which any member of the account may use. Shared by the
+ * /drip-api tpl_* guard and the template-example upload route below.
+ *
+ * access is req.dripAccess, set by authGate. A mobile-ticket session carries role:'' on its
+ * one account (see auth.js's accessFromClaims) — never 'administrator' — so a ticket can
+ * open the dashboard but never reach a tpl_* action; only a real Chatwoot browser session
+ * (or a super-admin) can.
+ */
+function isTplAdmin(access, accountId) {
+  return !!access && (access.isSuperAdmin ||
+    (access.accounts || []).some((x) => x.id === accountId && x.role === 'administrator'));
 }
 
 export function createApp(config) {
@@ -147,6 +166,52 @@ export function createApp(config) {
     }
   );
 
+  // ── template example media (AUTHED, ADMIN ONLY) ─────────────────────────────
+  // A template with a media header (IMAGE/VIDEO/DOCUMENT) needs one example file at
+  // *creation* time for Meta's review — a separate flow from /drip-api/media (which stores
+  // a file for a live send). Same raw-body pattern as that route; Meta's Resumable Upload
+  // API does the actual work (src/templates.js's uploadExampleMedia).
+  //
+  // The admin check runs in its OWN middleware, BEFORE express.raw(): a non-admin request is
+  // rejected without ever buffering its (up to 110MB) body.
+  app.post(
+    '/drip-api/template-example',
+    (req, res, next) => {
+      const accountId = parseInt(req.query.account_id || '0', 10);
+      if (!isTplAdmin(req.dripAccess, accountId)) {
+        return res.status(403).json({ ok: false, error: 'administrator role required' });
+      }
+      next();
+    },
+    express.raw({ type: () => true, limit: 110 * 1024 * 1024 }),
+    async (req, res) => {
+      const locale = req.query.locale === 'en' ? 'en' : 'he';
+      try {
+        const accountId = parseInt(req.query.account_id || '0', 10);
+        const inboxId = parseInt(req.query.inbox_id || '0', 10);
+        if (!accountId || !inboxId) {
+          return res.status(400).json({ ok: false, error: 'account_id and inbox_id required' });
+        }
+        const mime = String(req.headers['content-type'] || '');
+        const buf = Buffer.isBuffer(req.body) ? req.body : null;
+        if (!buf || !buf.length) {
+          return res.status(400).json({ ok: false, error: locale === 'en' ? 'The file is empty' : 'הקובץ ריק' });
+        }
+
+        const { handle } = await uploadExampleMedia({ accountId, inboxId, mime, buf });
+        return res.json({ ok: true, data: { handle } });
+      } catch (err) {
+        console.error('[drip-api] template-example upload error:', err.message);
+        // "validation/meta" (a rejected file, an unavailable capability) → 400, matching
+        // /drip-api/media's shape; a genuine unexpected failure (e.g. the DB read that
+        // resolves the channel) falls through to 500, same as every other action's errors.
+        const status = err.status === 400 || err.metaCode != null ? 400 : 500;
+        const msg = status === 400 && locale !== 'en' && err.reasonHe ? err.reasonHe : err.message;
+        return res.status(status).json({ ok: false, error: msg || (locale === 'en' ? 'Upload failed' : 'העלאה נכשלה') });
+      }
+    }
+  );
+
   // ── main API endpoint ─────────────────────────────────────────────────────
   app.post('/drip-api', async (req, res) => {
     const accountId = parseInt(req.query.account_id || '0', 10);
@@ -163,6 +228,19 @@ export function createApp(config) {
     const payload = body.payload && typeof body.payload === 'object'
       ? body.payload
       : (body || {});
+
+    // Template Studio actions operate on the client's real WABA — administrators only.
+    // req.dripAccess is attached by authGate (mobile-ticket sessions carry role:'' → denied).
+    if (/^tpl_/.test(action)) {
+      if (!isTplAdmin(req.dripAccess, accountId)) {
+        return res.status(403).json({ ok: false, error: 'administrator role required' });
+      }
+      // The server's own session identity always wins — never trust a client-sent __actor.
+      // payload is attacker-controlled up to this point, and __actor lands straight in the
+      // template_audit log, so overwriting it (not merely defaulting it) is what keeps that
+      // trail honest.
+      payload.__actor = { uid: String(req.dripAccess.userId ?? ''), name: '' };
+    }
 
     try {
       const result = await handleAction(accountId, action, payload);
