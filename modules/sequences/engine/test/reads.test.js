@@ -28,7 +28,12 @@ const reads = makeDbReads(query);
 // the suite assumes. Cheap, and makes the run order irrelevant.
 beforeEach(async () => {
   await pool.query(`CREATE TABLE IF NOT EXISTS public.inboxes (id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int)`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS public.channel_whatsapp (id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb, provider_config jsonb DEFAULT '{}'::jsonb)`);
+  // keep in lockstep with test/helpers.js
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.channel_whatsapp (
+    id int PRIMARY KEY, phone_number text, provider text DEFAULT 'whatsapp_cloud',
+    provider_config jsonb DEFAULT '{}'::jsonb,
+    message_templates jsonb DEFAULT '{}'::jsonb,
+    message_templates_last_updated timestamp)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.conversations (
     id int PRIMARY KEY, display_id int, account_id int, contact_id int,
     custom_attributes jsonb DEFAULT '{}'::jsonb, cached_label_list text)`);
