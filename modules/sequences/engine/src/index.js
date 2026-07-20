@@ -154,6 +154,19 @@ async function tick() {
       // only keep the last known cap, never raise it. A RED quality rating halts the account.
       const { cap: tierCap } = await refreshHealth(pool, reads, a.account_id, now, { compliance });
 
+      // בלם המסירה: מה ש-refreshHealth (דירוג מטא) לא רואה בנפחים נמוכים — צניחת
+      // מסירה *בפועל* על תבניות נקיות. עוצר את החשבון לפני שהנזק מתרחב. מובנה ורב-דיירי,
+      // חל על כל חשבון אוטומטית (מחליף את הסקריפט החיצוני drip-brake.sh). Fail-open: כשל
+      // בבדיקה עצמה לא מונע שליחה — halt_on_red ו-template_burned עדיין מגנים.
+      try {
+        const floor = await compliance.checkDeliveryFloor(pool, a.account_id);
+        if (floor?.halted) {
+          console.error(`[drip] acct ${a.account_id}: delivery floor breached (${floor.rate}% on ${floor.n}) — HALTED`);
+        }
+      } catch (e) {
+        console.error(`[drip] delivery floor check acct ${a.account_id} (non-fatal):`, e.message);
+      }
+
       // Attribute definitions are provisioned once at onboarding (the AgentBot token can't
       // manage them), so the per-tick ensureAttributes call is gone — reconcile only.
       await reconcileAccount(pool, client, a.account_id, now, windows, {
