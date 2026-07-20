@@ -37,6 +37,8 @@ function stepToUi(s) {
   return {
     id: s.id || `step_${Math.random().toString(36).slice(2, 9)}`,
     template: s.template_name || '',
+    // עותק שריפה: תבנית לנמענות רוויות (מנותב אליה במקום הנקייה). ריק = אין עותק.
+    templateBurn: s.template_burn || '',
     language: s.language || 'he',
     category: s.category || 'MARKETING',
     delayDays: Number(s.delay_days) || 0,
@@ -78,6 +80,8 @@ function toUi(seq) {
 function stepToDb(s) {
   return {
     template_name: s.template || '',
+    // עותק שריפה (ריק → NULL ב-DB)
+    template_burn: String(s.templateBurn || '').trim(),
     language: s.language || 'he',
     category: s.category || 'MARKETING',
     delay_days: Number(s.delayDays) || 0,
@@ -135,6 +139,12 @@ export async function deleteSequence(key, accountId) {
 export async function listTemplates(accountId) {
   const data = await call('templates', {}, accountId);
   return data || [];
+}
+
+// יצירת עותק שריפה לתבנית קיימת — משכפל אותה ב-WABA בשם <source>_burn1 (יזום, חד-פעמי).
+// מחזיר { name, id, status }. status בד"כ 'PENDING' עד שמטא מאשרת. זורק עם הודעה בכשל.
+export async function createBurnTemplate(sourceTemplateName, accountId) {
+  return call('create_burn_template', { source_template_name: sourceTemplateName }, accountId);
 }
 
 // enrollments — אנשי קשר שמשויכים כרגע לרצפים (תצוגה גלובלית). מוחזר בצורת DB ישירות

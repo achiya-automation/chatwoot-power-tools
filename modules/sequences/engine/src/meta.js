@@ -93,6 +93,50 @@ export async function fetchTemplateHealth(wabaId, token, fetchImpl = fetch) {
   return out;
 }
 
+/**
+ * יצירת עותק זהה של תבנית קיימת ב-WABA, בשם חדש — "עותק שריפה". שולף את ה-components
+ * של המקור (GET) ויוצר תבנית חדשה איתם (POST). אותו תוכן בדיוק, שם שונה.
+ *
+ * ⚠️ זו פעולה יזומה, חד-פעמית (המשתמש לוחץ "צור עותק") — לא רוטציה אוטומטית. יצירה
+ * אוטומטית חוזרת של תבניות כמעט-זהות נאסרה ב-14/07 (rotate.js הוסר) כי היא דפוס
+ * הספאם שמטא מענישה. עותק בודד ויזום הוא הגדרה חד-פעמית של זוג, לא סדרה.
+ *
+ * מטא מאשרת עותק (תוכן זהה, שם שונה) תוך דקות עד שעות; refreshHealth יסנכרן את
+ * הסטטוס. מחזיר את שם העותק ומזההו. זורק עם הודעה ידידותית בכשל (הרשאה/כפילות/פורמט).
+ *
+ * @returns {Promise<{name:string, id:string, status:string}>}
+ */
+export async function createTemplateCopy(wabaId, token, sourceName, burnName, fetchImpl = fetch) {
+  if (!wabaId || !token) throw new Error('חסרים פרטי חיבור וואטסאפ (WABA/טוקן) לחשבון');
+  // 1. שליפת המקור עם ה-components המלאים (הפורמט המדויק שנדרש ליצירה).
+  const gr = await fetchImpl(
+    `${GRAPH}/${wabaId}/message_templates`
+      + `?name=${encodeURIComponent(sourceName)}&fields=name,language,category,components&limit=10`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const gj = await gr.json().catch(() => ({}));
+  if (!gr.ok) throw new Error(gj?.error?.error_user_msg || gj?.error?.message || `קריאת התבנית נכשלה (${gr.status})`);
+  const src = (gj.data || []).find((t) => t.name === sourceName);
+  if (!src) throw new Error(`התבנית "${sourceName}" לא נמצאה ב-WABA`);
+
+  // 2. יצירת העותק — אותם components, שם חדש. allow_category_change: שמטא תוכל
+  //    לסווג מחדש בלי לדחות, כמו בתבנית רגילה.
+  const cr = await fetchImpl(`${GRAPH}/${wabaId}/message_templates`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: burnName,
+      language: src.language,
+      category: src.category || 'MARKETING',
+      components: src.components,
+      allow_category_change: true,
+    }),
+  });
+  const cj = await cr.json().catch(() => ({}));
+  if (!cr.ok) throw new Error(cj?.error?.error_user_msg || cj?.error?.message || `יצירת העותק נכשלה (${cr.status})`);
+  return { name: burnName, id: cj.id || '', status: cj.status || 'PENDING' };
+}
+
 /** cap שמור ב-DB → מספר. ‎-1 מייצג "ללא הגבלה" (Infinity לא נשמר בעמודת int). */
 function capFromDb(row) {
   if (!row || row.cap == null) return DEFAULT_CAP;

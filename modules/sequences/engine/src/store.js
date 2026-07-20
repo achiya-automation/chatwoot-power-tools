@@ -47,6 +47,7 @@
 
 import { query, withTx, getPool } from './db.js';
 import { makeDbReads } from './reads.js';
+import { createTemplateCopy } from './meta.js';
 import { projectSchedule } from './schedule.js';
 import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from './campaigns.js';
 import { handleTemplatesAction } from './templates.js';
@@ -141,6 +142,8 @@ export async function handleAction(accountId, action, payload) {
       return actionTemplateMedia(accId);
     case 'save_template_media':
       return actionSaveTemplateMedia(accId, payload);
+    case 'create_burn_template':
+      return actionCreateBurnTemplate(accId, payload);
     // ── מספר הוואטסאפ שהמנוע עובד מולו ──────────────────────────────────────
     // לחשבון יכולים להיות כמה מספרים. יש לבחור אחד — אחרת המנוע היה מנחש, ושולח
     // ממספר אחד בזמן שהוא קורא תבניות ובריאות ממספר אחר.
@@ -286,6 +289,24 @@ async function actionSave(accountId, payload) {
   });
   // Return shape for tests. api.js extracts .sequence for the wire format.
   return { sequence };
+}
+
+// ── create_burn_template ────────────────────────────────────────────────────────
+// payload = { source_template_name }
+// המשתמש לוחץ "צור עותק" בעורך → משכפל את התבנית הראשית של השלב ל-WABA בשם <source>_burn1.
+// עותק זהה בתוכן; מטא מאשרת תוך זמן, ו-refreshHealth מסנכרן את הסטטוס. יזום וחד-פעמי —
+// לא רוטציה אוטומטית (ראו meta.createTemplateCopy). Returns { data: {name, id, status} }.
+async function actionCreateBurnTemplate(accountId, payload) {
+  const source = String(payload?.source_template_name || '').trim();
+  if (!source) throw new Error('source_template_name required');
+  const reads = makeDbReads(query);
+  const creds = await reads.getWhatsappCreds(accountId);
+  if (!creds?.wabaId || !creds?.token) {
+    throw new Error('לא נמצא ערוץ וואטסאפ מחובר לחשבון — אי אפשר ליצור עותק');
+  }
+  const burnName = `${source}_burn1`;
+  const res = await createTemplateCopy(creds.wabaId, creds.token, source, burnName);
+  return { data: res };
 }
 
 // ── delete ────────────────────────────────────────────────────────────────────
