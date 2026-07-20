@@ -38,6 +38,7 @@ export async function setupDb(pool) {
   await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS source_id text');
   await pool.query(`CREATE TABLE IF NOT EXISTS public.inboxes (
     id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int)`);
+  // keep in lockstep with modules/sequences/engine/test/reads.test.js
   await pool.query(`CREATE TABLE IF NOT EXISTS public.channel_whatsapp (
     id int PRIMARY KEY, phone_number text, provider text DEFAULT 'whatsapp_cloud',
     provider_config jsonb DEFAULT '{}'::jsonb,
