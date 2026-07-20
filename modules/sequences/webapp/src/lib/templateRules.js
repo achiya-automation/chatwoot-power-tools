@@ -200,6 +200,11 @@ function validateButtons(buttons, isLto) {
           `קוד הקופון ארוך מ-${cap} תווים${isLto ? ' (מוגבל יותר בתוך מבצע מוגבל-בזמן)' : ''}`,
           `Coupon code exceeds ${cap} characters${isLto ? ' (capped lower inside a Limited-Time-Offer)' : ''}`));
       }
+      if (b.code && !/^[a-zA-Z0-9]+$/.test(b.code)) {
+        errors.push(err('buttons',
+          'קוד הקופון יכול להכיל אותיות וספרות באנגלית בלבד, ללא סימנים או רווחים',
+          'Coupon code can only contain letters and digits, no symbols or spaces'));
+      }
     }
   }
 
@@ -218,13 +223,20 @@ function validateCarousel(carousel) {
   }
 
   const firstFormat = cards[0]?.headerFormat;
-  for (const card of cards) {
+  cards.forEach((card, i) => {
     if (!card.body || !card.body.trim()) {
       errors.push(err('carousel', 'לכל כרטיס בקרוסלה חייב להיות טקסט גוף', 'Every carousel card needs body text'));
     } else if (card.body.length > LIMITS.carouselBody) {
       errors.push(err('carousel',
         `גוף כרטיס ארוך מ-${LIMITS.carouselBody} תווים`,
         `Carousel card body exceeds ${LIMITS.carouselBody} characters`));
+    }
+    // Card bodies are always POSITIONAL (see serializeCard) regardless of the
+    // template's own parameterFormat — same missing-example rule as the main body.
+    if (hasMissingExample(card.body, 'POSITIONAL', card.examples)) {
+      errors.push(err('carousel',
+        `כרטיס ${i + 1} בקרוסלה: כל משתנה בגוף הכרטיס חייב דוגמה תואמת`,
+        `Carousel card ${i + 1}: every variable in the card body needs a matching example`));
     }
     if (card.headerFormat !== firstFormat) {
       errors.push(err('carousel',
@@ -238,7 +250,7 @@ function validateCarousel(carousel) {
           `Button type ${b.type} is not allowed on a carousel card`));
       }
     }
-  }
+  });
 
   return errors;
 }
@@ -310,7 +322,32 @@ export function validateTemplate(tpl) {
     errors.push(...validateButtons(t.buttons, isLto));
   }
 
-  if (t.carousel) errors.push(...validateCarousel(t.carousel));
+  if (t.carousel) {
+    errors.push(...validateCarousel(t.carousel));
+
+    // Grounded 2026-07-20 against Meta's live carousel-template docs
+    // (developers.facebook.com/documentation/business-messaging/whatsapp/templates/
+    // marketing-templates/media-card-carousel-templates): every template-creation
+    // example shows top-level `components` as [BODY, CAROUSEL] only — never a
+    // top-level HEADER/FOOTER/BUTTONS alongside CAROUSEL. Card-level header/buttons
+    // live on each card instead (see CAROUSEL_CARD_BUTTON_TYPES).
+    const header = t.header || { format: 'NONE' };
+    if (header.format && header.format !== 'NONE') {
+      errors.push(err('carousel',
+        'תבנית עם קרוסלה לא יכולה לכלול כותרת עליונה — כל כרטיס נושא כותרת משלו',
+        'A carousel template cannot have a top-level header — each card carries its own header'));
+    }
+    if (t.footer) {
+      errors.push(err('carousel',
+        'תבנית עם קרוסלה לא יכולה לכלול הערת שוליים',
+        'A carousel template cannot have a footer'));
+    }
+    if (Array.isArray(t.buttons) && t.buttons.length > 0) {
+      errors.push(err('carousel',
+        'תבנית עם קרוסלה לא יכולה לכלול כפתורים עליונים — הכפתורים נמצאים בתוך כל כרטיס',
+        'A carousel template cannot have top-level buttons — buttons live on each card'));
+    }
+  }
 
   if (t.lto) {
     if (category !== 'MARKETING') {
@@ -465,11 +502,15 @@ function serializeButton(b) {
   }
 }
 
+// Grounded 2026-07-20 against Meta's live carousel-template creation docs: card
+// objects in the creation payload are `{components: [...]}` only — no `card_index`
+// field. (card_index is real, but only appears in the send-message payload, a
+// different endpoint this module does not serialize for.)
 function serializeCard(card) {
   const components = [];
   const header = serializeHeader({ format: card.headerFormat, mediaHandle: card.mediaHandle });
   if (header) components.push(header);
-  components.push(serializeBody({ text: card.body, examples: [] }, 'POSITIONAL'));
+  components.push(serializeBody({ text: card.body, examples: card.examples || [] }, 'POSITIONAL'));
   if (card.buttons && card.buttons.length > 0) {
     components.push({ type: 'BUTTONS', buttons: card.buttons.map(serializeButton) });
   }
