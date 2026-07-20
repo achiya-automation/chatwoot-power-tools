@@ -7,7 +7,7 @@ import { query as defaultQuery } from './db.js';
 import { makeDbReads } from './reads.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
-const TPL_FIELDS = 'id,name,status,category,language,components,quality_score,rejected_reason';
+const TPL_FIELDS = 'id,name,status,category,language,components,quality_score,rejected_reason,last_updated_time';
 
 export function metaError(body) {
   const e = (body && body.error) || {};
