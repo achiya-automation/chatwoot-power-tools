@@ -43,6 +43,10 @@ export const BUTTON_TYPES = {
 // FLOW/COPY_CODE/CATALOG/MPM/VOICE_CALL/OTP inside a card.
 export const CAROUSEL_CARD_BUTTON_TYPES = ['QUICK_REPLY', 'PHONE_NUMBER', 'URL'];
 
+// Meta's carousel-card UI caps each card at 2 buttons — same verification pass as
+// CAROUSEL_CARD_BUTTON_TYPES above.
+export const CAROUSEL_CARD_BUTTONS_MAX = 2;
+
 export const LIMITS = {
   name: 512,
   headerText: 60,
@@ -215,6 +219,9 @@ function validateButtons(buttons, isLto) {
           'Call TTL must be between 1440 and 43200 minutes (1–30 days)'));
       }
     }
+    if (b.type === 'FLOW' && !b.flowId) {
+      errors.push(err('buttons', 'כפתור Flow חייב Flow מקושר', 'A Flow button requires a linked flow'));
+    }
   }
 
   return errors;
@@ -252,7 +259,13 @@ function validateCarousel(carousel) {
         'כל כרטיסי הקרוסלה חייבים להיות מאותו סוג כותרת',
         'All carousel cards must share the same header format'));
     }
-    for (const b of card.buttons || []) {
+    const cardButtons = card.buttons || [];
+    if (cardButtons.length > CAROUSEL_CARD_BUTTONS_MAX) {
+      errors.push(err('carousel',
+        `לכל כרטיס בקרוסלה יכולים להיות לכל היותר ${CAROUSEL_CARD_BUTTONS_MAX} כפתורים`,
+        `Each carousel card can have at most ${CAROUSEL_CARD_BUTTONS_MAX} buttons`));
+    }
+    for (const b of cardButtons) {
       if (!CAROUSEL_CARD_BUTTON_TYPES.includes(b.type)) {
         errors.push(err('carousel',
           `סוג כפתור ${b.type} אינו נתמך בכרטיס קרוסלה`,
@@ -506,7 +519,7 @@ function serializeButton(b) {
     case 'COPY_CODE':
       return { type: 'COPY_CODE', example: b.code };
     case 'FLOW':
-      return { type: 'FLOW', text: b.text };
+      return { type: 'FLOW', text: b.text, ...(b.flowId ? { flow_id: b.flowId } : {}) };
     case 'CATALOG':
       return b.text ? { type: 'CATALOG', text: b.text } : { type: 'CATALOG' };
     case 'MPM':
@@ -628,8 +641,10 @@ function deserializeButton(b) {
       return { type: 'PHONE_NUMBER', text: b.text, phone: b.phone_number };
     case 'COPY_CODE':
       return { type: 'COPY_CODE', code: b.example || '' };
+    case 'FLOW':
+      return { type: 'FLOW', text: b.text, flowId: b.flow_id || '' };
     default:
-      return { ...b }; // QUICK_REPLY, VOICE_CALL, FLOW, CATALOG, MPM already round-trip as-is
+      return { ...b }; // QUICK_REPLY, VOICE_CALL, CATALOG, MPM already round-trip as-is
   }
 }
 

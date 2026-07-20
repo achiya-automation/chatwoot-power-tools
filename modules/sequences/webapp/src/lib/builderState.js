@@ -7,20 +7,15 @@
  * TemplateBuilder for the errors/warnings strips).
  */
 
-import { emptyTemplate, bodyVars, BUTTON_TYPES, CAROUSEL_CARD_BUTTON_TYPES, LIMITS } from './templateRules.js';
+import {
+  emptyTemplate, bodyVars, BUTTON_TYPES, CAROUSEL_CARD_BUTTON_TYPES, CAROUSEL_CARD_BUTTONS_MAX, LIMITS,
+} from './templateRules.js';
 
 // A carousel card isn't part of emptyTemplate() (carousel starts null) — this is the
 // per-card shape templateRules.serializeCard/deserializeCard/validateCarousel expect.
 export function emptyCard() {
   return { headerFormat: 'NONE', mediaHandle: '', body: '', examples: [], buttons: [] };
 }
-
-// templateRules.validateCarousel restricts carousel-card buttons to a *type* subset
-// (CAROUSEL_CARD_BUTTON_TYPES) but never caps how many — Meta's carousel-card UI caps each
-// card at 2 buttons, so that structural count cap lives here, reducer-local, since nothing
-// in templateRules.js needs it. Exported so the Builder's "add button" menu can grey out
-// the option at the same limit instead of duplicating the number.
-export const CAROUSEL_CARD_BUTTONS_MAX = 2;
 
 // name → slug as the user types: lowercase, non [a-z0-9] runs collapse to one underscore,
 // no leading/trailing underscore. 'My Promo!' -> 'my_promo'.
@@ -55,10 +50,7 @@ function makeButton(type) {
     case 'URL': return { type, text: '', url: '', urlExample: '' };
     case 'PHONE_NUMBER': return { type, text: '', phone: '' };
     case 'COPY_CODE': return { type, code: '' };
-    // ponytail: templateRules.serializeButton's FLOW case only emits {type, text} — flowId
-    // isn't part of the Graph payload today. Kept on the button so the Builder's FLOW
-    // <select> has a controlled value; harmless extra field, matches the existing
-    // (pre-existing, out of scope here) serialize behavior rather than fighting it.
+    // flowId round-trips through templateRules.serializeButton/deserializeButton as flow_id.
     case 'FLOW': return { type, text: '', flowId: '' };
     default: return { type, text: '' }; // QUICK_REPLY, VOICE_CALL, CATALOG, MPM
   }
