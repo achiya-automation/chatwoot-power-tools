@@ -642,6 +642,10 @@ function deserializeCard(card) {
     headerFormat: headerC?.format || 'NONE',
     mediaHandle: headerC?.example?.header_handle?.[0] || '',
     body: bodyC?.text || '',
+    // Card bodies are always POSITIONAL (see serializeCard) — mirrors deserializeBody's
+    // body_text branch. Previously dropped entirely, so editing a graph carousel template
+    // round-tripped every card's examples away (Task 3 review gap, fixed here).
+    examples: bodyC?.example?.body_text?.[0] || [],
     buttons: (buttonsC?.buttons || []).map(deserializeButton),
   };
 }
