@@ -17,12 +17,27 @@ beforeEach(() => _resetCapCacheForTests());
 // ── listWabaTemplates: pagination ───────────────────────────────────────────
 
 const page2 = { data: [{ id: '2', name: 'b', status: 'PENDING', category: 'UTILITY', language: 'he', components: [] }] };
-const page1 = { data: [{ id: '1', name: 'a', status: 'APPROVED', category: 'MARKETING', language: 'he', components: [], quality_score: { score: 'GREEN' } }], paging: { next: 'https://next' } };
-const okFetch = async (url) => ({ ok: true, status: 200, json: async () => (String(url).startsWith('https://next') ? page2 : page1) });
+// Realistic paging.next: Meta embeds access_token itself. The code under test must strip
+// it before refetching — this shape is exactly what reproduced the double-token bug.
+const page1 = {
+  data: [{ id: '1', name: 'a', status: 'APPROVED', category: 'MARKETING', language: 'he', components: [], quality_score: { score: 'GREEN' } }],
+  paging: { next: 'https://graph.facebook.com/v21.0/W1/message_templates?access_token=SECRET_TOKEN&after=abc' },
+};
+const okFetch = async (url) => ({ ok: true, status: 200, json: async () => (String(url).includes('after=abc') ? page2 : page1) });
 
-test('listWabaTemplates follows pagination', async () => {
-  const all = await listWabaTemplates('W1', 'tok', okFetch);
+test('listWabaTemplates follows pagination, stripping access_token from paging.next and re-authenticating via the header', async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url: String(url), headers: (opts && opts.headers) || {} });
+    return okFetch(url);
+  };
+  const all = await listWabaTemplates('W1', 'tok', fetchImpl);
   assert.deepEqual(all.map((t) => t.name), ['a', 'b']);
+
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].url.includes('after=abc'), 'second fetch keeps the real pagination cursor');
+  assert.ok(!calls[1].url.includes('access_token'), 'second fetch must not carry access_token in the URL');
+  assert.equal(calls[1].headers.Authorization, 'Bearer tok', 'second fetch must still authenticate via the header');
 });
 
 test('listWabaTemplates rejects with a metaError when a page fetch fails', async () => {
@@ -168,9 +183,9 @@ test('tpl_list groups multiple WABAs, uses the FIRST channel token per WABA, and
     { inboxId: 3, name: 'C', phone: '+3', token: 't2', phoneId: 'p3', wabaId: 'W2' },
   ] };
   const calls = [];
-  const fetchImpl = async (url) => {
+  const fetchImpl = async (url, opts) => {
     const u = String(url);
-    calls.push(u);
+    calls.push({ url: u, headers: (opts && opts.headers) || {} });
     if (u.includes('/app?')) return { ok: true, status: 200, json: async () => ({ id: 'app1' }) };
     if (u.includes('/flows?')) return { ok: true, status: 200, json: async () => ({ data: [] }) };
     if (u.includes('/message_templates?')) {
@@ -183,14 +198,14 @@ test('tpl_list groups multiple WABAs, uses the FIRST channel token per WABA, and
   const all = await handleTemplatesAction(1, 'tpl_list', {}, { reads, fetchImpl });
   assert.deepEqual(all.data.wabas.map((w) => w.wabaId), ['W1', 'W2']);
   assert.equal(all.data.wabas[0].inboxes.length, 2);
-  assert.ok(calls.some((u) => u.includes('access_token=t1') && u.includes('/W1/message_templates')), 'uses the FIRST W1 channel token');
-  assert.ok(!calls.some((u) => u.includes('access_token=t1b')), 'never queries with the second channel of the same WABA');
+  assert.ok(calls.some((c) => c.url.includes('/W1/message_templates') && c.headers.Authorization === 'Bearer t1'), 'uses the FIRST W1 channel token, via the header');
+  assert.ok(!calls.some((c) => c.headers.Authorization === 'Bearer t1b'), 'never queries with the second channel of the same WABA');
 
   calls.length = 0;
   const filtered = await handleTemplatesAction(1, 'tpl_list', { inbox_id: 3 }, { reads, fetchImpl });
   assert.equal(filtered.data.wabas.length, 1);
   assert.equal(filtered.data.wabas[0].wabaId, 'W2');
-  assert.ok(!calls.some((u) => u.includes('/W1/')), 'inbox_id filter must not fetch the other WABA at all');
+  assert.ok(!calls.some((c) => c.url.includes('/W1/')), 'inbox_id filter must not fetch the other WABA at all');
 });
 
 test('tpl_list with an inbox_id not belonging to the account throws, before any Graph call', async () => {
@@ -230,4 +245,26 @@ test('tpl_list response never leaks token or phoneId, at any depth', async () =>
   assert.ok(!dump.includes('SECRET_PHONE_ID'), 'phoneId value must never appear in the response');
   assert.ok(!/"token"/.test(dump), 'no "token" key anywhere in the response');
   assert.ok(!/"phoneId"/.test(dump), 'no "phoneId" key anywhere in the response');
+});
+
+test('tpl_list run with pagination: no fetched URL ever contains access_token, auth rides only in the header', async () => {
+  const reads = { getWhatsappCredsAll: async () => [
+    { inboxId: 1, name: 'A', phone: '+1', token: 'SECRET_TOKEN', phoneId: 'p1', wabaId: 'W1' },
+  ] };
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    const u = String(url);
+    calls.push({ url: u, headers: (opts && opts.headers) || {} });
+    if (u.includes('/app?')) return { ok: true, status: 200, json: async () => ({ id: 'app1' }) };
+    if (u.includes('/flows?')) return { ok: true, status: 200, json: async () => ({ data: [] }) };
+    if (u.includes('after=abc')) return { ok: true, status: 200, json: async () => page2 };
+    if (u.includes('/message_templates?')) return { ok: true, status: 200, json: async () => page1 };
+    throw new Error(`unexpected url: ${u}`);
+  };
+
+  await handleTemplatesAction(1, 'tpl_list', {}, { reads, fetchImpl });
+
+  assert.ok(calls.length >= 4, 'expected app + flows + 2 template pages (pagination) to all have run');
+  assert.ok(calls.every((c) => !c.url.includes('access_token')), 'no fetched URL may ever contain access_token');
+  assert.ok(calls.every((c) => c.headers.Authorization === 'Bearer SECRET_TOKEN'), 'every Graph call authenticates via the Bearer header');
 });
