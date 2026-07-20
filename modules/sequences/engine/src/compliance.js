@@ -220,6 +220,15 @@ export const DEFAULT_SETTINGS = Object.freeze({
   //
   // 40 = אחרי שהשחיקה אמיתית, לפני הקריסה, ובקצב רוטציה של פעם בחודש בערך.
   max_template_failures: 40,
+
+  // ── בלם המסירה (delivery floor) ────────────────────────────────────────────
+  // halt_on_red מסתמך על דירוג האיכות של מטא — שבנפחים האלה מחזיר UNKNOWN לנצח
+  // ואינו נורה אף פעם. הבלם האמיתי מודד את המסירה *בפועל*: אם ההודעות על תבניות
+  // נקיות מפסיקות להגיע (WABA שרוף, מדיה שבורה, פעולת מדיניות של מטא) — כל שליחה
+  // נכשלת בלי שאף תבנית בודדת חוצה את הסף שלה, והחשבון נשאר "בריא" בעיני מטא בזמן
+  // שהוא הולם. checkDeliveryFloor עוצר את זה. נמדד בבננה בוק: מסירה תקינה = 91-98%.
+  min_delivery_rate:     70,   // אחוז הגעה מינימלי על מדגם תבניות נקיות
+  min_delivery_sample:   20,   // אל תשפוט מסירה על מדגם קטן מזה
 });
 
 /**
@@ -453,6 +462,52 @@ export async function haltAccount(pool, accountId, reason) {
   );
   await raiseAlert(pool, accountId, 'critical', 'halted', `השליחה נעצרה אוטומטית: ${reason}`);
   console.error(`[drip] ACCOUNT ${accountId} HALTED — ${reason}`);
+}
+
+/**
+ * בלם המסירה — מפסק-פחת לפי המסירה *בפועל*, לא לפי דירוג מטא. זה מה ש-halt_on_red
+ * לא רואה: בנפחים האלה מטא מחזירה quality=UNKNOWN לנצח, אז מספר שמפסיק להגיע בשקט
+ * (WABA שרוף, מדיה שבורה, פעולת מדיניות) נכשל בכל שליחה — בלי שאף תבנית בודדת חוצה
+ * את max_template_failures — והחשבון נשאר "בריא" בעיני מטא בזמן שהוא הולם. הבלם הזה
+ * סוגר את הפער. נקרא פר-חשבון בכל tick; משתמש ב-haltAccount הקיים (canSend כבר עוצר
+ * על health.halted). מחליף את הסקריפט החיצוני drip-brake.sh — עכשיו מובנה ורב-דיירי.
+ *
+ * @returns {Promise<{rate:number,n:number,halted:boolean}|null>} null = מדגם קטן מדי
+ */
+export async function checkDeliveryFloor(pool, accountId, settings = null) {
+  // מכבד כיוונון פר-חשבון: loadSettings ממזג DEFAULT_SETTINGS עם שורת ה-compliance
+  // (אם קיימת). חשבון חדש בלי שורה נופל ל-DEFAULT — כך הבלם מובנה אוטומטית לכולם.
+  const s = { ...DEFAULT_SETTINGS, ...(settings || await loadSettings(pool, accountId)) };
+
+  // מסירה על תבניות נקיות בלבד היום. מאגר השריפה מעוצב להיכשל — לכלול אותו כאן זה
+  // בדיוק "המכנה המזוהם" שהפך רשימה תקינה לשרופה פעמיים. NOT LIKE '%burn%' מנקה.
+  const { rows } = await pool.query(
+    `SELECT count(*) FILTER (WHERE m.status IN (1,2)) AS ok,
+            count(*) FILTER (WHERE m.status = 3)     AS bad
+       FROM drip.sent_messages sm
+       JOIN messages m ON m.id = sm.message_id
+      WHERE sm.account_id = $1
+        AND sm.sent_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Jerusalem') AT TIME ZONE 'Asia/Jerusalem'
+        AND sm.template_name NOT LIKE '%burn%'`,
+    [accountId]
+  );
+  const ok = Number(rows[0]?.ok || 0), bad = Number(rows[0]?.bad || 0);
+  const n = ok + bad;
+  if (n < (s.min_delivery_sample || 20)) return null;   // מדגם קטן מדי — לא שופטים
+
+  const rate = Math.round((100 * ok) / n);
+  if (rate >= (s.min_delivery_rate || 70)) return { rate, n, halted: false };
+
+  // המסירה צנחה. עוצר — אם לא כבר עצור, כדי לא להציף את הדשבורד באותה התראה כל tick.
+  const h = await loadHealth(pool, accountId);
+  if (!h.halted) {
+    await haltAccount(
+      pool, accountId,
+      `שיעור ההגעה צנח ל-${rate}% (${ok} מתוך ${n} היום, תבניות נקיות בלבד). השליחה ` +
+      `נעצרה אוטומטית — בדקו את המספר, המדיה והתבניות, ואז שחררו ידנית (drip.resume_account).`
+    );
+  }
+  return { rate, n, halted: true };
 }
 
 /**
