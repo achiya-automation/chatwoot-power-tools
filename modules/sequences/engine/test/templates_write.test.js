@@ -169,6 +169,38 @@ test('tpl_edit posts only the whitelisted changed fields to /{template_id}, audi
   assert.ok(sql.some((s) => s.text.includes('UPDATE public.channel_whatsapp')), 'edit also syncs back');
 });
 
+test('tpl_edit rejects path injection in template_id; fetch is never called', async () => {
+  const reads = { getWhatsappCredsAll: async () => [{ inboxId: 1, token: 'tok', wabaId: 'W1' }] };
+  const fetchImpl = async () => { throw new Error('must not reach Graph'); };
+  const query = async () => { throw new Error('must not reach DB'); };
+
+  await assert.rejects(
+    handleTemplatesAction(1, 'tpl_edit', {
+      inbox_id: 1,
+      template_id: '123/../evil',
+      changes: { category: 'UTILITY' },
+      __actor: { uid: 'u@x', name: 'U' },
+    }, { reads, fetchImpl, query }),
+    /invalid template_id/
+  );
+});
+
+test('tpl_edit rejects empty changes with no editable fields; fetch is never called', async () => {
+  const reads = { getWhatsappCredsAll: async () => [{ inboxId: 1, token: 'tok', wabaId: 'W1' }] };
+  const fetchImpl = async () => { throw new Error('must not reach Graph'); };
+  const query = async () => { throw new Error('must not reach DB'); };
+
+  await assert.rejects(
+    handleTemplatesAction(1, 'tpl_edit', {
+      inbox_id: 1,
+      template_id: '999888',
+      changes: {},
+      __actor: { uid: 'u@x', name: 'U' },
+    }, { reads, fetchImpl, query }),
+    /no editable fields/
+  );
+});
+
 // ── sync-back never fails the write ───────────────────────────────────────────
 
 test('sync-back failure does not fail the write action (poll job catches up later)', async () => {
