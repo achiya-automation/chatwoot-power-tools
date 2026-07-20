@@ -49,6 +49,7 @@ import { query, withTx, getPool } from './db.js';
 import { makeDbReads } from './reads.js';
 import { projectSchedule } from './schedule.js';
 import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from './campaigns.js';
+import { handleTemplatesAction } from './templates.js';
 
 let _config = null;
 
@@ -94,6 +95,10 @@ export async function resolveDisplayId(accountId, convId) {
 export async function handleAction(accountId, action, payload) {
   const accId = Number(accountId);
   if (!accId) throw new Error('account_id required');
+
+  // Template Studio actions (tpl_list/create/edit/delete/flows) live in their own module —
+  // dispatched here, ahead of the switch, so they don't need a case per action.
+  if (action.startsWith('tpl_')) return handleTemplatesAction(accId, action, payload);
 
   switch (action) {
     case 'list':

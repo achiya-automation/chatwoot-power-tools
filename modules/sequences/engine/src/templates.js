@@ -326,6 +326,51 @@ async function actionTplFlows(accountId, payload, { reads, fetchImpl }) {
   return { data: caps.flowsList };
 }
 
+// ── uploadExampleMedia ───────────────────────────────────────────────────────
+// A template with a media header (IMAGE/VIDEO/DOCUMENT) needs one example file at
+// *creation* time so Meta can review it — a different flow from sending a live message
+// (that one just needs a public URL). This is Meta's two-step Resumable Upload API:
+//   1. open a session for the WABA's app  → session id
+//   2. push the raw bytes to that session → a reusable media `handle`
+// The handle then goes straight into the template's header component's example field.
+// Called directly from the api.js route (not through handleTemplatesAction — this isn't a
+// tpl_* dispatcher action, it has its own raw-body HTTP route mirroring /drip-api/media).
+export async function uploadExampleMedia({ accountId, inboxId, mime, buf }, deps = {}) {
+  const { reads = makeDbReads(defaultQuery), fetchImpl = fetch } = deps;
+  const channel = await resolveChannel(reads, accountId, inboxId);
+
+  const caps = await wabaCapabilities(channel.wabaId, channel.token, fetchImpl);
+  if (caps.mediaUpload === false) {
+    const err = new Error(caps.reason_en || 'Media upload is unavailable for this WhatsApp account');
+    err.status = 400;
+    err.reasonHe = caps.reason_he || 'העלאת מדיה אינה זמינה עבור חשבון וואטסאפ זה';
+    throw err;
+  }
+
+  // Step 1 — open an upload session. A normal Graph call: Bearer header, JSON in and out.
+  const size = buf ? buf.length : 0;
+  const session = await graphGet(
+    `${GRAPH}/${caps.appId}/uploads?file_length=${size}&file_type=${encodeURIComponent(mime || '')}`,
+    channel.token, fetchImpl, { method: 'POST' }
+  );
+  if (!session.id) throw new Error('Meta did not return an upload session id');
+
+  // Step 2 — push the bytes to the session Meta just opened. Meta quirk (Resumable Upload
+  // docs): this call authenticates with the 'OAuth' scheme, not 'Bearer' like every other
+  // Graph call in this file — and takes the raw binary body, not JSON. Auth still rides the
+  // header, never the URL, matching this module's invariant (see graphGet above).
+  const res = await fetchImpl(`${GRAPH}/${session.id}`, {
+    method: 'POST',
+    headers: { Authorization: `OAuth ${channel.token}`, file_offset: '0' },
+    body: buf,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) throw metaError(json);
+  if (!json.h) throw new Error('Meta did not return a media handle');
+
+  return { handle: json.h };
+}
+
 // ── dispatcher ──────────────────────────────────────────────────────────────
 
 // tpl_list: group the account's usable Cloud-API channels by WABA (several phone numbers
