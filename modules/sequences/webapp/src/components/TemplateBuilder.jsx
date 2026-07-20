@@ -34,13 +34,14 @@ import Button from './ui/Button.jsx';
 import Dropdown from './ui/Dropdown.jsx';
 import Switch from './ui/Switch.jsx';
 import TemplatePreview from './TemplatePreview.jsx';
-import { builderReducer, CAROUSEL_CARD_BUTTONS_MAX } from '../lib/builderState.js';
+import { builderReducer } from '../lib/builderState.js';
 import {
   emptyTemplate,
   CATEGORIES,
   HEADER_FORMATS,
   BUTTON_TYPES,
   CAROUSEL_CARD_BUTTON_TYPES,
+  CAROUSEL_CARD_BUTTONS_MAX,
   LIMITS,
   LANGS,
   bodyVars,
@@ -704,6 +705,9 @@ function CarouselSection({ tpl, dispatch, accountId, inboxId, wabaCtx, t }) {
   const sharedFormat = cards[0]?.headerFormat || 'NONE';
 
   const setSharedFormat = (fmt) => {
+    // Re-clicking the already-active format must be a no-op — otherwise it re-dispatches
+    // mediaHandle: '' for every card and silently wipes already-uploaded card media.
+    if (fmt === sharedFormat) return;
     cards.forEach((_, i) => dispatch({ type: 'carousel_update_card', index: i, patch: { headerFormat: fmt, mediaHandle: '' } }));
   };
 
@@ -958,7 +962,16 @@ export default function TemplateBuilder({
       if (editTemplateId) {
         const changes = { components: serialized.components };
         if (initial && tpl.category !== initial.category) changes.category = tpl.category;
-        if (serialized.message_send_ttl_seconds != null) changes.message_send_ttl_seconds = serialized.message_send_ttl_seconds;
+        if (serialized.message_send_ttl_seconds != null) {
+          changes.message_send_ttl_seconds = serialized.message_send_ttl_seconds;
+        } else if (initial?.ttlSeconds != null) {
+          // The original template had a TTL and the user cleared it in this edit. Meta's
+          // contract: omitting message_send_ttl_seconds leaves the existing value untouched
+          // on PATCH, so removing a TTL requires explicitly sending null. Not independently
+          // confirmed against Meta's docs — if this assumption is wrong, the Graph API call
+          // errors and that error surfaces verbatim via setServerError below.
+          changes.message_send_ttl_seconds = null;
+        }
         await editTemplate(accountId, inboxId, editTemplateId, changes);
       } else {
         await createTemplate(accountId, inboxId, serialized);

@@ -343,3 +343,46 @@ test('validate: VOICE_CALL text exceeding 20 chars is rejected', () => {
   const t20 = { ...t21, name: 'call_text_ok', buttons: [{ type: 'VOICE_CALL', text: 'A'.repeat(20) }] };
   assert.deepEqual(validateTemplate(t20), []);
 });
+
+// ---------------------------------------------------------------------------
+// Task 11 review fixes: FLOW button dropped its flow binding on serialize; a
+// carousel card's button count was never grounded to a shared, exported constant.
+// ---------------------------------------------------------------------------
+
+test('serialize: FLOW button emits flow_id when flowId is set (critical — binding was previously dropped)', () => {
+  const t = { ...emptyTemplate(), name: 'flow_btn', body: { text: 'Ready?', examples: [] },
+    buttons: [{ type: 'FLOW', text: 'Start', flowId: 'flow_123' }] };
+  const btns = serializeTemplate(t).components.find((c) => c.type === 'BUTTONS').buttons;
+  assert.deepEqual(btns[0], { type: 'FLOW', text: 'Start', flow_id: 'flow_123' });
+});
+
+test('validate: FLOW button without a linked flow is rejected', () => {
+  const t = { ...emptyTemplate(), name: 'flow_unlinked', body: { text: 'Ready?', examples: [] },
+    buttons: [{ type: 'FLOW', text: 'Start' }] };
+  const errs = validateTemplate(t);
+  assert.ok(errs.some((e) => e.field === 'buttons' && e.msg_en === 'A Flow button requires a linked flow'));
+});
+
+test('deserialize: FLOW button maps flow_id back to flowId (round-trip)', () => {
+  const g = { name: 'flow_rt', language: 'he', category: 'MARKETING', components: [
+    { type: 'BODY', text: 'Ready?' },
+    { type: 'BUTTONS', buttons: [{ type: 'FLOW', text: 'Start', flow_id: 'flow_123' }] },
+  ] };
+  const ui = deserializeTemplate(g);
+  assert.equal(ui.buttons[0].flowId, 'flow_123');
+  const btns = serializeTemplate(ui).components.find((c) => c.type === 'BUTTONS').buttons;
+  assert.deepEqual(btns[0], { type: 'FLOW', text: 'Start', flow_id: 'flow_123' });
+});
+
+test('validate: carousel card with more than 2 buttons is rejected (CAROUSEL_CARD_BUTTONS_MAX)', () => {
+  const t = { ...emptyTemplate(), name: 'car_btn_cap', body: { text: 'Check:', examples: [] },
+    carousel: { cards: [
+      { headerFormat: 'NONE', mediaHandle: '', body: 'One', examples: [], buttons: [
+        { type: 'QUICK_REPLY', text: 'A' },
+        { type: 'QUICK_REPLY', text: 'B' },
+        { type: 'QUICK_REPLY', text: 'C' },
+      ] },
+      { headerFormat: 'NONE', mediaHandle: '', body: 'Two', examples: [], buttons: [] },
+    ] } };
+  assert.ok(validateTemplate(t).some((e) => e.field === 'carousel'));
+});
