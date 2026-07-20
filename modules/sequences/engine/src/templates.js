@@ -18,8 +18,10 @@ export function metaError(body) {
   return err;
 }
 
+// Auth via header, never via URL: an access_token in the URL is a loggable surface (access
+// logs, proxies, browser history). Mirrors src/meta.js's fetchNumberHealth/fetchTemplateHealth.
 async function graphGet(url, token, fetchImpl) {
-  const res = await fetchImpl(`${url}${url.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token)}`);
+  const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json.error) throw metaError(json);
   return json;
@@ -31,7 +33,16 @@ export async function listWabaTemplates(wabaId, token, fetchImpl = fetch) {
   while (url) {
     const json = await graphGet(url, token, fetchImpl);
     out.push(...(json.data || []));
-    url = json.paging && json.paging.next ? json.paging.next : null;
+    const next = json.paging && json.paging.next;
+    if (next) {
+      // Meta embeds access_token directly in paging.next URLs. Strip it here so no token
+      // ever rides in a URL on our side — graphGet re-authenticates via the header, as always.
+      const nextUrl = new URL(next);
+      nextUrl.searchParams.delete('access_token');
+      url = nextUrl.toString();
+    } else {
+      url = null;
+    }
   }
   return out;
 }
