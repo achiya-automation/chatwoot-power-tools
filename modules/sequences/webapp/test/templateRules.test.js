@@ -247,3 +247,63 @@ test('BUTTON_TYPES: CATALOG and MPM are distinct components, each capped at 1 (v
   assert.equal(BUTTON_TYPES.CATALOG.max, 1);
   assert.equal(BUTTON_TYPES.MPM.max, 1);
 });
+
+// ---------------------------------------------------------------------------
+// Extensions — Task 3 review fixes: per-card carousel examples, carousel/
+// top-level-component mutual exclusion (grounded against Meta's live carousel
+// template docs), COPY_CODE alphanumeric check.
+// ---------------------------------------------------------------------------
+
+test('serialize: carousel card with a variable and matching example serializes body_text', () => {
+  const t = { ...emptyTemplate(), name: 'car_var', body: { text: 'Check these:', examples: [] },
+    carousel: { cards: [
+      { headerFormat: 'IMAGE', mediaHandle: 'h1', body: 'Hi {{1}}', examples: ['Dana'], buttons: [] },
+      { headerFormat: 'IMAGE', mediaHandle: 'h2', body: 'Card two', examples: [], buttons: [] },
+    ] } };
+  assert.deepEqual(validateTemplate(t), []);
+  const car = serializeTemplate(t).components.find((c) => c.type === 'CAROUSEL');
+  const body0 = car.cards[0].components.find((c) => c.type === 'BODY');
+  assert.deepEqual(body0, { type: 'BODY', text: 'Hi {{1}}', example: { body_text: [['Dana']] } });
+});
+
+test('validate: carousel card variable without a matching example errors and names the card', () => {
+  const t = { ...emptyTemplate(), name: 'car_no_ex', body: { text: 'Check:', examples: [] },
+    carousel: { cards: [
+      { headerFormat: 'IMAGE', mediaHandle: 'h1', body: 'Hi {{1}}', examples: [], buttons: [] },
+      { headerFormat: 'IMAGE', mediaHandle: 'h2', body: 'Card two', examples: [], buttons: [] },
+    ] } };
+  const errs = validateTemplate(t);
+  const carErr = errs.find((e) => e.field === 'carousel' && /card 1/i.test(e.msg_en) && /example/i.test(e.msg_en));
+  assert.ok(carErr, 'expected a bilingual error naming card 1 for the missing example');
+  assert.ok(/1/.test(carErr.msg_he));
+});
+
+test('validate: carousel template rejects top-level header, footer and buttons (Meta docs: only BODY may coexist with CAROUSEL)', () => {
+  const t = { ...emptyTemplate(), name: 'car_excl', body: { text: 'Check:', examples: [] },
+    header: { format: 'TEXT', text: 'Hello', example: '', mediaHandle: '' },
+    footer: 'Bye',
+    buttons: [{ type: 'QUICK_REPLY', text: 'Go' }],
+    carousel: { cards: [
+      { headerFormat: 'IMAGE', mediaHandle: 'h1', body: 'One', examples: [], buttons: [] },
+      { headerFormat: 'IMAGE', mediaHandle: 'h2', body: 'Two', examples: [], buttons: [] },
+    ] } };
+  const carErrs = validateTemplate(t).filter((e) => e.field === 'carousel');
+  assert.equal(carErrs.length, 3, 'expected exactly 3 exclusion errors: header, footer, buttons');
+});
+
+test('validate: carousel template with only a body (no header/footer/buttons) passes mutual-exclusion', () => {
+  const t = { ...emptyTemplate(), name: 'car_clean', body: { text: 'Check:', examples: [] },
+    carousel: { cards: [
+      { headerFormat: 'IMAGE', mediaHandle: 'h1', body: 'One', examples: [], buttons: [] },
+      { headerFormat: 'IMAGE', mediaHandle: 'h2', body: 'Two', examples: [], buttons: [] },
+    ] } };
+  assert.deepEqual(validateTemplate(t), []);
+});
+
+test('validate: COPY_CODE code must be alphanumeric only', () => {
+  const bad = { ...emptyTemplate(), name: 'coupon_bad', body: { text: 'Save big', examples: [] },
+    buttons: [{ type: 'COPY_CODE', code: 'SAVE-20!' }] };
+  assert.ok(validateTemplate(bad).some((e) => e.field === 'buttons'));
+  const ok = { ...bad, name: 'coupon_ok', buttons: [{ type: 'COPY_CODE', code: 'SAVE20' }] };
+  assert.deepEqual(validateTemplate(ok), []);
+});
