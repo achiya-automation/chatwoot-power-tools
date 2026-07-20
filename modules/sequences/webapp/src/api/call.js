@@ -1,5 +1,5 @@
 import { API_BASE } from '../config.js';
-import { translate, getLocale } from '../i18n.js';
+import { translate } from '../i18n.js';
 
 // Messages displayed to the user (thrown as Error and shown in App/SequenceEditor). Bilingual.
 const M = {
