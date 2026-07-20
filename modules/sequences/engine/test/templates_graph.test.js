@@ -49,6 +49,17 @@ test('listWabaTemplates rejects with a metaError when a page fetch fails', async
   });
 });
 
+test('listWabaTemplates requests include last_updated_time in the fields parameter', async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url: String(url), headers: (opts && opts.headers) || {} });
+    return okFetch(url);
+  };
+  await listWabaTemplates('W1', 'tok', fetchImpl);
+  assert.ok(calls.length > 0, 'expected at least one fetch call');
+  assert.ok(calls.some((c) => c.url.includes('last_updated_time')), 'fields parameter must include last_updated_time');
+});
+
 // ── metaError ────────────────────────────────────────────────────────────────
 
 test('metaError prefers user-facing message and keeps code', () => {
