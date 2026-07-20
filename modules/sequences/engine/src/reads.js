@@ -104,6 +104,24 @@ export function makeDbReads(query) {
       return rows.length > 0;
     },
 
+    // True if a HUMAN agent (message_type=1 outgoing, sender_type='User') sent after sinceISO.
+    // Our engine sends as 'AgentBot', so 'User' means a person took over the conversation —
+    // the signal to stand the sequence down instead of talking over them.
+    outgoingByHumanSince: async (conversationId, sinceISO, accountId) => {
+      const rows = await query(
+        `SELECT 1
+           FROM public.messages m
+           JOIN public.conversations c ON c.id = m.conversation_id
+          WHERE c.account_id = $1 AND c.display_id = $2
+            AND m.message_type = 1
+            AND m.sender_type = 'User'
+            AND m.created_at > ($3::timestamptz AT TIME ZONE 'UTC')
+          LIMIT 1`,
+        [accountId, conversationId, sinceISO]
+      );
+      return rows.length > 0;
+    },
+
     // Meta creds for an account's WhatsApp channel — the same channel token Chatwoot already
     // stores and sends through. phoneId → the number's messaging limit + quality rating;
     // wabaId → the WhatsApp Business Account, whose /message_templates edge is the only place
