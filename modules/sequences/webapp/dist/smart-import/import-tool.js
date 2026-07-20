@@ -125,9 +125,12 @@ var __cwImport = (() => {
     first_name: ["\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9", "\u05E4\u05E8\u05D8\u05D9", "firstname", "first name", "fname", "given name"],
     last_name: ["\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4", "\u05DE\u05E9\u05E4\u05D7\u05D4", "lastname", "last name", "surname", "family name"],
     name: ["\u05E9\u05DD", "\u05E9\u05DD \u05DE\u05DC\u05D0", "\u05E9\u05DD \u05D0\u05D9\u05E9 \u05E7\u05E9\u05E8", "\u05D0\u05D9\u05E9 \u05E7\u05E9\u05E8", "name", "full name", "fullname", "contact name", "contact"],
-    phone_number: ["\u05D8\u05DC\u05E4\u05D5\u05DF", "\u05E0\u05D9\u05D9\u05D3", "\u05E4\u05DC\u05D0\u05E4\u05D5\u05DF", "\u05E4\u05DC", "\u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF", "\u05DE\u05E1\u05E4\u05E8", "\u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4", "whatsapp", "phone", "mobile", "cell", "cellphone", "tel", "telephone", "phone number", "msisdn"],
+    phone_number: ["\u05D8\u05DC\u05E4\u05D5\u05DF", "\u05E0\u05D9\u05D9\u05D3", "\u05E4\u05DC\u05D0\u05E4\u05D5\u05DF", "\u05E4\u05DC", "\u05E1\u05DC\u05D5\u05DC\u05E8\u05D9", "\u05E1\u05DC\u05D5\u05DC\u05D0\u05E8\u05D9", "\u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF", "\u05DE\u05E1\u05E4\u05E8", "\u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4", "whatsapp", "phone", "mobile", "cell", "cellphone", "tel", "telephone", "phone number", "msisdn"],
     email: ["\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC", "\u05DE\u05D9\u05D9\u05DC", '\u05D3\u05D5\u05D0"\u05DC', "\u05D3\u05D5\u05D0\u05DC", "\u05DB\u05EA\u05D5\u05D1\u05EA \u05DE\u05D9\u05D9\u05DC", "email", "e-mail", "mail", "email address"],
-    identifier: ["\u05DE\u05D6\u05D4\u05D4", "\u05DE\u05D6\u05D4\u05D4 \u05D7\u05D9\u05E6\u05D5\u05E0\u05D9", "\u05EA\u05D6", '\u05EA"\u05D6', "\u05EA.\u05D6", "id", "identifier", "external id", "ref"],
+    // ⚠️ ID-number headers must be recognized here: Israeli IDs are 9 digits, which
+    // normalizePhone happily turns into +972XXXXXXXXX — so an unrecognized ת"ז column
+    // gets content-detected as phone_number and steals the real phone column's slot.
+    identifier: ["\u05DE\u05D6\u05D4\u05D4", "\u05DE\u05D6\u05D4\u05D4 \u05D7\u05D9\u05E6\u05D5\u05E0\u05D9", "\u05EA\u05D6", '\u05EA"\u05D6', "\u05EA.\u05D6", "\u05DE\u05E1\u05E4\u05E8 \u05EA\u05D6", "\u05DE\u05E1 \u05EA\u05D6", "\u05DE\u05E1\u05E4\u05E8 \u05D6\u05D4\u05D5\u05EA", "\u05EA\u05E2\u05D5\u05D3\u05EA \u05D6\u05D4\u05D5\u05EA", "\u05DE\u05E1\u05E4\u05E8 \u05EA\u05E2\u05D5\u05D3\u05EA \u05D6\u05D4\u05D5\u05EA", "id", "identifier", "external id", "ref"],
     company_name: ["\u05D7\u05D1\u05E8\u05D4", "\u05E2\u05E1\u05E7", "\u05D0\u05E8\u05D2\u05D5\u05DF", "\u05E9\u05DD \u05D7\u05D1\u05E8\u05D4", "company", "company name", "organization", "organisation", "business"],
     city: ["\u05E2\u05D9\u05E8", "\u05D9\u05D9\u05E9\u05D5\u05D1", "\u05D9\u05E9\u05D5\u05D1", "city", "town"],
     country: ["\u05DE\u05D3\u05D9\u05E0\u05D4", "\u05D0\u05E8\u05E5", "country"]
@@ -135,8 +138,12 @@ var __cwImport = (() => {
   function normHeader(h) {
     return String(h || "").toLowerCase().replace(/["'.\-_/\\]/g, "").replace(/\s+/g, " ").trim();
   }
+  var FILLER_WORDS = /* @__PURE__ */ new Set(["\u05DC\u05E7\u05D5\u05D7", "\u05DC\u05E7\u05D5\u05D7\u05D4", "customer", "client"]);
+  function stripFiller(n) {
+    return n.split(" ").filter((w) => !FILLER_WORDS.has(w)).join(" ");
+  }
   function headerField(header2) {
-    const n = normHeader(header2);
+    const n = stripFiller(normHeader(header2));
     if (!n) return null;
     let best = null;
     let bestLen = 0;
