@@ -13,6 +13,7 @@ const nextStepId = () => `step_${++_stepId}`;
 export const makeEmptyStep = () => ({
   id: nextStepId(),
   template: '',
+  templateBurn: '',   // עותק שריפה — תבנית לנמענות רוויות (ריק = אין; מוגדר לפי הצורך)
   language: 'he',
   category: 'MARKETING',
   delayDays: 1,
