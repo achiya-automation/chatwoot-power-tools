@@ -46,11 +46,22 @@ async function seedCampaign({ id, account = 1, inbox = 10, type = 1, status = 1,
   // WhatsApp inbox so the join filters it in
   await query(`INSERT INTO public.inboxes(id, account_id, name, channel_type, channel_id) VALUES ($1,$2,'WA','Channel::Whatsapp',$1) ON CONFLICT (id) DO NOTHING`, [inbox, account]);
 }
-async function seedCampaignMessage({ id, account = 1, conv = 500, campaignId, status, sourceId = `wamid-${id}` }) {
+// Explicit UTC-naive "now" for seeding created_at. A bare SQL `now()` is a timestamptz; assigning
+// it into a naive `timestamp` column implicitly casts through the Postgres session's *default*
+// TimeZone GUC, so the stored value silently becomes LOCAL wall-clock time whenever that GUC isn't
+// UTC — true for a freshly created database that inherited the OS timezone instead of an explicit
+// UTC override. Real Chatwoot/Rails never hits this: it formats a UTC instant into a plain,
+// zone-less string at the app layer before sending it, so the column holds true UTC regardless of
+// the DB session's timezone (see the localTs() comment in src/campaigns.js, which depends on that).
+// Building the naive-UTC string here in JS mirrors that, so seeded rows land in the correct
+// campaignsTrend day bucket on every machine, at every hour, independent of the session TimeZone.
+const utcNow = (offsetMs = 0) => new Date(Date.now() + offsetMs).toISOString().replace('Z', '').replace('T', ' ');
+
+async function seedCampaignMessage({ id, account = 1, conv = 500, campaignId, status, sourceId = `wamid-${id}`, createdAt = utcNow() }) {
   await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, source_id, created_at)
-               VALUES ($1,$2,$3,1,$4,$5,$6, now())`,
+               VALUES ($1,$2,$3,1,$4,$5,$6,$7)`,
     // prod stores content_attributes DOUBLE-ENCODED (a JSON string, not an object) — mirror it
-    [id, conv, account, status, JSON.stringify(JSON.stringify({ campaign_id: campaignId })), sourceId]);
+    [id, conv, account, status, JSON.stringify(JSON.stringify({ campaign_id: campaignId })), sourceId, createdAt]);
 }
 
 test('listCampaigns: aggregates status counts per campaign', async () => {
@@ -301,11 +312,9 @@ test('campaignsTrend: buckets campaign messages by day', async () => {
 test('campaignsTrend: separates messages into distinct day buckets, zero-filled, oldest → newest', async () => {
   await seedCampaign({ id: 41 });
   await seedCampaignMessage({ id: 3, campaignId: 41, status: 1 }); // today: delivered
-  await query(
-    `INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, content_attributes, created_at)
-     VALUES (4, 500, 1, 1, 3, $1, now() - interval '2 days')`, // 2 days ago: failed
-    [JSON.stringify(JSON.stringify({ campaign_id: 41 }))]
-  );
+  // 2 days ago: failed — same utcNow() basis as "today" above, just offset, so both land in their
+  // exact intended calendar-day bucket regardless of the hour the suite happens to run at.
+  await seedCampaignMessage({ id: 4, campaignId: 41, status: 3, createdAt: utcNow(-2 * 86400000) });
   const trend = await campaignsTrend(query, 1, 14);
   assert.equal(trend.length, 14); // one row per day in the window, empty days included
   const nonzero = trend.filter((r) => r.attempted > 0);
