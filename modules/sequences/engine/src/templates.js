@@ -211,9 +211,13 @@ async function actionTplEdit(accountId, payload, { reads, fetchImpl, query }) {
   const channel = await resolveChannel(reads, accountId, payload.inbox_id);
   const templateId = payload.template_id;
   if (!templateId) throw new Error('template_id is required');
+  // Meta template ids are numeric; blocks path injection into the Graph URL.
+  if (!/^\d+$/.test(String(templateId))) throw new Error('invalid template_id');
   const changes = payload.changes || {};
   const body = {};
   for (const k of EDIT_KEYS) if (k in changes) body[k] = changes[k];
+  // Prevent empty requests to Graph API: at least one editable field must be present.
+  if (Object.keys(body).length === 0) throw new Error('no editable fields in changes');
 
   try {
     await graphGet(`${GRAPH}/${templateId}`, channel.token, fetchImpl, { method: 'POST', body });
