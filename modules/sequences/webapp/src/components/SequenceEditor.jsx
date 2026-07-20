@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   X,
   Film,
+  Flame,
 } from 'lucide-react';
 import Modal from './ui/Modal.jsx';
 import Button from './ui/Button.jsx';
@@ -29,7 +30,7 @@ import TemplatePicker from './ui/TemplatePicker.jsx';
 import MessageBubble from './ui/MessageBubble.jsx';
 import SequencePreview from './SequencePreview.jsx';
 import { useToast } from './ui/Toast.jsx';
-import { uploadMedia } from '../api/sequencesApi.js';
+import { uploadMedia, createBurnTemplate } from '../api/sequencesApi.js';
 import { validateWhatsAppMedia, formatBytes, acceptFor, WA_MEDIA } from '../lib/waMedia.js';
 import { needsTranscode } from '../lib/videoCompress.js';
 import { compressVideo, isCompressionSupported, terminateCompression } from '../lib/videoCompressRunner.js';
@@ -92,6 +93,12 @@ const M = {
     dupStep: 'שכפול שלב', moveUp: 'הזז למעלה', moveDown: 'הזז למטה', delStep: 'מחיקת שלב',
     expandStep: 'הרחבת השלב', collapseStep: 'כיווץ השלב',
     templateLabel: 'תבנית הודעה', gapLabel: 'מרווח מהשלב הקודם:',
+    // עותק שריפה (תבנית לנמענות רוויות)
+    burnLabel: 'תבנית לנמענות רוויות', burnBadge: 'עותק שריפה',
+    burnNone: 'ללא — נמענת רוויה תמתין', burnCreate: 'צור עותק', burnCreating: 'יוצר…',
+    burnHint: 'עותק זהה בתוכן. נמענת שהגיעה לתקרת מטא מקבלת אותו במקום — כדי שהכשלים ייפלו עליו ולא ישרפו את התבנית הנקייה. רוב הרשימות הנקיות לא צריכות עותק.',
+    burnCreated: 'העותק "{name}" נוצר ונשלח לאישור מטא ✓', burnFailed: 'יצירת העותק נכשלה',
+    burnPending: 'ממתין לאישור', burnStatusClean: 'דרך הנקייה', burnStatusBurn: 'דרך העותק',
     waitDays: 'המתנה (ימים)', waitHours: 'המתנה (שעות)',
     whenToSend: 'מתי לשלוח את ההודעה',
     condAlways: 'תמיד', condNoReply: 'רק אם הנמען לא הגיב', condReplied: 'רק אם הנמען הגיב',
@@ -150,6 +157,11 @@ const M = {
     dupStep: 'Duplicate step', moveUp: 'Move up', moveDown: 'Move down', delStep: 'Delete step',
     expandStep: 'Expand step', collapseStep: 'Collapse step',
     templateLabel: 'Message template', gapLabel: 'Gap from the previous step:',
+    burnLabel: 'Template for saturated recipients', burnBadge: 'burn copy',
+    burnNone: 'None — a saturated recipient waits', burnCreate: 'Create copy', burnCreating: 'Creating…',
+    burnHint: 'An identical copy. A recipient who hit Meta’s cap gets it instead — so the failures land on it, not on the clean template. Most clean lists need no copy.',
+    burnCreated: 'Copy "{name}" created and sent to Meta for approval ✓', burnFailed: 'Failed to create the copy',
+    burnPending: 'awaiting approval', burnStatusClean: 'via clean', burnStatusBurn: 'via copy',
     waitDays: 'Wait (days)', waitHours: 'Wait (hours)',
     whenToSend: 'When to send the message',
     condAlways: 'Always', condNoReply: "Only if the recipient hasn't replied", condReplied: 'Only if the recipient replied',
@@ -715,6 +727,34 @@ function StepCard({
   const params = Array.isArray(step.params) ? step.params : [];
   const offsetLabel = offset ? formatOffset(offset) : t('immediate');
 
+  // עותק שריפה — בחירה מרשימה + יצירה יזומה ("צור עותק"). state מקומי לכפתור בלבד.
+  const { toast } = useToast();
+  const [burnBusy, setBurnBusy] = useState(false);
+  const [burnErr, setBurnErr] = useState('');
+  const burnOptions = useMemo(() => {
+    const names = templates.map((tp) => tp.name);
+    const opts = [{ value: '', label: t('burnNone') }, ...names.map((nm) => ({ value: nm, label: nm }))];
+    // עותק שנוצר זה עתה עדיין PENDING ולא ברשימת התבניות — מוסיפים כדי שיוצג כנבחר
+    if (step.templateBurn && !names.includes(step.templateBurn)) {
+      opts.push({ value: step.templateBurn, label: `${step.templateBurn} (${t('burnPending')})` });
+    }
+    return opts;
+  }, [templates, step.templateBurn, t]);
+  const handleCreateBurn = async () => {
+    if (!step.template || burnBusy) return;
+    setBurnErr('');
+    setBurnBusy(true);
+    try {
+      const res = await createBurnTemplate(step.template, accountId);
+      onChange({ templateBurn: res.name });
+      toast({ message: t('burnCreated', { name: res.name }) });
+    } catch (e) {
+      setBurnErr(e.message || t('burnFailed'));
+    } finally {
+      setBurnBusy(false);
+    }
+  };
+
   return (
     <div
       onDragOver={(e) => e.preventDefault()}
@@ -831,6 +871,47 @@ function StepCard({
                     onChange={onTemplate}
                   />
                 </div>
+
+                {/* עותק שריפה — תבנית לנמענות רוויות. בחירה מרשימה, או יצירה יזומה
+                    בלחיצה (עותק זהה בשם _burn1). המנוע מנתב רוויים לעותק — reconcile.js. */}
+                {step.template ? (
+                  <div className="sm:col-span-2 rounded-lg border border-n-amber-6 bg-n-amber-2 px-3.5 py-3">
+                    <p className="mb-2 flex flex-wrap items-center gap-1.5 text-sm font-medium text-n-slate-12">
+                      <Flame size={14} className="text-n-amber-11" aria-hidden="true" />
+                      {t('burnLabel')}
+                      <span className="rounded bg-n-amber-4 px-1.5 py-0.5 text-[10px] font-medium text-n-amber-11">
+                        {t('burnBadge')}
+                      </span>
+                    </p>
+                    <div className="flex items-stretch gap-2">
+                      <div className="flex-1">
+                        <Dropdown
+                          options={burnOptions}
+                          value={step.templateBurn || ''}
+                          onChange={(v) => onChange({ templateBurn: v })}
+                          ariaLabel={t('burnLabel')}
+                        />
+                      </div>
+                      <Button
+                        variant="faded"
+                        color="amber"
+                        size="sm"
+                        icon={Copy}
+                        loading={burnBusy}
+                        onClick={handleCreateBurn}
+                      >
+                        {burnBusy ? t('burnCreating') : t('burnCreate')}
+                      </Button>
+                    </div>
+                    <p className="mt-1.5 text-xs text-n-slate-11">{t('burnHint')}</p>
+                    {burnErr ? (
+                      <p className="mt-1 flex items-center gap-1 text-xs font-medium text-n-ruby-11">
+                        <AlertCircle size={12} aria-hidden="true" />
+                        {burnErr}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 {/* מרווח מהשלב הקודם — צ'יפים מהירים מעל הקלט המספרי המדויק */}
                 <div className="sm:col-span-2">
