@@ -96,3 +96,7 @@ EOF
   run provision_db ""
   [ "$status" -eq 1 ]
 }
+
+@test "db.sh grants UPDATE on channel_whatsapp template columns" {
+  grep -q "UPDATE (message_templates, message_templates_last_updated) ON public.channel_whatsapp" lib/db.sh
+}
