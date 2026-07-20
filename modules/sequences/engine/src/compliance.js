@@ -253,8 +253,15 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
                           health = {}, template = null, sentToday = 0, inSession = false }) {
   const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
 
-  // ── חוסם הכל ────────────────────────────────────────────────────────────
-  if (health.halted) {
+  // ── חוסם הכל — פרט לחלון שירות פתוח ───────────────────────────────────────
+  // עצירת חשבון (RED / מסירה נמוכה) עוצרת שיווק. אבל נמענת שהגיבה ב-24h האחרונות
+  // נמצאת בחלון שירות פתוח — ושליחה אליה היא *service*, לא marketing: מטא לא סופרת
+  // אותה כשיווק, ומענה לשיחות פתוחות דווקא *משפר* את דירוג האיכות שהוריד ל-RED.
+  // בלי החרגה זו נמענת שהגיבה לפתיחה ("מתי הבת מצווה?") לא קיבלה את המשך הרצף כשמטא
+  // הורידה את המספר ל-RED — בדיוק ההמשך שהיא ביקשה. עקבי עם saturated/daily_cap/
+  // template_burned שכולם כבר מוחרגים ב-inSession. (368/מספר חסום: inSession פשוט
+  // ייכשל בשקט — לא מזיק.)
+  if (health.halted && !inSession) {
     return { ok: false, reason: 'account_halted', action: 'defer', detail: health.halt_reason || '' };
   }
 
