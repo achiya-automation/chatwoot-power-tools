@@ -166,6 +166,22 @@ test('canSend: an open 24h session bypasses consent AND the daily cap', () => {
   assert.equal(v.reason, 'in_session');
 });
 
+test('canSend: a halted account blocks marketing', () => {
+  const v = canSend({ ...base, health: { halted: true, halt_reason: 'RED' } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'account_halted');
+  assert.equal(v.action, 'defer');   // the lead waits, it is not destroyed
+});
+
+test('canSend: a halted account still serves a lead inside an open service window', () => {
+  // RED halts marketing, but replying to someone who wrote to us is service — Meta does
+  // not count it as marketing and it improves the quality rating. A lead who answered the
+  // opener ("when is the bat-mitzvah?") must still get the rest of her sequence.
+  const v = canSend({ ...base, contact: {}, health: { halted: true, halt_reason: 'RED' }, inSession: true });
+  assert.equal(v.ok, true);
+  assert.equal(v.reason, 'in_session');
+});
+
 test('canSend: a suppressed contact is dropped, not deferred', () => {
   const v = canSend({ ...base, contact: { ...base.contact, suppressed_at: new Date(), suppressed_reason: 'keyword' } });
   assert.equal(v.ok, false);
