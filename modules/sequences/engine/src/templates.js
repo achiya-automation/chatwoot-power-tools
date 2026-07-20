@@ -2,6 +2,7 @@
 // through Meta's Graph API, using the same channel token Chatwoot already stores.
 // Every write here is triggered by an explicit admin action in the UI — nothing in this
 // module creates or edits templates on its own (poll = read-only status refresh).
+import { createHash } from 'node:crypto';
 import { query as defaultQuery } from './db.js';
 import { makeDbReads } from './reads.js';
 
@@ -176,6 +177,62 @@ async function syncBack(query, wabaId, token, fetchImpl) {
     await syncWabaToChatwoot(query, wabaId, token, fetchImpl);
   } catch (e) {
     console.error('syncWabaToChatwoot failed:', e.message);
+  }
+}
+
+// ── poll: read-only status refresh ───────────────────────────────────────────
+// Runs from index.js's tick() on its own 10-minute throttle — independent of the 60s tick
+// interval, since neither Meta's rate limits nor a DB scan need checking that often. Finds
+// every WABA that was touched (create/edit/delete) in the last 48h via drip.template_audit,
+// re-lists its templates, and only when the list actually changed since the last time we
+// looked (sha1 of the JSON, kept in a module-level Map) does it write that back into
+// Chatwoot via syncWabaToChatwoot. READ-ONLY, per this module's header invariant: this
+// function never calls a Graph write endpoint (no POST/DELETE) — it only ever GETs
+// (listWabaTemplates) and mirrors that read into Chatwoot's own channel_whatsapp row.
+const POLL_THROTTLE_MS = 10 * 60 * 1000;
+let _lastPoll = 0;              // epoch ms; 0 = never polled → the first call always runs
+const _wabaHash = new Map();    // wabaId -> sha1(JSON.stringify(templates)) as of last sync
+
+/** Test-only: reset the poll throttle and the seen-hash cache. */
+export function _resetPollForTests() {
+  _lastPoll = 0;
+  _wabaHash.clear();
+}
+
+export async function pollTemplateStatuses(deps = {}, now = new Date()) {
+  const nowMs = now.getTime();
+  if (_lastPoll && nowMs - _lastPoll < POLL_THROTTLE_MS) return;
+  _lastPoll = nowMs;
+
+  const { query: q = defaultQuery, fetchImpl = fetch } = deps;
+
+  const recent = await q(
+    `SELECT DISTINCT waba_id FROM drip.template_audit WHERE created_at > now() - interval '48 hours'`
+  );
+
+  for (const { waba_id: wabaId } of recent) {
+    try {
+      const tok = await q(
+        `SELECT provider_config->>'api_key' AS token
+           FROM public.channel_whatsapp
+          WHERE provider = 'whatsapp_cloud'
+            AND provider_config->>'business_account_id' = $1
+            AND COALESCE(provider_config->>'api_key', '') <> ''
+          LIMIT 1`,
+        [wabaId]
+      );
+      const token = tok[0] && tok[0].token;
+      if (!token) { console.error(`[tpl] poll: no channel token found for WABA ${wabaId}`); continue; }
+
+      const templates = await listWabaTemplates(wabaId, token, fetchImpl);
+      const hash = createHash('sha1').update(JSON.stringify(templates)).digest('hex');
+      if (_wabaHash.get(wabaId) === hash) continue;   // unchanged since the last sync
+
+      await syncWabaToChatwoot(q, wabaId, token, fetchImpl);
+      _wabaHash.set(wabaId, hash);
+    } catch (e) {
+      console.error(`[tpl] poll: WABA ${wabaId} failed:`, e.message);
+    }
   }
 }
 
