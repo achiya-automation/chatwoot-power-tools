@@ -307,3 +307,39 @@ test('validate: COPY_CODE code must be alphanumeric only', () => {
   const ok = { ...bad, name: 'coupon_ok', buttons: [{ type: 'COPY_CODE', code: 'SAVE20' }] };
   assert.deepEqual(validateTemplate(ok), []);
 });
+
+// ---------------------------------------------------------------------------
+// Task 3: VOICE_CALL ttlMinutes support and textMax correction
+// ---------------------------------------------------------------------------
+
+test('serialize: VOICE_CALL with ttlMinutes includes ttl_minutes key', () => {
+  const t = { ...emptyTemplate(), name: 'call_ttl', body: { text: 'Ready?', examples: [] },
+    buttons: [{ type: 'VOICE_CALL', text: 'Call', ttlMinutes: 2880 }] };
+  const btns = serializeTemplate(t).components.find((c) => c.type === 'BUTTONS').buttons;
+  assert.deepEqual(btns[0], { type: 'VOICE_CALL', text: 'Call', ttl_minutes: 2880 });
+});
+
+test('serialize: VOICE_CALL without ttlMinutes omits ttl_minutes key', () => {
+  const t = { ...emptyTemplate(), name: 'call_no_ttl', body: { text: 'Ready?', examples: [] },
+    buttons: [{ type: 'VOICE_CALL', text: 'Call' }] };
+  const btns = serializeTemplate(t).components.find((c) => c.type === 'BUTTONS').buttons;
+  assert.deepEqual(btns[0], { type: 'VOICE_CALL', text: 'Call' });
+});
+
+test('validate: VOICE_CALL ttlMinutes outside 1440–43200 range is rejected', () => {
+  const t100 = { ...emptyTemplate(), name: 'call_ttl_bad', body: { text: 'x', examples: [] },
+    buttons: [{ type: 'VOICE_CALL', text: 'Call', ttlMinutes: 100 }] };
+  assert.ok(validateTemplate(t100).some((e) => e.field === 'buttons'));
+  const t1440 = { ...t100, name: 'call_ttl_ok_min', buttons: [{ type: 'VOICE_CALL', text: 'Call', ttlMinutes: 1440 }] };
+  assert.deepEqual(validateTemplate(t1440), []);
+  const t43200 = { ...t100, name: 'call_ttl_ok_max', buttons: [{ type: 'VOICE_CALL', text: 'Call', ttlMinutes: 43200 }] };
+  assert.deepEqual(validateTemplate(t43200), []);
+});
+
+test('validate: VOICE_CALL text exceeding 20 chars is rejected', () => {
+  const t21 = { ...emptyTemplate(), name: 'call_text_long', body: { text: 'x', examples: [] },
+    buttons: [{ type: 'VOICE_CALL', text: 'A'.repeat(21) }] };
+  assert.ok(validateTemplate(t21).some((e) => e.field === 'buttons'));
+  const t20 = { ...t21, name: 'call_text_ok', buttons: [{ type: 'VOICE_CALL', text: 'A'.repeat(20) }] };
+  assert.deepEqual(validateTemplate(t20), []);
+});

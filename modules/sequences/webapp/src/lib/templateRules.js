@@ -23,8 +23,9 @@ export const BUTTON_TYPES = {
   // verification 6a: button type missing from the original spec entirely. Places a
   // WhatsApp call (not PSTN) on tap; not configurable at send time (no per-message
   // parameter, unlike a dynamic URL suffix). No phone field — it rings the WABA's
-  // own registered calling number.
-  VOICE_CALL: { max: 1, textMax: 25 },
+  // own registered calling number. Per Meta calling docs: text max 20 chars, optional
+  // ttl_minutes integer (1440–43200 range, per Meta calling docs).
+  VOICE_CALL: { max: 1, textMax: 20 },
   // verification 6b: marketing coupon code cap raised from 15 to 20 chars by Meta in
   // 2026. This is a DIFFERENT limit from the AUTHENTICATION OTP code (verification 6g,
   // stays 15) — that value is supplied at message-send time, not template-definition
@@ -204,6 +205,14 @@ function validateButtons(buttons, isLto) {
         errors.push(err('buttons',
           'קוד הקופון יכול להכיל אותיות וספרות באנגלית בלבד, ללא סימנים או רווחים',
           'Coupon code can only contain letters and digits, no symbols or spaces'));
+      }
+    }
+    if (b.type === 'VOICE_CALL') {
+      // per Meta calling docs: optional ttl_minutes integer, valid range 1440–43200 (1–30 days)
+      if (typeof b.ttlMinutes === 'number' && (b.ttlMinutes < 1440 || b.ttlMinutes > 43200)) {
+        errors.push(err('buttons',
+          'זמן תוקף הקריאה חייב להיות בין 1440 ל-43200 דקות (1–30 ימים)',
+          'Call TTL must be between 1440 and 43200 minutes (1–30 days)'));
       }
     }
   }
@@ -487,8 +496,13 @@ function serializeButton(b) {
     }
     case 'PHONE_NUMBER':
       return { type: 'PHONE_NUMBER', text: b.text, phone_number: b.phone };
-    case 'VOICE_CALL':
-      return { type: 'VOICE_CALL', text: b.text };
+    case 'VOICE_CALL': {
+      const out = { type: 'VOICE_CALL', text: b.text };
+      if (typeof b.ttlMinutes === 'number' && isFinite(b.ttlMinutes)) {
+        out.ttl_minutes = b.ttlMinutes;
+      }
+      return out;
+    }
     case 'COPY_CODE':
       return { type: 'COPY_CODE', example: b.code };
     case 'FLOW':
