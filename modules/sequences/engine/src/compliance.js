@@ -229,6 +229,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // שהוא הולם. checkDeliveryFloor עוצר את זה. נמדד בבננה בוק: מסירה תקינה = 91-98%.
   min_delivery_rate:     70,   // אחוז הגעה מינימלי על מדגם תבניות נקיות
   min_delivery_sample:   20,   // אל תשפוט מסירה על מדגם קטן מזה
+
+  // ── חלון הפתיחה לליד חדש (fresh opener) ─────────────────────────────────────
+  // גם כשהחשבון עצור על RED, מותר לשלוח את *הפתיחה בלבד* לליד שנרשם ממש לאחרונה.
+  // ליד טרי הוא engagement איכותי (נמדד בבננה בוק: הפתיחה מוסרת ב-91%, לעומת 24%
+  // בתבניות מאוחרות שנשלחו לקהל קר) — הוא לא מה ששורף את המספר, ואף מסייע להתאוששות.
+  // ליד שלא מקבל פתיחה בזמן = ליד אבוד. ⚠️ רק ליד שנרשם בתוך החלון הזה — לא קהל ישן
+  // וקר (שהוא בדיוק מה ששרף את המספר). 0 = לכבות את ההחרגה לגמרי.
+  fresh_opener_hours:    48,
 });
 
 /**
@@ -250,7 +258,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
  * @returns {{ok: boolean, reason?: string, action?: 'defer'|'drop', detail?: string}}
  */
 export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETTINGS,
-                          health = {}, template = null, sentToday = 0, inSession = false }) {
+                          health = {}, template = null, sentToday = 0, inSession = false,
+                          isFreshOpener = false }) {
   const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
 
   // ── חוסם הכל — פרט לחלון שירות פתוח ───────────────────────────────────────
@@ -261,7 +270,10 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   // הורידה את המספר ל-RED — בדיוק ההמשך שהיא ביקשה. עקבי עם saturated/daily_cap/
   // template_burned שכולם כבר מוחרגים ב-inSession. (368/מספר חסום: inSession פשוט
   // ייכשל בשקט — לא מזיק.)
-  if (health.halted && !inSession) {
+  // isFreshOpener: הפתיחה לליד שנרשם ממש עכשיו עוברת גם בעצירה — ליד טרי הוא engagement
+  // איכותי שמסייע להתאוששות, וליד שלא מקבל פתיחה בזמן אבוד. מחושב ב-reconcile (רק step 1
+  // + נרשם בתוך fresh_opener_hours), כדי שקהל ישן וקר לא יעקוף. הצעדים הבאים ברצף לא.
+  if (health.halted && !inSession && !isFreshOpener) {
     return { ok: false, reason: 'account_halted', action: 'defer', detail: health.halt_reason || '' };
   }
 
