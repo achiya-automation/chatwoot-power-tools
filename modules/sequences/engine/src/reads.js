@@ -121,5 +121,28 @@ export function makeDbReads(query) {
       );
       return rows[0]?.token && rows[0]?.phoneId ? rows[0] : null;
     },
+
+    // Every usable Cloud-API channel of the account (Template Studio operates per-WABA;
+    // several numbers may share one). WAHA/API channels have no templates and no api_key.
+    getWhatsappCredsAll: async (accountId) => {
+      const rows = await query(
+        `SELECT i.id   AS "inboxId",
+                i.name AS name,
+                cw.phone_number AS phone,
+                cw.provider_config->>'api_key'             AS token,
+                cw.provider_config->>'phone_number_id'     AS "phoneId",
+                cw.provider_config->>'business_account_id' AS "wabaId"
+           FROM public.inboxes i
+           JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
+          WHERE i.account_id = $1
+            AND i.channel_type = 'Channel::Whatsapp'
+            AND cw.provider = 'whatsapp_cloud'
+            AND COALESCE(cw.provider_config->>'api_key','') <> ''
+            AND COALESCE(cw.provider_config->>'business_account_id','') <> ''
+          ORDER BY i.id`,
+        [accountId]
+      );
+      return rows;
+    },
   };
 }
