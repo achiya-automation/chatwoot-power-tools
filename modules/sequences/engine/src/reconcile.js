@@ -546,6 +546,23 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           }
         }
 
+        // human-takeover: אם סוכן אנושי (הודעה יוצאת, sender 'User' — לא ה-AgentBot שלנו)
+        // שלח מאז ההודעה האחרונה שלנו, הוא השתלט על השיחה. לא דורסים אותו בהודעה אוטומטית —
+        // עוצרים את הרצף ומשאירים לטיפול אנושי. (נמדד 20/07: המנוע שלח וידאו 30 דק' אחרי
+        // שהסוכן שלח לאותה נמענת וידאו — כפילות מביכה.)
+        if (e.last_sent_at && e.conversation_id) {
+          const humanTookOver = await client.outgoingByHumanSince(
+            e.conversation_id, e.last_sent_at.toISOString()
+          );
+          if (humanTookOver) {
+            await c.query(`UPDATE drip.enrollments SET status = 'stopped' WHERE id = $1`, [e.id]);
+            try { await client.patchAttrs(e.conversation_id, { seq_state: 'human_handled' }); }
+            catch (pe) { console.error(`[drip] patchAttrs(human-takeover) conv ${e.conversation_id}:`, pe.message); }
+            console.log(`[drip] acct ${accountId} conv ${e.conversation_id}: human agent took over — sequence stopped`);
+            return;
+          }
+        }
+
         const cond = step.send_condition || 'always';
         if (cond !== 'always' && e.last_sent_at && e.conversation_id) {
           const replied = await client.incomingSince(

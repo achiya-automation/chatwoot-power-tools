@@ -223,6 +223,60 @@ test('refreshHealth only warns on YELLOW — it does not halt', async () => {
   assert.equal(alerts[0].code, 'quality_yellow');
 });
 
+test('refreshHealth auto-resumes on GREEN when the halt came from RED', async () => {
+  _resetHealthCache();
+  const pool = fakePool();
+  const resumed = [];
+  const compliance = {
+    loadSettings:  async () => ({ halt_on_red: true }),
+    loadHealth:    async () => ({ halted: true, halt_reason: 'דירוג האיכות של המספר ירד ל-RED' }),
+    haltAccount:   async () => {},
+    resumeAccount: async (_p, acct) => resumed.push(acct),
+    raiseAlert:    async () => {},
+  };
+  await refreshHealth(pool, creds, 7, new Date(), {
+    fetchNumberHealthFn: numberHealth('TIER_2K', 'GREEN'),
+    fetchTemplateHealthFn: noTemplates, compliance,
+  });
+  assert.deepEqual(resumed, [7]);
+});
+
+test('refreshHealth NEVER auto-resumes on UNKNOWN — the 20/07 lesson', async () => {
+  _resetHealthCache();
+  const pool = fakePool();
+  const resumed = [];
+  const compliance = {
+    loadSettings:  async () => ({ halt_on_red: true }),
+    loadHealth:    async () => ({ halted: true, halt_reason: 'דירוג האיכות של המספר ירד ל-RED' }),
+    haltAccount:   async () => {},
+    resumeAccount: async (_p, acct) => resumed.push(acct),
+    raiseAlert:    async () => {},
+  };
+  await refreshHealth(pool, creds, 7, new Date(), {
+    fetchNumberHealthFn: numberHealth('TIER_2K', 'UNKNOWN'),
+    fetchTemplateHealthFn: noTemplates, compliance,
+  });
+  assert.equal(resumed.length, 0);   // UNKNOWN הוא ברירת המחדל בנפח נמוך — לא עדות להתאוששות
+});
+
+test('refreshHealth does NOT auto-resume a delivery-floor halt on GREEN', async () => {
+  _resetHealthCache();
+  const pool = fakePool();
+  const resumed = [];
+  const compliance = {
+    loadSettings:  async () => ({ halt_on_red: true }),
+    loadHealth:    async () => ({ halted: true, halt_reason: 'שיעור ההגעה צנח ל-40%' }),
+    haltAccount:   async () => {},
+    resumeAccount: async (_p, acct) => resumed.push(acct),
+    raiseAlert:    async () => {},
+  };
+  await refreshHealth(pool, creds, 7, new Date(), {
+    fetchNumberHealthFn: numberHealth('TIER_2K', 'GREEN'),
+    fetchTemplateHealthFn: noTemplates, compliance,
+  });
+  assert.equal(resumed.length, 0);   // רק halt מדירוג RED משוחרר על GREEN — לא כשל מסירה
+});
+
 test('refreshHealth respects halt_on_red=false for a client who opted out of auto-halt', async () => {
   _resetHealthCache();
   const pool = fakePool();

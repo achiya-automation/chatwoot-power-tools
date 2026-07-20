@@ -208,6 +208,17 @@ export async function refreshHealth(pool, reads, accountId, now = new Date(), de
           pool, accountId, 'warn', 'quality_yellow',
           'דירוג האיכות של המספר ירד ל-YELLOW. בדקו את שיעור הקריאה ואת איכות הרשימה.'
         );
+      } else if (quality === 'GREEN') {
+        // auto-resume: מטא שדרגה את המספר ל-GREEN — הסכנה שהובילה לעצירה חלפה. משחררים
+        // רק halt שנבע מדירוג האיכות (RED/נמוכה), ורק על GREEN מלא (לא UNKNOWN — ראה
+        // resumeAccount). כך "עצירה עד התערבות ידנית" הופכת ל"עצירה בזמן סכנה, חידוש כשבטוח".
+        const h = await compliance.loadHealth(pool, accountId);
+        if (h.halted && /RED|נמוכה/.test(h.halt_reason || '')) {
+          await compliance.resumeAccount(
+            pool, accountId,
+            'דירוג האיכות של המספר חזר ל-GREEN — השליחה חודשה אוטומטית.'
+          );
+        }
       }
     }
 
