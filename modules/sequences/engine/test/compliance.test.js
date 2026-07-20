@@ -182,6 +182,20 @@ test('canSend: a halted account still serves a lead inside an open service windo
   assert.equal(v.reason, 'in_session');
 });
 
+test('canSend: a fresh opener passes even when the account is halted (RED)', () => {
+  // ליד שנרשם ממש עכשיו — הפתיחה אליו עוברת גם ב-RED: engagement טרי (91% מסירה) שמסייע
+  // להתאוששות, וליד שלא מקבל פתיחה בזמן אבוד. reconcile מסמן isFreshOpener רק ל-step 1 טרי.
+  const v = canSend({ ...base, health: { halted: true, halt_reason: 'RED' }, isFreshOpener: true });
+  assert.equal(v.ok, true);
+});
+
+test('canSend: a halted account still blocks a non-fresh step (cold audience stays protected)', () => {
+  // ההחרגה צרה בכוונה — רק הפתיחה הטרייה. כל צעד אחר (וגם קהל ישן) נשאר עצור ב-RED.
+  const v = canSend({ ...base, health: { halted: true, halt_reason: 'RED' }, isFreshOpener: false, inSession: false });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'account_halted');
+});
+
 test('canSend: a suppressed contact is dropped, not deferred', () => {
   const v = canSend({ ...base, contact: { ...base.contact, suppressed_at: new Date(), suppressed_reason: 'keyword' } });
   assert.equal(v.ok, false);
