@@ -15,4 +15,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 .cwi-prog-fill{height:100%;background:var(--color-n-brand, #6366f1);transition:width .2s}
 .cwi-tbl-cell{border-bottom:1px solid}
 .cwi-cs-panel{transition:opacity .2s ease-out}
+/* Background-import pill — fixed to the bottom start corner (dir-aware via
+   inset-inline-start; the pill carries its own dir attribute). Below the browser
+   top layer, so any open Chatwoot <dialog> still covers it. */
+.cwi-pill{position:fixed;bottom:16px;inset-inline-start:16px;z-index:2147483000;width:320px;max-width:calc(100vw - 32px);animation:cwiIn .2s ease-out}
 `;
