@@ -251,7 +251,10 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
     }
   };
 
-  const doEdit = (tpl) => onEdit?.(deserializeTemplate(tpl), selectedWaba);
+  // 3rd arg: deserializeTemplate() builds a fresh UI-shaped object and doesn't carry the
+  // Graph template id — the builder needs it separately (engine's tpl_edit requires the
+  // numeric id, not name+language) to know it's editing rather than creating.
+  const doEdit = (tpl) => onEdit?.(deserializeTemplate(tpl), selectedWaba, tpl.id);
   const doDuplicate = (tpl) => {
     const dup = deserializeTemplate(tpl);
     dup.name = '';
