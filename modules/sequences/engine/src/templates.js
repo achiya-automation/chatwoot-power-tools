@@ -20,8 +20,15 @@ export function metaError(body) {
 
 // Auth via header, never via URL: an access_token in the URL is a loggable surface (access
 // logs, proxies, browser history). Mirrors src/meta.js's fetchNumberHealth/fetchTemplateHealth.
-async function graphGet(url, token, fetchImpl) {
-  const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
+// Single chokepoint for every Graph call, read or write: opts.method/opts.body cover
+// POST (create/edit) and DELETE, but auth always rides the header, never the URL.
+async function graphGet(url, token, fetchImpl, opts = {}) {
+  const init = { method: opts.method || 'GET', headers: { Authorization: `Bearer ${token}` } };
+  if (opts.body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(opts.body);
+  }
+  const res = await fetchImpl(url, init);
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json.error) throw metaError(json);
   return json;
@@ -102,6 +109,162 @@ export async function wabaCapabilities(wabaId, token, fetchImpl = fetch) {
 /** Test-only: clear the module-level capabilities cache. */
 export function _resetCapCacheForTests() { _capCache.clear(); }
 
+// ── writes: shared helpers ───────────────────────────────────────────────────
+
+async function resolveChannel(reads, accountId, inboxId) {
+  const channels = await reads.getWhatsappCredsAll(accountId);
+  const wanted = Number(inboxId);
+  const found = channels.find((c) => c.inboxId === wanted);
+  if (!found) throw new Error('inbox not found in this account');
+  return found;
+}
+
+const NAME_RE = /^[a-z0-9_]{1,512}$/;
+const CATEGORIES = new Set(['MARKETING', 'UTILITY', 'AUTHENTICATION']);
+const EDIT_KEYS = ['components', 'category', 'message_send_ttl_seconds'];
+
+// Server-side gate before any Graph call — a rejected template here never touches Meta.
+function validateTemplate(t) {
+  if (!NAME_RE.test((t && t.name) || '')) {
+    throw new Error('invalid template name: must match /^[a-z0-9_]{1,512}$/');
+  }
+  if (!CATEGORIES.has(t && t.category)) {
+    throw new Error(`invalid category: must be one of ${[...CATEGORIES].join(', ')}`);
+  }
+  if (!Array.isArray(t && t.components) || t.components.length === 0) {
+    throw new Error('components must be a non-empty array');
+  }
+}
+
+// Attempt = action: called for both success and Graph failure. Its own failure must never
+// mask the Graph result, so it swallows and logs rather than throwing — no token in the log.
+export async function logAudit(query, { accountId, actor, action, wabaId, name, language, detail }) {
+  try {
+    await query(
+      `INSERT INTO drip.template_audit
+         (account_id, actor_uid, actor_name, action, waba_id, template_name, template_language, detail)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+      [accountId, (actor && actor.uid) || null, (actor && actor.name) || null, action, wabaId, name,
+        language || null, JSON.stringify(detail || {})]
+    );
+  } catch (e) {
+    console.error('template_audit insert failed:', e.message);
+  }
+}
+
+// Fetches the fresh full template list and writes it back to Chatwoot's own channel row, so
+// the inbox UI (which reads message_templates straight off channel_whatsapp) doesn't wait for
+// the poll job. Returns the number of channel rows updated (0 = no channel_whatsapp row for
+// this WABA — should not happen, but not our job to fix here).
+export async function syncWabaToChatwoot(query, wabaId, token, fetchImpl) {
+  const templates = await listWabaTemplates(wabaId, token, fetchImpl);
+  const rows = await query(
+    `UPDATE public.channel_whatsapp
+        SET message_templates = $1::jsonb, message_templates_last_updated = now()
+      WHERE provider = 'whatsapp_cloud' AND provider_config->>'business_account_id' = $2
+      RETURNING id`,
+    [JSON.stringify(templates), wabaId]
+  );
+  return rows.length;
+}
+
+// Sync-back runs after every successful write but must never fail the write itself — the
+// poll job catches up on any miss. Only the call site (not syncWabaToChatwoot itself, which
+// Task 7's poll job may want to call directly and observe failures from) swallows.
+async function syncBack(query, wabaId, token, fetchImpl) {
+  try {
+    await syncWabaToChatwoot(query, wabaId, token, fetchImpl);
+  } catch (e) {
+    console.error('syncWabaToChatwoot failed:', e.message);
+  }
+}
+
+// ── writes: create / edit / delete / flows ───────────────────────────────────
+
+async function actionTplCreate(accountId, payload, { reads, fetchImpl, query }) {
+  const channel = await resolveChannel(reads, accountId, payload.inbox_id);
+  const template = payload.template || {};
+  validateTemplate(template);
+
+  let result;
+  try {
+    result = await graphGet(`${GRAPH}/${channel.wabaId}/message_templates`, channel.token, fetchImpl, {
+      method: 'POST', body: template,
+    });
+    await logAudit(query, {
+      accountId, actor: payload.__actor, action: 'create', wabaId: channel.wabaId,
+      name: template.name, language: template.language, detail: { ok: true, id: result.id, status: result.status },
+    });
+  } catch (e) {
+    await logAudit(query, {
+      accountId, actor: payload.__actor, action: 'create', wabaId: channel.wabaId,
+      name: template.name, language: template.language, detail: { ok: false, error: e.message },
+    });
+    throw e;
+  }
+
+  await syncBack(query, channel.wabaId, channel.token, fetchImpl);
+  return { data: { id: result.id, status: result.status, category: result.category } };
+}
+
+async function actionTplEdit(accountId, payload, { reads, fetchImpl, query }) {
+  const channel = await resolveChannel(reads, accountId, payload.inbox_id);
+  const templateId = payload.template_id;
+  if (!templateId) throw new Error('template_id is required');
+  const changes = payload.changes || {};
+  const body = {};
+  for (const k of EDIT_KEYS) if (k in changes) body[k] = changes[k];
+
+  try {
+    await graphGet(`${GRAPH}/${templateId}`, channel.token, fetchImpl, { method: 'POST', body });
+    await logAudit(query, {
+      accountId, actor: payload.__actor, action: 'edit', wabaId: channel.wabaId,
+      name: String(templateId), language: null, detail: { ok: true, changes: body },
+    });
+  } catch (e) {
+    await logAudit(query, {
+      accountId, actor: payload.__actor, action: 'edit', wabaId: channel.wabaId,
+      name: String(templateId), language: null, detail: { ok: false, error: e.message },
+    });
+    throw e;
+  }
+
+  await syncBack(query, channel.wabaId, channel.token, fetchImpl);
+  return { data: { success: true } };
+}
+
+async function actionTplDelete(accountId, payload, { reads, fetchImpl, query }) {
+  const channel = await resolveChannel(reads, accountId, payload.inbox_id);
+  const name = payload.name;
+  if (!name) throw new Error('name is required');
+  const qs = new URLSearchParams({ name });
+  if (payload.hsm_id) qs.set('hsm_id', payload.hsm_id);
+  const url = `${GRAPH}/${channel.wabaId}/message_templates?${qs.toString()}`;
+
+  try {
+    await graphGet(url, channel.token, fetchImpl, { method: 'DELETE' });
+    await logAudit(query, {
+      accountId, actor: payload.__actor, action: 'delete', wabaId: channel.wabaId,
+      name, language: null, detail: { ok: true },
+    });
+  } catch (e) {
+    await logAudit(query, {
+      accountId, actor: payload.__actor, action: 'delete', wabaId: channel.wabaId,
+      name, language: null, detail: { ok: false, error: e.message },
+    });
+    throw e;
+  }
+
+  await syncBack(query, channel.wabaId, channel.token, fetchImpl);
+  return { data: { success: true } };
+}
+
+async function actionTplFlows(accountId, payload, { reads, fetchImpl }) {
+  const channel = await resolveChannel(reads, accountId, payload.inbox_id);
+  const caps = await wabaCapabilities(channel.wabaId, channel.token, fetchImpl);
+  return { data: caps.flowsList };
+}
+
 // ── dispatcher ──────────────────────────────────────────────────────────────
 
 // tpl_list: group the account's usable Cloud-API channels by WABA (several phone numbers
@@ -143,9 +306,18 @@ export async function handleTemplatesAction(accountId, action, payload, deps = {
     fetchImpl = fetch,
   } = deps;
 
+  const p = payload || {};
   switch (action) {
     case 'tpl_list':
-      return actionTplList(accountId, payload, { reads, fetchImpl });
+      return actionTplList(accountId, p, { reads, fetchImpl });
+    case 'tpl_create':
+      return actionTplCreate(accountId, p, { reads, fetchImpl, query: q });
+    case 'tpl_edit':
+      return actionTplEdit(accountId, p, { reads, fetchImpl, query: q });
+    case 'tpl_delete':
+      return actionTplDelete(accountId, p, { reads, fetchImpl, query: q });
+    case 'tpl_flows':
+      return actionTplFlows(accountId, p, { reads, fetchImpl });
     default:
       throw new Error('unknown action');
   }
