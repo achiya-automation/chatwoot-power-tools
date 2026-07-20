@@ -472,6 +472,28 @@ export async function haltAccount(pool, accountId, reason) {
 }
 
 /**
+ * שחרור חשבון אוטומטי — ההיפך מ-haltAccount. נקרא רק כשמטא שדרגה את דירוג האיכות בחזרה
+ * ל-GREEN (התאוששות מאומתת).
+ * ⚠️ רק GREEN — לעולם לא UNKNOWN: בנפחים נמוכים UNKNOWN הוא ברירת המחדל ואינו עדות
+ * להתאוששות. שחרור על UNKNOWN הוא שחרור-שווא — נמדד 20/07/2026: קריאת UNKNOWN רגעית בין
+ * שתי קריאות RED הובילה לשחרור מוקדם ולשליחת שיווק למספר שעדיין היה RED במטא Business Manager.
+ * הקריאה ב-meta.js מסננת גם שרק halt שנבע מדירוג RED משוחרר כך (לא מסירה נמוכה / policy).
+ */
+export async function resumeAccount(pool, accountId, reason) {
+  await pool.query(
+    `UPDATE drip.account_health SET halted = false, halt_reason = NULL, halted_at = NULL WHERE account_id = $1`,
+    [accountId]
+  );
+  await pool.query(
+    `UPDATE drip.alerts SET acked_at = now()
+      WHERE account_id = $1 AND acked_at IS NULL AND code IN ('halted', 'quality_red')`,
+    [accountId]
+  );
+  await raiseAlert(pool, accountId, 'info', 'resumed', reason);
+  console.log(`[drip] ACCOUNT ${accountId} RESUMED — ${reason}`);
+}
+
+/**
  * בלם המסירה — מפסק-פחת לפי המסירה *בפועל*, לא לפי דירוג מטא. זה מה ש-halt_on_red
  * לא רואה: בנפחים האלה מטא מחזירה quality=UNKNOWN לנצח, אז מספר שמפסיק להגיע בשקט
  * (WABA שרוף, מדיה שבורה, פעולת מדיניות) נכשל בכל שליחה — בלי שאף תבנית בודדת חוצה
