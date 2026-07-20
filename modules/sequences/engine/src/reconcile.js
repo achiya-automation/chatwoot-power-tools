@@ -383,27 +383,41 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   // we have ever rotated away from — and those are spent by definition. Warning on them is a
   // ghost alert: it names a template nobody will ever send again, and it trains the client to
   // ignore the alert that matters. (It fired on exactly that today.)
-  const inUse = new Set((await q(
-    `SELECT s.template_name AS n FROM drip.sequence_steps s
-       JOIN drip.sequences q ON q.id = s.sequence_id AND q.account_id = $1
-      UNION
-     SELECT s.template_burn FROM drip.sequence_steps s
-       JOIN drip.sequences q ON q.id = s.sequence_id AND q.account_id = $1
-      WHERE s.template_burn IS NOT NULL`,
+  // מפרידים נקייה מעותק שריפה, שלוש קבוצות:
+  //  • inUse       — כל תבנית שרצף מצביע אליה (נקייה או עותק). מחוצה לזה = תבנית נטושה.
+  //  • hasCopy     — נקיות שכבר הוגדר להן עותק שריפה (הצעד "צור עותק" כבר נעשה).
+  //  • burnCopies  — התבניות שהן *עצמן* עותק שריפה. לעותק מותר להיכשל — זה תפקידו,
+  //                  ואין להתריע עליו ("צור עותק לעותק" הוא שטות שמאמנת להתעלם).
+  const stepTpls = await q(
+    `SELECT DISTINCT s.template_name, s.template_burn
+       FROM drip.sequence_steps s
+       JOIN drip.sequences q ON q.id = s.sequence_id AND q.account_id = $1`,
     [accountId]
-  )).map((r) => r.n));
+  );
+  const inUse = new Set();
+  const hasCopy = new Set();
+  const burnCopies = new Set();
+  for (const r of stepTpls) {
+    if (r.template_name) inUse.add(r.template_name);
+    if (r.template_burn) { inUse.add(r.template_burn); hasCopy.add(r.template_name); burnCopies.add(r.template_burn); }
+  }
 
   for (const [key, t] of cTemplates) {
     if (key.includes('|')) continue;                       // the "<name>|<lang>" alias — skip
     if (!inUse.has(t.template_name)) continue;             // rotated away → not our problem
+    if (burnCopies.has(t.template_name)) continue;         // עותק שריפה — אמור לספוג כשלים, לא מתריעים
     const fails = Number(t.failures || 0);
-    if (fails >= warnAt && fails < Number(cSettings.max_template_failures)) {
-      await compliance.raiseAlert(
-        pool, accountId, 'warn', `template_degrading:${t.template_name}`,
-        `⚠️ התבנית "${t.template_name}" צברה ${fails} כישלוני מסירה (הבלם ב-${cSettings.max_template_failures}). ` +
-        `המסירה שלה כבר יורדת — ליצור תאומה ולהחליף את השלב לפני שהיא נעצרת.`
-      ).catch(() => {});                                   // התראה לעולם לא מפילה שליחה
-    }
+    if (fails < warnAt || fails >= Number(cSettings.max_template_failures)) continue;
+    // הודעה מדריכה לפעולה, ויציבה (בלי המספר המדויק שמשתנה בכל כישלון — אחרת ההתראה
+    // מוצפת: uq_alert_open מבוסס על (account, code, message), ומספר משתנה שובר אותו).
+    const msg = hasCopy.has(t.template_name)
+      ? `⚠️ התבנית "${t.template_name}" ממשיכה לצבור כישלוני מסירה (מעל ${warnAt}) למרות שכבר ` +
+        `יש לה עותק שריפה — הנקייה עצמה נשרפת. עותק נוסף לא יעזור; בדוק את איכות הרשימה והמספר.`
+      : `⚠️ התבנית "${t.template_name}" מתחילה להישרף (מעל ${warnAt} כישלוני מסירה, הבלם ב-${cSettings.max_template_failures}). ` +
+        `כדאי ליצור לה עותק שריפה: בעורך הרצף ← השלב ← "תבנית לנמענות רוויות" ← "צור עותק".`;
+    await compliance.raiseAlert(
+      pool, accountId, 'warn', `template_degrading:${t.template_name}`, msg
+    ).catch(() => {});                                     // התראה לעולם לא מפילה שליחה
   }
 
   // The phone comes from public.contacts, NOT from drip.enrollments.phone — that column
