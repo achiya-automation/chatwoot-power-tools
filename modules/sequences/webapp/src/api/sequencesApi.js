@@ -5,9 +5,11 @@ import { API_BASE } from '../config.js';
 // הודעות שגיאה לעלאות מדיה — דו-לשוני.
 const M = {
   he: {
+    missingAccount: 'חסר account_id',
     uploadFailed: 'העלאה נכשלה ({status})',
   },
   en: {
+    missingAccount: 'Missing account_id',
     uploadFailed: 'Upload failed ({status})',
   },
 };
@@ -177,7 +179,7 @@ export async function getProjectedSchedule(conversationId, accountId) {
 // upload_media — מעלה קובץ (drag-drop) ומקבל קישור ציבורי. נשלח כ-raw body; השרת
 // מאמת מול מגבלות WhatsApp ושומר ב-volume. מחזיר { url, byteSize, mime }.
 export async function uploadMedia(file, format, accountId) {
-  if (accountId == null) throw new Error(translate({ he: { missingAccount: 'חסר account_id' }, en: { missingAccount: 'Missing account_id' } }, 'missingAccount'));
+  if (accountId == null) throw new Error(translate(M, 'missingAccount'));
   // &locale= → ה-engine מחזיר שגיאות ולידציית מדיה בשפת המשתמש (media.js).
   const url = `${API_BASE}/media?account_id=${encodeURIComponent(accountId)}&format=${encodeURIComponent(format || '')}&locale=${getLocale()}`;
   const res = await fetch(url, {
