@@ -125,9 +125,12 @@ var __cwImport = (() => {
     first_name: ["\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9", "\u05E4\u05E8\u05D8\u05D9", "firstname", "first name", "fname", "given name"],
     last_name: ["\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4", "\u05DE\u05E9\u05E4\u05D7\u05D4", "lastname", "last name", "surname", "family name"],
     name: ["\u05E9\u05DD", "\u05E9\u05DD \u05DE\u05DC\u05D0", "\u05E9\u05DD \u05D0\u05D9\u05E9 \u05E7\u05E9\u05E8", "\u05D0\u05D9\u05E9 \u05E7\u05E9\u05E8", "name", "full name", "fullname", "contact name", "contact"],
-    phone_number: ["\u05D8\u05DC\u05E4\u05D5\u05DF", "\u05E0\u05D9\u05D9\u05D3", "\u05E4\u05DC\u05D0\u05E4\u05D5\u05DF", "\u05E4\u05DC", "\u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF", "\u05DE\u05E1\u05E4\u05E8", "\u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4", "whatsapp", "phone", "mobile", "cell", "cellphone", "tel", "telephone", "phone number", "msisdn"],
+    phone_number: ["\u05D8\u05DC\u05E4\u05D5\u05DF", "\u05E0\u05D9\u05D9\u05D3", "\u05E4\u05DC\u05D0\u05E4\u05D5\u05DF", "\u05E4\u05DC", "\u05E1\u05DC\u05D5\u05DC\u05E8\u05D9", "\u05E1\u05DC\u05D5\u05DC\u05D0\u05E8\u05D9", "\u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF", "\u05DE\u05E1\u05E4\u05E8", "\u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4", "whatsapp", "phone", "mobile", "cell", "cellphone", "tel", "telephone", "phone number", "msisdn"],
     email: ["\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC", "\u05DE\u05D9\u05D9\u05DC", '\u05D3\u05D5\u05D0"\u05DC', "\u05D3\u05D5\u05D0\u05DC", "\u05DB\u05EA\u05D5\u05D1\u05EA \u05DE\u05D9\u05D9\u05DC", "email", "e-mail", "mail", "email address"],
-    identifier: ["\u05DE\u05D6\u05D4\u05D4", "\u05DE\u05D6\u05D4\u05D4 \u05D7\u05D9\u05E6\u05D5\u05E0\u05D9", "\u05EA\u05D6", '\u05EA"\u05D6', "\u05EA.\u05D6", "id", "identifier", "external id", "ref"],
+    // ⚠️ ID-number headers must be recognized here: Israeli IDs are 9 digits, which
+    // normalizePhone happily turns into +972XXXXXXXXX — so an unrecognized ת"ז column
+    // gets content-detected as phone_number and steals the real phone column's slot.
+    identifier: ["\u05DE\u05D6\u05D4\u05D4", "\u05DE\u05D6\u05D4\u05D4 \u05D7\u05D9\u05E6\u05D5\u05E0\u05D9", "\u05EA\u05D6", '\u05EA"\u05D6', "\u05EA.\u05D6", "\u05DE\u05E1\u05E4\u05E8 \u05EA\u05D6", "\u05DE\u05E1 \u05EA\u05D6", "\u05DE\u05E1\u05E4\u05E8 \u05D6\u05D4\u05D5\u05EA", "\u05EA\u05E2\u05D5\u05D3\u05EA \u05D6\u05D4\u05D5\u05EA", "\u05DE\u05E1\u05E4\u05E8 \u05EA\u05E2\u05D5\u05D3\u05EA \u05D6\u05D4\u05D5\u05EA", "id", "identifier", "external id", "ref"],
     company_name: ["\u05D7\u05D1\u05E8\u05D4", "\u05E2\u05E1\u05E7", "\u05D0\u05E8\u05D2\u05D5\u05DF", "\u05E9\u05DD \u05D7\u05D1\u05E8\u05D4", "company", "company name", "organization", "organisation", "business"],
     city: ["\u05E2\u05D9\u05E8", "\u05D9\u05D9\u05E9\u05D5\u05D1", "\u05D9\u05E9\u05D5\u05D1", "city", "town"],
     country: ["\u05DE\u05D3\u05D9\u05E0\u05D4", "\u05D0\u05E8\u05E5", "country"]
@@ -135,8 +138,12 @@ var __cwImport = (() => {
   function normHeader(h) {
     return String(h || "").toLowerCase().replace(/["'.\-_/\\]/g, "").replace(/\s+/g, " ").trim();
   }
+  var FILLER_WORDS = /* @__PURE__ */ new Set(["\u05DC\u05E7\u05D5\u05D7", "\u05DC\u05E7\u05D5\u05D7\u05D4", "customer", "client"]);
+  function stripFiller(n) {
+    return n.split(" ").filter((w) => !FILLER_WORDS.has(w)).join(" ");
+  }
   function headerField(header2) {
-    const n = normHeader(header2);
+    const n = stripFiller(normHeader(header2));
     if (!n) return null;
     let best = null;
     let bestLen = 0;
@@ -229,6 +236,80 @@ var __cwImport = (() => {
     }
     return results[0];
   }
+  function normVal(key, value) {
+    return key === "phone_number" ? String(value) : String(value).toLowerCase();
+  }
+  var CHUNK = 40;
+  var MAX_PAGES = 40;
+  async function batchDedup(contacts, api, onProgress) {
+    const wanted = {};
+    const found = {};
+    for (const k of KEYS) {
+      wanted[k] = /* @__PURE__ */ new Set();
+      found[k] = /* @__PURE__ */ new Map();
+    }
+    for (const c of contacts) {
+      for (const k of KEYS) if (c[k] != null && c[k] !== "") wanted[k].add(normVal(k, c[k]));
+    }
+    const totalValues = KEYS.reduce((s, k) => s + wanted[k].size, 0);
+    let processed = 0;
+    for (const k of KEYS) {
+      const values = Array.from(wanted[k]);
+      for (let o = 0; o < values.length; o += CHUNK) {
+        const chunk = values.slice(o, o + CHUNK);
+        const clauses = chunk.map((v, i) => ({
+          attribute_key: k,
+          filter_operator: "equal_to",
+          values: [v],
+          query_operator: i < chunk.length - 1 ? "or" : null
+        }));
+        let page = 1;
+        let got = 0;
+        let count = Infinity;
+        while (got < count && page <= MAX_PAGES) {
+          const res = await api.filterContacts({ payload: clauses }, page);
+          const arr = res?.payload || [];
+          count = res?.meta?.count ?? arr.length;
+          got += arr.length;
+          for (const r of arr) {
+            if (r[k] == null || r[k] === "") continue;
+            const nv = normVal(k, r[k]);
+            if (!found[k].has(nv)) found[k].set(nv, r);
+          }
+          if (!arr.length) break;
+          page++;
+        }
+        processed += chunk.length;
+        onProgress?.(Math.min(processed, totalValues), totalValues);
+      }
+    }
+    const claimed = /* @__PURE__ */ new Set();
+    for (const c of contacts) {
+      delete c.__dupTail;
+      let match = null;
+      for (const k of KEYS) {
+        if (c[k] == null || c[k] === "") continue;
+        const m = found[k].get(normVal(k, c[k]));
+        if (m) {
+          match = m;
+          break;
+        }
+      }
+      if (match) {
+        c.__match = match;
+        continue;
+      }
+      const ids = KEYS.filter((k) => c[k] != null && c[k] !== "").map((k) => k + ":" + normVal(k, c[k]));
+      if (ids.some((id) => claimed.has(id))) {
+        delete c.__match;
+        c.__dupTail = true;
+      } else {
+        c.__match = null;
+        ids.forEach((id) => claimed.add(id));
+      }
+    }
+    return contacts;
+  }
 
   // lib/importLog.js
   var STATUSES = ["created", "updated", "skipped", "failed"];
@@ -256,19 +337,43 @@ var __cwImport = (() => {
   };
 
   // lib/importRunner.js
-  var THROTTLE_MS = 120;
   var defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  async function runImport({ contacts, api, labelTitle, onProgress, sleep = defaultSleep }) {
+  async function runImport({
+    contacts,
+    api,
+    labelTitle,
+    waInboxId = null,
+    onProgress,
+    concurrency = 5,
+    isCancelled = () => false,
+    cooldownMs = 2e4,
+    sleep = defaultSleep
+  }) {
     const log = new ImportLog();
+    const total = contacts.length;
     let done = 0;
-    for (const c of contacts) {
+    let cooldown = null;
+    async function call(fn) {
+      for (let attempt = 0; ; attempt++) {
+        if (cooldown) await cooldown;
+        try {
+          return await fn();
+        } catch (e) {
+          if (e?.status !== 429 || attempt >= 3) throw e;
+          if (!cooldown) cooldown = sleep(cooldownMs * (attempt + 1)).then(() => {
+            cooldown = null;
+          });
+        }
+      }
+    }
+    async function importOne(c) {
       const row = c.__row;
       const name = c.name || "";
       const filter = buildFilterPayload(c);
       if (!name && !filter) {
         log.add(row, name, "skipped", null, "\u05D0\u05D9\u05DF \u05E9\u05DD \u05D0\u05D5 \u05DE\u05D6\u05D4\u05D4 \u05D9\u05D9\u05D7\u05D5\u05D3\u05D9");
-        onProgress?.(++done, contacts.length);
-        continue;
+        onProgress?.(++done, total, log);
+        return;
       }
       const body = stripMeta(c);
       try {
@@ -278,44 +383,136 @@ var __cwImport = (() => {
         if ("__match" in c) {
           match = c.__match;
         } else if (filter) {
-          const res = await api.filterContacts(filter);
+          const res = await call(() => api.filterContacts(filter));
           match = pickMatch(res?.payload || [], c);
         }
         if (match) {
-          await api.updateContact(match.id, body);
+          await call(() => api.updateContact(match.id, body));
           contactId = match.id;
           status = "updated";
         } else {
-          const created = await api.createContact(body);
+          const created = await call(() => api.createContact(body));
           contactId = created?.payload?.contact?.id ?? created?.id;
           if (!contactId) throw new Error("Chatwoot create response is missing the contact id");
           status = "created";
+        }
+        if (waInboxId && contactId) {
+          const sourceId = waSourceId(body.phone_number);
+          if (sourceId) {
+            try {
+              await call(() => api.createContactInbox(contactId, { inbox_id: waInboxId, source_id: sourceId }));
+            } catch {
+            }
+          }
         }
         if (labelTitle && contactId) {
           if (match) {
             let cur = [];
             try {
-              cur = (await api.getContactLabels(contactId))?.payload || [];
+              cur = (await call(() => api.getContactLabels(contactId)))?.payload || [];
             } catch {
             }
             const union = Array.from(/* @__PURE__ */ new Set([...cur, labelTitle]));
-            await api.assignLabels(contactId, union);
+            await call(() => api.assignLabels(contactId, union));
           } else {
-            await api.assignLabels(contactId, [labelTitle]);
+            await call(() => api.assignLabels(contactId, [labelTitle]));
           }
         }
         log.add(row, name, status, contactId, "");
       } catch (e) {
         log.add(row, name, "failed", null, (e.body || e.message || "error").slice(0, 200));
       }
-      onProgress?.(++done, contacts.length);
-      await sleep(THROTTLE_MS);
+      onProgress?.(++done, total, log);
+    }
+    const poolRows = contacts.filter((c) => !c.__dupTail);
+    const tailRows = contacts.filter((c) => c.__dupTail);
+    let next = 0;
+    const workers = Array.from({ length: Math.min(concurrency, poolRows.length) }, async () => {
+      while (next < poolRows.length && !isCancelled()) {
+        await importOne(poolRows[next++]);
+      }
+    });
+    await Promise.all(workers);
+    for (const c of tailRows) {
+      if (isCancelled()) break;
+      delete c.__match;
+      await importOne(c);
     }
     return log;
   }
+  function createImportJob({ contacts, api, labelTitle, waInboxId, concurrency }) {
+    const listeners = /* @__PURE__ */ new Set();
+    const progress = {
+      done: 0,
+      total: contacts.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      state: "running"
+      // running → cancelling → done | cancelled | error
+    };
+    let cancelled = false;
+    const emit = () => listeners.forEach((cb) => {
+      try {
+        cb(progress);
+      } catch {
+      }
+    });
+    const job = {
+      progress,
+      log: null,
+      error: null,
+      labelTitle: labelTitle || "",
+      cancel() {
+        if (progress.state === "running") {
+          cancelled = true;
+          progress.state = "cancelling";
+          emit();
+        }
+      },
+      onUpdate(cb) {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      }
+    };
+    job.promise = runImport({
+      contacts,
+      api,
+      labelTitle,
+      waInboxId,
+      concurrency,
+      isCancelled: () => cancelled,
+      onProgress(done, totalCount, log) {
+        progress.done = done;
+        progress.total = totalCount;
+        const s = log.summary();
+        progress.created = s.created;
+        progress.updated = s.updated;
+        progress.skipped = s.skipped;
+        progress.failed = s.failed;
+        emit();
+      }
+    }).then((log) => {
+      job.log = log;
+      progress.state = cancelled && progress.done < progress.total ? "cancelled" : "done";
+      emit();
+      return log;
+    }).catch((e) => {
+      job.error = e;
+      progress.state = "error";
+      emit();
+      return job.log;
+    });
+    return job;
+  }
   function stripMeta(c) {
-    const { __row, __match, ...rest } = c;
+    const { __row, __match, __dupTail, ...rest } = c;
     return rest;
+  }
+  function waSourceId(phone) {
+    const digits = String(phone || "").replace(/\D/g, "");
+    return digits || null;
   }
 
   // lib/apiClient.js
@@ -339,9 +536,18 @@ var __cwImport = (() => {
       return r.status === 204 ? null : r.json();
     }
     return {
-      filterContacts: (payload) => req("POST", "/contacts/filter", payload),
+      // page: contacts/filter is paginated at 15 results/page (RESULTS_PER_PAGE) —
+      // batchDedup walks the pages of each chunked OR query.
+      filterContacts: (payload, page) => req("POST", "/contacts/filter" + (page ? `?page=${page}` : ""), payload),
       createContact: (c) => req("POST", "/contacts", c),
       updateContact: (id, c) => req("PUT", `/contacts/${id}`, c),
+      listInboxes: () => req("GET", "/inboxes"),
+      // Links a contact to a channel inbox at import time. Chatwoot resolves an
+      // inbound/outbound WhatsApp message through contact_inboxes.source_id — never
+      // through phone_number — so an imported contact without this row is invisible to
+      // the channel: Chatwoot opens the conversation on a nameless auto-created twin
+      // ("aged-glitter-248") and the real name never reaches the conversation or the bot.
+      createContactInbox: (contactId, body) => req("POST", `/contacts/${contactId}/contact_inboxes`, body),
       getContactLabels: (id) => req("GET", `/contacts/${id}/labels`),
       assignLabels: (id, labels) => req("POST", `/contacts/${id}/labels`, { labels }),
       listLabels: () => req("GET", "/labels"),
@@ -380,6 +586,10 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 .cwi-prog-fill{height:100%;background:var(--color-n-brand, #6366f1);transition:width .2s}
 .cwi-tbl-cell{border-bottom:1px solid}
 .cwi-cs-panel{transition:opacity .2s ease-out}
+/* Background-import pill \u2014 fixed to the bottom start corner (dir-aware via
+   inset-inline-start; the pill carries its own dir attribute). Below the browser
+   top layer, so any open Chatwoot <dialog> still covers it. */
+.cwi-pill{position:fixed;bottom:16px;inset-inline-start:16px;z-index:2147483000;width:320px;max-width:calc(100vw - 32px);animation:cwiIn .2s ease-out}
 `;
 
   // ui/wizard.js
@@ -452,6 +662,16 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       failedWord: "\u05E0\u05DB\u05E9\u05DC\u05D5",
       downloadReport: "\u05D4\u05D5\u05E8\u05D3 \u05D3\u05D5\u05D7 CSV",
       close: "\u05E1\u05D2\u05D5\u05E8",
+      // background pill
+      bgImporting: "\u05DE\u05D9\u05D9\u05D1\u05D0 \u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8 \u05D1\u05E8\u05E7\u05E2\u2026",
+      bgCancelling: "\u05E2\u05D5\u05E6\u05E8\u2026",
+      bgCancelled: "\u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D4\u05D5\u05E4\u05E1\u05E7",
+      bgError: "\u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05E0\u05E2\u05E6\u05E8 \u05E2\u05E7\u05D1 \u05E9\u05D2\u05D9\u05D0\u05D4",
+      stopImport: "\u05E2\u05E6\u05D9\u05E8\u05EA \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0",
+      bgHint: "\u05D0\u05E4\u05E9\u05E8 \u05DC\u05D4\u05DE\u05E9\u05D9\u05DA \u05DC\u05E2\u05D1\u05D5\u05D3 \u05D1\u05D9\u05E0\u05EA\u05D9\u05D9\u05DD \u2014 \u05E8\u05E7 \u05D0\u05DC \u05EA\u05E1\u05D2\u05E8\u05D5 \u05D0\u05EA \u05D4\u05D8\u05D0\u05D1 \u05E2\u05D3 \u05DC\u05E1\u05D9\u05D5\u05DD",
+      dupInFile: "\u05DB\u05E4\u05D5\u05DC\u05D9\u05DD \u05D1\u05E7\u05D5\u05D1\u05E5 (\u05D9\u05DE\u05D5\u05D6\u05D2\u05D5)",
+      alreadyRunning: "\u05D9\u05D9\u05D1\u05D5\u05D0 \u05E7\u05D5\u05D3\u05DD \u05E2\u05D3\u05D9\u05D9\u05DF \u05E8\u05E5 \u05D1\u05E8\u05E7\u05E2 \u2014 \u05D4\u05DE\u05EA\u05D9\u05E0\u05D5 \u05DC\u05E1\u05D9\u05D5\u05DE\u05D5",
+      dedupFailed: "\u05D1\u05D3\u05D9\u05E7\u05EA \u05D4\u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA \u05E0\u05DB\u05E9\u05DC\u05D4 \u2014 \u05D4\u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA \u05D9\u05D9\u05D1\u05D3\u05E7\u05D5 \u05E9\u05D5\u05D1 \u05D1\u05DE\u05D4\u05DC\u05DA \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0",
       // footer
       back: "\u05D7\u05D6\u05E8\u05D4",
       continue: "\u05D4\u05DE\u05E9\u05DA",
@@ -518,6 +738,15 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       failedWord: "Failed",
       downloadReport: "Download CSV report",
       close: "Close",
+      bgImporting: "Importing contacts in the background\u2026",
+      bgCancelling: "Stopping\u2026",
+      bgCancelled: "Import stopped",
+      bgError: "Import stopped due to an error",
+      stopImport: "Stop import",
+      bgHint: "You can keep working \u2014 just don't close this tab until it finishes",
+      dupInFile: "duplicates in file (will be merged)",
+      alreadyRunning: "A previous import is still running in the background \u2014 wait for it to finish",
+      dedupFailed: "Duplicate check failed \u2014 duplicates will be re-checked during the import",
       back: "Back",
       continue: "Continue",
       thName: "Name",
@@ -558,7 +787,13 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
   function openWizard({ accountId, authHeaders, assetBase }) {
     injectStyles();
     const api = createApiClient(accountId, authHeaders);
-    const state = { table: null, mapping: [], customMap: [], labelTitle: "", labelNeedsCreation: false };
+    const state = { table: null, mapping: [], customMap: [], labelTitle: "", labelNeedsCreation: false, waInboxId: null };
+    api.listInboxes().then((r) => {
+      const list = r?.payload || r || [];
+      const wa = list.find((i) => /whatsapp/i.test(i?.channel_type || ""));
+      state.waInboxId = wa?.id || null;
+    }).catch(() => {
+    });
     var dlg = document.createElement("dialog");
     dlg.className = "cwi-dlg";
     const pageIsDark = document.documentElement.classList.contains("dark") || document.body.classList.contains("dark");
@@ -1114,24 +1349,22 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       }));
       state.contacts = contacts;
       const N = contacts.length;
-      for (let i = 0; i < N; i++) {
-        status.textContent = `${t("checkingDupes")} ${i + 1}/${N}`;
-        const c = contacts[i];
-        try {
-          const fp = buildFilterPayload(c);
-          if (fp) {
-            const res = await api.filterContacts(fp);
-            c.__match = pickMatch(res?.payload || [], c);
-          } else {
-            c.__match = null;
-          }
-        } catch {
-          c.__match = null;
-        }
+      let dedupOk = true;
+      try {
+        await batchDedup(contacts, api, (d, tot) => {
+          status.textContent = `${t("checkingDupes")} ${d}/${tot}`;
+        });
+      } catch {
+        dedupOk = false;
+        contacts.forEach((c) => {
+          delete c.__match;
+          delete c.__dupTail;
+        });
       }
+      const dupes = contacts.filter((c) => c.__dupTail).length;
       const existing = contacts.filter((c) => c.__match).length;
-      const created = N - existing;
-      status.textContent = `${t("readyToImport")} ${N} \xB7 ${created} ${t("newWord")} \xB7 ${existing} ${t("existingWillUpdate")}`;
+      const created = N - existing - dupes;
+      status.textContent = dedupOk ? `${t("readyToImport")} ${N} \xB7 ${created} ${t("newWord")} \xB7 ${existing} ${t("existingWillUpdate")}` + (dupes ? ` \xB7 ${dupes} ${t("dupInFile")}` : "") : t("dedupFailed");
       modal.append(
         previewTable(contacts.slice(0, 10)),
         footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t("importVerb")} ${N} ${t("contactsWord")}` })
@@ -1156,44 +1389,15 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       state.labelTitle = created?.title || state.labelTitle;
       state.labelNeedsCreation = false;
     }
-    async function stepRun() {
-      modal.replaceChildren();
-      modal.appendChild(header(t("importing"), ""));
-      const track = el("div", "h-2 w-full rounded-full bg-n-alpha-2 overflow-hidden");
-      const fill = el("div", "cwi-prog-fill");
-      fill.style.width = "0%";
-      track.appendChild(fill);
-      const label = el("div", "text-sm text-n-slate-11");
-      modal.append(track, label);
-      const log = await runImport({
-        contacts: state.contacts,
-        api,
-        labelTitle: state.labelTitle,
-        onProgress: (d, t2) => {
-          fill.style.width = d / t2 * 100 + "%";
-          label.textContent = `${d}/${t2}`;
-        }
-      });
-      stepDone(log);
-    }
-    function stepDone(log) {
-      modal.replaceChildren();
-      modal.appendChild(header(t("importDone"), ""));
-      const s = log.summary();
-      const summary = el("div", "text-sm text-n-slate-12");
-      summary.textContent = `${t("createdWord")} ${s.created} \xB7 ${t("updatedWord")} ${s.updated} \xB7 ${t("skippedWord")} ${s.skipped} \xB7 ${t("failedWord")} ${s.failed}`;
-      modal.appendChild(summary);
-      const dlBtn = btn("primary");
-      dlBtn.className += " w-full";
-      dlBtn.textContent = t("downloadReport");
-      dlBtn.addEventListener("click", () => downloadCsv(log.toCsv(), "import-log.csv"));
-      const closeBtn = btn("ghost");
-      closeBtn.className += " w-full";
-      closeBtn.textContent = t("close");
-      closeBtn.addEventListener("click", close);
-      const bar = el("div", "flex items-center justify-between w-full gap-3");
-      bar.append(closeBtn, dlBtn);
-      modal.appendChild(bar);
+    function stepRun() {
+      if (window.__cwImportJob && ["running", "cancelling"].includes(window.__cwImportJob.progress.state)) {
+        showError(t("alreadyRunning"));
+        return;
+      }
+      const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
+      window.__cwImportJob = job;
+      mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
+      close();
     }
     function showError(msg) {
       const e = el("div", "text-sm text-n-ruby-11");
@@ -1259,6 +1463,69 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     s.id = "cwi-styles";
     s.textContent = STYLES;
     document.head.appendChild(s);
+  }
+  function mountPill(job, { dark, rtl }) {
+    injectStyles();
+    document.getElementById("cwi-pill")?.remove();
+    const pill = el("div", "cwi-pill flex flex-col gap-2 p-4 rounded-xl shadow-lg border border-n-strong bg-n-solid-1");
+    pill.id = "cwi-pill";
+    if (dark) pill.classList.add("dark");
+    pill.setAttribute("dir", rtl ? "rtl" : "ltr");
+    const head = el("div", "flex items-center justify-between gap-3");
+    const title = el("span", "text-sm font-medium text-n-slate-12");
+    const xBtn = el("button", BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-6 w-6 p-0 shrink-0 cursor-pointer");
+    xBtn.appendChild(icon("x", "size-4"));
+    head.append(title, xBtn);
+    const track = el("div", "h-1.5 w-full rounded-full bg-n-alpha-2 overflow-hidden");
+    const fill = el("div", "cwi-prog-fill");
+    fill.style.width = "0%";
+    track.appendChild(fill);
+    const detail = el("div", "text-xs text-n-slate-11");
+    const hint = elWithText("div", "text-xs text-n-slate-11", t("bgHint"));
+    const actions = el("div", "flex items-center gap-2");
+    actions.style.display = "none";
+    pill.append(head, track, detail, hint, actions);
+    document.body.appendChild(pill);
+    function warnUnload(e) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", warnUnload);
+    function dismiss() {
+      off();
+      window.removeEventListener("beforeunload", warnUnload);
+      pill.remove();
+      if (window.__cwImportJob === job) window.__cwImportJob = null;
+    }
+    xBtn.addEventListener("click", () => {
+      const st = job.progress.state;
+      if (st === "running") job.cancel();
+      else if (st !== "cancelling") dismiss();
+    });
+    function render(p) {
+      fill.style.width = (p.total ? Math.round(p.done / p.total * 100) : 100) + "%";
+      const counts = `${t("createdWord")} ${p.created} \xB7 ${t("updatedWord")} ${p.updated}` + (p.skipped ? ` \xB7 ${t("skippedWord")} ${p.skipped}` : "") + (p.failed ? ` \xB7 ${t("failedWord")} ${p.failed}` : "");
+      if (p.state === "running" || p.state === "cancelling") {
+        title.textContent = p.state === "running" ? t("bgImporting") : t("bgCancelling");
+        xBtn.title = t("stopImport");
+        detail.textContent = `${p.done}/${p.total} \xB7 ${counts}`;
+        return;
+      }
+      window.removeEventListener("beforeunload", warnUnload);
+      xBtn.title = t("close");
+      hint.remove();
+      title.textContent = p.state === "done" ? t("importDone") : p.state === "cancelled" ? `${t("bgCancelled")} (${p.done}/${p.total})` : t("bgError");
+      detail.textContent = counts;
+      if (job.log && !actions.childElementCount) {
+        actions.style.display = "";
+        const dl = btn("ghost");
+        dl.textContent = t("downloadReport");
+        dl.addEventListener("click", () => downloadCsv(job.log.toCsv(), "import-log.csv"));
+        actions.appendChild(dl);
+      }
+    }
+    const off = job.onUpdate(render);
+    render(job.progress);
   }
   function el(tag, cls) {
     const e = document.createElement(tag);

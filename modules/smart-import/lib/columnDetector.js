@@ -11,9 +11,12 @@ const SYNONYMS = {
   first_name: ['שם פרטי', 'פרטי', 'firstname', 'first name', 'fname', 'given name'],
   last_name: ['שם משפחה', 'משפחה', 'lastname', 'last name', 'surname', 'family name'],
   name: ['שם', 'שם מלא', 'שם איש קשר', 'איש קשר', 'name', 'full name', 'fullname', 'contact name', 'contact'],
-  phone_number: ['טלפון', 'נייד', 'פלאפון', 'פל', 'מספר טלפון', 'מספר', 'וואטסאפ', 'whatsapp', 'phone', 'mobile', 'cell', 'cellphone', 'tel', 'telephone', 'phone number', 'msisdn'],
+  phone_number: ['טלפון', 'נייד', 'פלאפון', 'פל', 'סלולרי', 'סלולארי', 'מספר טלפון', 'מספר', 'וואטסאפ', 'whatsapp', 'phone', 'mobile', 'cell', 'cellphone', 'tel', 'telephone', 'phone number', 'msisdn'],
   email: ['אימייל', 'מייל', 'דוא"ל', 'דואל', 'כתובת מייל', 'email', 'e-mail', 'mail', 'email address'],
-  identifier: ['מזהה', 'מזהה חיצוני', 'תז', 'ת"ז', 'ת.ז', 'id', 'identifier', 'external id', 'ref'],
+  // ⚠️ ID-number headers must be recognized here: Israeli IDs are 9 digits, which
+  // normalizePhone happily turns into +972XXXXXXXXX — so an unrecognized ת"ז column
+  // gets content-detected as phone_number and steals the real phone column's slot.
+  identifier: ['מזהה', 'מזהה חיצוני', 'תז', 'ת"ז', 'ת.ז', 'מספר תז', 'מס תז', 'מספר זהות', 'תעודת זהות', 'מספר תעודת זהות', 'id', 'identifier', 'external id', 'ref'],
   company_name: ['חברה', 'עסק', 'ארגון', 'שם חברה', 'company', 'company name', 'organization', 'organisation', 'business'],
   city: ['עיר', 'יישוב', 'ישוב', 'city', 'town'],
   country: ['מדינה', 'ארץ', 'country'],
@@ -23,8 +26,15 @@ function normHeader(h) {
   return String(h || '').toLowerCase().replace(/["'.\-_/\\]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// Filler words that CRM/insurance exports append to every header ("שם פרטי לקוח",
+// "סלולרי לקוח") — dropped before synonym matching so the base synonym still hits.
+const FILLER_WORDS = new Set(['לקוח', 'לקוחה', 'customer', 'client']);
+function stripFiller(n) {
+  return n.split(' ').filter((w) => !FILLER_WORDS.has(w)).join(' ');
+}
+
 function headerField(header) {
-  const n = normHeader(header);
+  const n = stripFiller(normHeader(header));
   if (!n) return null;
   // Exact match against normalized synonyms. When multiple synonyms of the
   // SAME field normalize to the same string, bestLen breaks the tie by choosing

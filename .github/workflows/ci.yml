@@ -55,8 +55,10 @@ jobs:
           -- ה-scaffold הזה רץ ראשון, ו-CREATE TABLE IF NOT EXISTS ב-test/helpers.js
           -- וב-test/reads.test.js הופך ל-no-op — כלומר הצורה נקבעת כאן בלבד.
           CREATE TABLE IF NOT EXISTS public.channel_whatsapp (
-            id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb,
-            provider_config jsonb DEFAULT '{}'::jsonb);
+            id int PRIMARY KEY, phone_number text, provider text DEFAULT 'whatsapp_cloud',
+            provider_config jsonb DEFAULT '{}'::jsonb,
+            message_templates jsonb DEFAULT '{}'::jsonb,
+            message_templates_last_updated timestamp);
           CREATE TABLE IF NOT EXISTS public.accounts (id int PRIMARY KEY, name text);
           CREATE TABLE IF NOT EXISTS public.campaigns (
             id int PRIMARY KEY, display_id int, account_id int, inbox_id int,

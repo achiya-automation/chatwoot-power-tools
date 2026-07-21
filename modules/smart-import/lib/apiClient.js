@@ -34,9 +34,18 @@ export function createApiClient(accountId, headers, fetchImpl = fetch) {
     return r.status === 204 ? null : r.json();
   }
   return {
-    filterContacts: (payload) => req('POST', '/contacts/filter', payload),
+    // page: contacts/filter is paginated at 15 results/page (RESULTS_PER_PAGE) —
+    // batchDedup walks the pages of each chunked OR query.
+    filterContacts: (payload, page) => req('POST', '/contacts/filter' + (page ? `?page=${page}` : ''), payload),
     createContact: (c) => req('POST', '/contacts', c),
     updateContact: (id, c) => req('PUT', `/contacts/${id}`, c),
+    listInboxes: () => req('GET', '/inboxes'),
+    // Links a contact to a channel inbox at import time. Chatwoot resolves an
+    // inbound/outbound WhatsApp message through contact_inboxes.source_id — never
+    // through phone_number — so an imported contact without this row is invisible to
+    // the channel: Chatwoot opens the conversation on a nameless auto-created twin
+    // ("aged-glitter-248") and the real name never reaches the conversation or the bot.
+    createContactInbox: (contactId, body) => req('POST', `/contacts/${contactId}/contact_inboxes`, body),
     getContactLabels: (id) => req('GET', `/contacts/${id}/labels`),
     assignLabels: (id, labels) => req('POST', `/contacts/${id}/labels`, { labels }),
     listLabels: () => req('GET', '/labels'),
