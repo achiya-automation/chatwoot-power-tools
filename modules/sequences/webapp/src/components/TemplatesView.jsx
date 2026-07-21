@@ -10,6 +10,7 @@ import {
   AlertCircle,
   ShieldAlert,
   FileText,
+  Users,
 } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
@@ -20,6 +21,7 @@ import Skeleton, { SkeletonRows } from './ui/Skeleton.jsx';
 import { Table, THead, TBody, TR, TH, TD } from './ui/Table.jsx';
 import { useToast } from './ui/Toast.jsx';
 import { listTemplates, deleteTemplate } from '../api/templatesApi.js';
+import TemplateAccessModal from './TemplateAccessModal.jsx';
 import { deserializeTemplate } from '../lib/templateRules.js';
 import { statusChip, qualityDot, canEdit, groupLabel } from '../lib/templateDisplay.js';
 import useT, { useLocale } from '../useT.js';
@@ -45,7 +47,8 @@ const M = {
     wabaSelectorAria: 'בחירת חשבון WhatsApp עסקי',
 
     forbiddenTitle: 'העמוד זמין למנהלי חשבון בלבד',
-    forbiddenBody: 'רק מנהלי חשבון יכולים לנהל תבניות WhatsApp.',
+    forbiddenBody: 'רק מנהלי חשבון, ונציגים שמנהל/ת הרשה/תה להם, יכולים לנהל תבניות WhatsApp.',
+    manageAccess: 'גישה',
 
     errLoad: 'שגיאה בטעינת התבניות',
     retry: 'נסה שוב',
@@ -91,7 +94,8 @@ const M = {
     wabaSelectorAria: 'Select WhatsApp Business Account',
 
     forbiddenTitle: 'This page is available to account administrators only',
-    forbiddenBody: 'Only account administrators can manage WhatsApp templates.',
+    forbiddenBody: 'Only account administrators, and agents an administrator granted access to, can manage WhatsApp templates.',
+    manageAccess: 'Access',
 
     errLoad: 'Failed to load templates',
     retry: 'Retry',
@@ -172,6 +176,8 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [forbidden, setForbidden] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);   // administrators also manage WHO gets in
+  const [accessOpen, setAccessOpen] = useState(false);
 
   const [expandedRows, setExpandedRows] = useState(() => new Set());
   const [previewTpl, setPreviewTpl] = useState(null);
@@ -190,6 +196,7 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
       .then((res) => {
         const list = (res && res.wabas) || [];
         setWabas(list);
+        setIsAdmin(!!(res && res.is_admin));
         setSelectedWabaId((prev) => {
           const ids = list.map((w) => String(w.wabaId));
           if (ids.includes(prev)) return prev;
@@ -318,6 +325,11 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {isAdmin ? (
+            <Button variant="ghost" color="slate" size="sm" icon={Users} onClick={() => setAccessOpen(true)}>
+              {t('manageAccess')}
+            </Button>
+          ) : null}
           <Button variant="ghost" color="slate" size="sm" icon={RefreshCw} onClick={load}>
             {t('refresh')}
           </Button>
@@ -526,6 +538,12 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
           </div>
         </div>
       </Modal>
+
+      <TemplateAccessModal
+        open={accessOpen}
+        accountId={accountId}
+        onClose={() => setAccessOpen(false)}
+      />
     </>
   );
 }

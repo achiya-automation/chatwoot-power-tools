@@ -131,7 +131,7 @@ test('POST /drip-api tpl_list with administrator role → 200 and reaches the re
     // handleTemplatesAction (reached via store.js's tpl_ dispatch) legitimately returns an
     // empty list — proving the request passed the admin gate into the actual handler, not a
     // stub.
-    assert.deepEqual(body.data, { wabas: [] });
+    assert.deepEqual(body.data, { wabas: [], is_admin: true });
   });
 });
 
