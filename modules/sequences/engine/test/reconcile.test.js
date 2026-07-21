@@ -83,6 +83,7 @@ test('due active enrollment sends and advances', async () => {
     getContact: async () => ({ name: 'D' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, ['t1']);
@@ -112,6 +113,7 @@ test('advance pushes a step landing on shabbat to the next working day (skip_sha
     getContact: async () => ({ name: 'D' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   // Send step 1 on Thu 2026-06-18 12:00Z (not shabbat) → advance to step 2.
   // Step 2 = +2d @19:00 = Sat 06-20 19:00 (in window) → must skip to Sun 06-21 19:00 = 16:00 UTC.
@@ -139,6 +141,7 @@ test('advance does NOT skip shabbat when skip_shabbat is false', async () => {
   const client = {
     sendTemplate: () => 1, getContact: async () => ({ name: 'D' }),
     patchAttrs: async () => {}, incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   // skip_shabbat=false → no skip; step 2 stays on Sat 06-20 19:00 = 16:00 UTC.
   await reconcileAccount(pool, client, 1, new Date('2026-06-18T12:00:00Z'), summerShabbat);
@@ -166,6 +169,7 @@ test('last step sends and sets completed', async () => {
     getContact: async () => ({ name: 'X' }),
     patchAttrs: async (_cid, attrs) => { if (attrs.seq_state) patchedStates.push(attrs.seq_state); },
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, ['only']);
@@ -195,6 +199,7 @@ test('no follow-up send when isNoSendNow quiet hours', async () => {
     getContact: async () => ({ name: 'Y' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   // 23:30 Israel time (UTC+3 in summer) = 20:30 UTC — inside 22:00-08:00 quiet window
   await reconcileAccount(pool, client, 1, new Date('2026-06-16T20:30:00Z'));
@@ -223,6 +228,7 @@ test('no send on Shabbat when skip_shabbat=true', async () => {
     getContact: async () => ({ name: 'S' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   // Saturday at 12:00 Israel time
   await reconcileAccount(pool, client, 1, new Date('2026-06-20T09:00:00Z'));
@@ -249,6 +255,7 @@ test('no send inside a Hebcal no-send window via the window path (weekday yom-to
     getContact: async () => ({ name: 'S' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   // Yom Kippur window. `now` is MONDAY 10:00 IL inside it — Monday is neither Friday
   // nor Saturday, so the fail-closed fallback would NOT block. Blocking here proves
@@ -277,6 +284,7 @@ test('stop_on_reply stops enrollment when customer replies', async () => {
     getContact: async () => ({ name: 'Z' }),
     patchAttrs: async () => {},
     incomingSince: async () => true, // customer replied!
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   const e = (await query('SELECT status FROM drip.enrollments WHERE conversation_id=99'))[0];
@@ -310,6 +318,7 @@ test('no_reply + skip: customer replied → skips the step but CONTINUES the seq
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => true, // replied
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, [], 'gated step is skipped (not sent) when the customer replied');
@@ -338,6 +347,7 @@ test('no_reply + skip: customer did NOT reply → sends the step, then advances'
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => false, // no reply
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, ['reminder'], 'step is sent when the customer did not reply');
@@ -366,6 +376,7 @@ test('no_reply + stop: customer replied → stops the sequence (no send)', async
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => true, // replied
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, [], 'nothing sent');
@@ -393,6 +404,7 @@ test('replied condition: customer replied → sends the step (e.g. a thank-you)'
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => true, // replied → condition met
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, ['thankyou'], 'replied-gated step is sent when the customer replied');
@@ -418,6 +430,7 @@ test('no_reply + skip on the LAST step: replied → skips and completes', async 
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => true, // replied
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, [], 'last gated step skipped');
@@ -438,6 +451,7 @@ test('enroll phase: no error when public.conversations table missing', async () 
     getContact: async () => ({ name: 'E' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   // Should not throw even if public.conversations is absent
   await reconcileAccount(pool, client, 1, new Date());
@@ -462,6 +476,7 @@ test('idempotent: running twice does not double-send', async () => {
     getContact: async () => ({ name: 'I' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   const now = new Date();
   await reconcileAccount(pool, client, 1, now);
@@ -490,6 +505,7 @@ test('category is passed through to sendTemplate', async () => {
     getContact: async () => ({ name: 'C' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.equal(calls.length, 1);
@@ -522,6 +538,7 @@ test('PAUSE: send_enabled=false stops sends to already-active enrollments; state
     getContact: async () => ({ name: 'D' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, [], 'paused sequence must not send to active enrollments');
@@ -550,6 +567,7 @@ test('RESUME: re-enabling send_enabled continues from the exact step it left off
     getContact: async () => ({ name: 'D' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   // Paused → nothing goes out, however overdue.
   await reconcileAccount(pool, client, 1, new Date());
@@ -584,6 +602,7 @@ test('SWITCHES INDEPENDENT: enroll off + send on → an already-active lead stil
     getContact: async () => ({ name: 'D' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, ['m1'], 'enroll switch off must not block sends to active leads');
@@ -623,6 +642,7 @@ test('CRITICAL1: send error on 2nd enrollment does not roll back 1st advance', a
     getContact: async () => ({ name: 'X' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
 
   // Cycle 1 — conv 601 succeeds, conv 602 throws
@@ -651,6 +671,7 @@ test('CRITICAL1: send error on 2nd enrollment does not roll back 1st advance', a
     getContact: async () => ({ name: 'X' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   const now2 = new Date(now.getTime() + 2 * 3600 * 1000); // past 602's 1h backoff
   await reconcileAccount(pool, client2, 1, now2);
@@ -674,6 +695,7 @@ test('CRITICAL2: enrollment with sequence_id=NULL is stopped gracefully without 
     getContact: async () => ({ name: 'O' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
   // Must not throw
   await reconcileAccount(pool, client, 1, new Date());
