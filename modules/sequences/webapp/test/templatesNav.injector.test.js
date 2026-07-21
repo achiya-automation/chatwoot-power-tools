@@ -8,7 +8,7 @@
  * הכניסה תלויה ב-#drip-nav-item (נבנה על ידי sequences-nav.js), אז ה-fixture כולל גם את
  * ה-div[name="Campaigns"] המינימלי ש-sequences-nav.js's inject() דורש כדי ליצור אותו.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,16 @@ function scriptBodies(html) {
 
 // #app בלי dir — בדיוק כמו Chatwoot ברגע שבו DASHBOARD_SCRIPTS רץ (ראה dashboardScript.injector
 // לפירוט המלא של הלקח). cw_d_session_info מדמה session אמיתי לצורך authHeaders().
+// templates-nav.js now runs a self-healing setInterval (highlight sync) that keeps a real timer
+// alive on the window for as long as the window exists. A real browser tears that down when the
+// tab closes; jsdom does not do this on its own — every window opened here must be closed
+// explicitly, or `node --test` never exits (this is jsdom's own documented behavior for
+// window.close(): "stop all further work being done in it, e.g. timers firing").
+const OPEN_WINDOWS = [];
+after(() => {
+  for (const w of OPEN_WINDOWS) { try { w.close(); } catch (e) {} }
+});
+
 function makeDom(path) {
   const cookie = encodeURIComponent(JSON.stringify({
     'access-token': 'tok123', 'token-type': 'Bearer', client: 'c1', expiry: '999', uid: 'u1',
@@ -44,6 +54,7 @@ function makeDom(path) {
   dom.window.document.cookie = `cw_d_session_info=${cookie}`;
   const errors = [];
   dom.window.addEventListener('error', (e) => errors.push(e.message));
+  OPEN_WINDOWS.push(dom.window);
   return { dom, errors };
 }
 
@@ -134,6 +145,44 @@ test('templates-nav: קליק שולח window.__dripShowPanel עם "templates"',
   const a = li.querySelector('a');
   a.dispatchEvent(new w.Event('click', { bubbles: true, cancelable: true }));
   assert.equal(called, 'templates', 'קליק על הפריט חייב לקרוא ל-__dripShowPanel עם \'templates\'');
+});
+
+test('templates-nav + sequences-nav: ?drip=templates ב-URL ההתחלתי משחזר את הפאנל עם iframe על tab=templates', async () => {
+  const { dom, errors } = makeDom('/app/accounts/1/contacts?drip=templates');
+  withProfileFetch(dom, [{ id: 1, role: 'administrator' }]);
+
+  const w = await runDashboardScript(dom);
+
+  const holder = w.document.getElementById('drip-inline');
+  assert.ok(holder, 'הפאנל (#drip-inline) חייב להיבנות משחזור ה-URL');
+  assert.equal(holder.style.display, 'block', 'הפאנל חייב להיות גלוי אחרי שחזור מ-?drip=templates');
+
+  const iframe = holder.querySelector('iframe');
+  assert.ok(iframe, 'הפאנל חייב להכיל iframe');
+  assert.match(iframe.getAttribute('src') || '', /[?&]tab=templates\b/, 'ה-iframe חייב להיטען על tab=templates');
+  assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
+});
+
+test('templates-nav: ה-highlight לא נתקע — קליק מדליק מיד, ומעבר ל-overview דרך sequences-nav מכבה תוך הפעימה העצמית', async () => {
+  const { dom, errors } = makeDom('/app/accounts/1/contacts');
+  withProfileFetch(dom, [{ id: 1, role: 'administrator' }]);
+
+  const w = await runDashboardScript(dom);
+  const li = w.document.getElementById('tpl-nav-item');
+  assert.ok(li, 'הכניסה חייבת להיות קיימת');
+  const a = li.querySelector('a');
+
+  a.dispatchEvent(new w.Event('click', { bubbles: true, cancelable: true }));
+  assert.ok(a.classList.contains('bg-n-alpha-2'), 'קליק על תבניות חייב להדליק את ה-highlight מיידית, בלי להמתין לפעימה');
+
+  // מעבר טאבים דרך sequences-nav.js (למשל קליק על תת-פריט "סקירה") — מדמים ישירות דרך ה-hook
+  // החשוף window.__dripShowPanel, כפי ש-sequences-nav.js עצמו קורא לו מתוך ה-click handler שלו.
+  w.__dripShowPanel('overview');
+
+  await new Promise((r) => setTimeout(r, 1100)); // הפעימה העצמית (setInterval 1000ms) מסנכרנת מחדש
+
+  assert.ok(!a.classList.contains('bg-n-alpha-2'), 'ה-highlight חייב להיעלם אחרי מעבר ל-overview (הפעימה מתקנת תוך שנייה)');
+  assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 
 test('artifact (sequences module): אין backslash כפול — templates-nav.js בטווח הבדיקה', () => {

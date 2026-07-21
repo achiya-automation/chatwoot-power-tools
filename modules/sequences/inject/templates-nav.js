@@ -9,7 +9,6 @@
 (function () {
   if (window.__tplNav) return;
   window.__tplNav = true;
-  var ADDONS_BASE = window.__CW_ADDONS_BASE || '/chatwoot-addons';
 
   function dripLocale() {
     var a = document.querySelector('#app[dir]');
@@ -172,9 +171,17 @@
     if (item && link && item.contains(link)) {
       e.preventDefault(); e.stopPropagation();
       if (window.__dripShowPanel) window.__dripShowPanel('templates');
+      markActive(); // highlight on immediately — don't wait for the poll below
     }
   }, true);
   window.addEventListener('popstate', markActive);
+
+  // sequences-nav.js's own sub-item clicks (and hide()) switch tabs via pushState/postMessage,
+  // not a DOM event this module can observe — there is no reliable hook for "the panel switched
+  // away from templates" or "templates was already open when I arrived". A 1s self-healing poll
+  // re-reads ?drip= and syncs the highlight either way; the top-of-file window.__tplNav guard
+  // means this IIFE runs once per page load, so exactly one interval is ever created.
+  setInterval(markActive, 1000);
 
   // dedicated dir observer — only relabels, never re-checks admin/injects
   new MutationObserver(function () { relabel(); })
