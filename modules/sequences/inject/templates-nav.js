@@ -1,7 +1,9 @@
 // templates-nav — injected as part of DASHBOARD_SCRIPTS (see sequences-nav.js for the full
 // mechanism). Adds a single top-level "WhatsApp Templates" sidebar item, right after the
 // "WhatsApp Sequences" group (#drip-nav-item), visible ONLY to administrators of the current
-// account. Clicking it opens the same inline panel sequences-nav.js already builds, on
+// account and to users an administrator granted access to (see mayUseTemplates below —
+// same two doors the engine enforces). Clicking it opens the same inline panel
+// sequences-nav.js already builds, on
 // tab=templates (window.__dripShowPanel, exported by sequences-nav.js). This file is its own
 // <script> block (own IIFE scope) — it shares window/document with sequences-nav.js but not
 // its local variables, so small helpers (dripLocale, accountId) are duplicated on purpose,
@@ -56,32 +58,53 @@
     } catch (e) { return null; }
   }
 
-  // admin check — fetched once per accountId, cached; any error/non-admin → false (fail-closed,
-  // the nav item simply never appears — safer than a flash of a link that then 403s).
-  var ADMIN_CACHE = {};
-  var ADMIN_PENDING = {};
-  function isAdmin(accId, cb) {
-    if (Object.prototype.hasOwnProperty.call(ADMIN_CACHE, accId)) { cb(ADMIN_CACHE[accId]); return; }
-    if (ADMIN_PENDING[accId]) return; // already in flight — the tick that started it will cache the result
-    ADMIN_PENDING[accId] = true;
+  // access check — fetched once per accountId, cached; any error → false (fail-closed, the
+  // nav item simply never appears — safer than a flash of a link that then 403s).
+  //
+  // Two doors, same order the engine uses (api.js mayUseTemplates): administrator of THIS
+  // account from the Chatwoot profile, or — when they're not — a grant an administrator gave
+  // them (drip.template_access). The grant lives in the engine's DB, so only the engine can
+  // answer that; tpl_my_access is the one tpl_ action open to every member of the account.
+  var ADDONS_BASE = window.__CW_ADDONS_BASE || '/chatwoot-addons';
+  var ACCESS_CACHE = {};
+  var ACCESS_PENDING = {};
+
+  function profileIsAdmin(accId) {
     var headers = authHeaders() || {};
     headers.Accept = 'application/json';
-    fetch('/api/v1/profile', { credentials: 'same-origin', headers: headers })
+    return fetch('/api/v1/profile', { credentials: 'same-origin', headers: headers })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (profile) {
-        var ok = false;
         var accounts = (profile && profile.accounts) || [];
         for (var i = 0; i < accounts.length; i++) {
-          if (String(accounts[i].id) === String(accId) && accounts[i].role === 'administrator') { ok = true; break; }
+          if (String(accounts[i].id) === String(accId) && accounts[i].role === 'administrator') return true;
         }
-        ADMIN_CACHE[accId] = ok;
-        ADMIN_PENDING[accId] = false;
-        cb(ok);
-      })
-      .catch(function () {
-        ADMIN_CACHE[accId] = false;
-        ADMIN_PENDING[accId] = false;
-        cb(false);
+        return false;
+      });
+  }
+
+  function grantedByAdmin(accId) {
+    return fetch(ADDONS_BASE + '/drip-api?account_id=' + encodeURIComponent(accId), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'tpl_my_access', payload: {} }),
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { return !!(j && j.data && j.data.allowed); });
+  }
+
+  function mayUseTemplates(accId, cb) {
+    if (Object.prototype.hasOwnProperty.call(ACCESS_CACHE, accId)) { cb(ACCESS_CACHE[accId]); return; }
+    if (ACCESS_PENDING[accId]) return; // already in flight — the tick that started it will cache the result
+    ACCESS_PENDING[accId] = true;
+    profileIsAdmin(accId)
+      .then(function (admin) { return admin || grantedByAdmin(accId); })
+      .catch(function () { return false; })
+      .then(function (ok) {
+        ACCESS_CACHE[accId] = !!ok;
+        ACCESS_PENDING[accId] = false;
+        cb(!!ok);
       });
   }
 
@@ -152,11 +175,11 @@
     else a.classList.remove('bg-n-alpha-2', 'text-n-slate-12', 'font-medium');
   }
 
-  // one tick = re-check admin (cached per accountId) → inject/remove + refresh label/active state.
+  // one tick = re-check access (cached per accountId) → inject/remove + refresh label/active state.
   function tick() {
     var accId = accountId();
     if (!accId) return;
-    isAdmin(accId, function (ok) {
+    mayUseTemplates(accId, function (ok) {
       if (accountId() !== accId) return; // account switched again while the fetch was in flight
       if (ok) { inject(); relabel(); markActive(); }
       else removeItem();

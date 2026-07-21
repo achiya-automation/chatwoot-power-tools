@@ -40,6 +40,49 @@ export async function listFlows(accountId, inboxId) {
 }
 
 /**
+ * The non-admin users an administrator granted Template Studio access to (ids only).
+ */
+export async function listTemplateAccess(accountId) {
+  return call('tpl_access', {}, accountId);
+}
+
+/**
+ * Replace the whole grant list (administrators only — the engine re-checks).
+ */
+export async function saveTemplateAccess(accountId, userIds) {
+  return call('tpl_set_access', { user_ids: userIds }, accountId);
+}
+
+/**
+ * The account's agents, straight from Chatwoot — the engine's DB role deliberately has no
+ * read on public.users, and its own Chatwoot token is an AgentBot one that cannot list them.
+ * The panel is same-origin with Chatwoot, so the browser's own session answers this.
+ *
+ * ponytail: needs the cw_d_session_info cookie, which the mobile WebView does not have
+ * (see engine/src/auth.js) — granting access there falls back to the engine round-trip only
+ * if we ever need it; managing grants is a desktop settings task.
+ */
+export async function listAccountAgents(accountId) {
+  const raw = (document.cookie.match(/(?:^|;\s*)cw_d_session_info=([^;]+)/) || [])[1];
+  if (!raw) throw new Error('no-session');
+  let d = JSON.parse(decodeURIComponent(raw));
+  if (typeof d === 'string') d = JSON.parse(d);   // js-cookie sometimes wraps the JSON as a string
+  const res = await fetch(`/api/v1/accounts/${encodeURIComponent(accountId)}/agents`, {
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'access-token': d['access-token'],
+      'token-type': d['token-type'] || 'Bearer',
+      client: d.client,
+      expiry: d.expiry,
+      uid: d.uid,
+    },
+  });
+  if (!res.ok) throw new Error(`agents ${res.status}`);
+  return res.json();
+}
+
+/**
  * Upload a template example file.
  */
 export async function uploadExample(accountId, inboxId, file) {

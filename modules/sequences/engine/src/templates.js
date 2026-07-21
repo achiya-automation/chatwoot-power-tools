@@ -137,6 +137,70 @@ function validateTemplate(t) {
   }
 }
 
+// ── access grants (migration 032) ───────────────────────────────────────────
+// Administrators of the account always pass (decided from the Chatwoot profile role in
+// api.js). These helpers cover the second door only: named non-admin users an admin let in.
+
+/** hasTemplateAccess(accountId, userId, q) → boolean. A missing/0 userId is never granted. */
+export async function hasTemplateAccess(accountId, userId, q = defaultQuery) {
+  const uid = Number(userId) || 0;
+  if (!uid) return false;
+  const rows = await q(
+    'SELECT 1 FROM drip.template_access WHERE account_id = $1 AND user_id = $2',
+    [Number(accountId), uid]
+  );
+  return rows.length > 0;   // db.js's query() hands back .rows, not the pg result
+}
+
+/** The granted (non-admin) user ids for this account — the admin's grant screen. */
+async function actionTplAccess(accountId, q) {
+  const rows = await q(
+    'SELECT user_id FROM drip.template_access WHERE account_id = $1 ORDER BY user_id',
+    [Number(accountId)]
+  );
+  return { data: { user_ids: rows.map((x) => Number(x.user_id)) } };
+}
+
+/**
+ * Replace the whole grant list for the account (admin-only — enforced in api.js).
+ * Replace, not merge: the UI sends the complete list of toggled-on agents, so an agent
+ * switched off there must actually lose access rather than linger from an earlier save.
+ * Runs as one statement pair on a pooled connection — a partial apply would silently keep
+ * a revoked agent in, so the delete is scoped by NOT IN and the insert is idempotent.
+ */
+async function actionTplSetAccess(accountId, p, q) {
+  const acc = Number(accountId);
+  const ids = [...new Set(
+    (Array.isArray(p.user_ids) ? p.user_ids : []).map((x) => Number(x)).filter((x) => x > 0)
+  )];
+  const grantedBy = (p.__actor && p.__actor.uid) || null;
+
+  await q(
+    'DELETE FROM drip.template_access WHERE account_id = $1 AND NOT (user_id = ANY($2::int[]))',
+    [acc, ids]
+  );
+  if (ids.length) {
+    await q(
+      `INSERT INTO drip.template_access (account_id, user_id, granted_by)
+         SELECT $1, u, $3 FROM unnest($2::int[]) AS u
+       ON CONFLICT (account_id, user_id) DO NOTHING`,
+      [acc, ids, grantedBy]
+    );
+  }
+  return { data: { user_ids: ids } };
+}
+
+/**
+ * "May I open the Template Studio?" — the one tpl_ action any member of the account may
+ * call, so the sidebar can decide whether to show the item at all (see inject/templates-nav.js).
+ * Returns only booleans: never leaks who else was granted.
+ */
+async function actionTplMyAccess(accountId, p, q) {
+  const admin = !!p.__isAdmin;
+  const allowed = admin || await hasTemplateAccess(accountId, p.__actor && p.__actor.uid, q);
+  return { data: { allowed, admin } };
+}
+
 // Attempt = action: called for both success and Graph failure. Its own failure must never
 // mask the Graph result, so it swallows and logs rather than throwing — no token in the log.
 export async function logAudit(query, { accountId, actor, action, wabaId, name, language, detail }) {
@@ -402,7 +466,9 @@ async function actionTplList(accountId, payload, { reads, fetchImpl }) {
     return { ...pub, templates, capabilities };
   }));
 
-  return { data: { wabas } };
+  // is_admin rides along so the list screen knows whether to offer the access-management
+  // button — a granted agent uses the studio but never sees who else was let in.
+  return { data: { wabas, is_admin: !!payload.__isAdmin } };
 }
 
 export async function handleTemplatesAction(accountId, action, payload, deps = {}) {
@@ -424,6 +490,12 @@ export async function handleTemplatesAction(accountId, action, payload, deps = {
       return actionTplDelete(accountId, p, { reads, fetchImpl, query: q });
     case 'tpl_flows':
       return actionTplFlows(accountId, p, { reads, fetchImpl });
+    case 'tpl_access':
+      return actionTplAccess(accountId, q);
+    case 'tpl_set_access':
+      return actionTplSetAccess(accountId, p, q);
+    case 'tpl_my_access':
+      return actionTplMyAccess(accountId, p, q);
     default:
       throw new Error('unknown action');
   }
