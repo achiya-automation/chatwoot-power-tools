@@ -80,6 +80,7 @@ function makeClient(calls) {
     getContact: async () => ({ name: 'דנה', phone: '+972500000000' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false, // no human takeover — required by reconcile.js's takeover guard whenever last_sent_at + conversation_id are set
   };
 }
 
