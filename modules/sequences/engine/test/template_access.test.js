@@ -172,3 +172,66 @@ test('a client-sent __isAdmin cannot forge access', async () => {
     assert.deepEqual((await res.json()).data, { allowed: false, admin: false });
   });
 });
+
+// ── the demotion bug: a mobile-door cookie must never outrank the browser's own session ────
+//
+// A browser that once opened the panel as a Chatwoot dashboard app keeps a drip_session cookie
+// for 60 days. Those claims name an account but no role, so while they were tried FIRST the
+// account's own administrator arrived as a plain member and every tpl_ action answered 403 —
+// with their real Chatwoot session sitting unread in the same request.
+
+import { sign, SESSION } from '../src/sso.js';
+
+const SSO_SECRET = 'test-secret';
+
+// A request from a desktop browser that has BOTH credentials, as the real bug did.
+const bothCookies = (uid, accountId) => {
+  const info = { 'access-token': 'AT', client: 'CL', uid: 'a@b.com', 'token-type': 'Bearer', expiry: '9999999999' };
+  const session = sign(SESSION, { u: uid, a: accountId, exp: Date.now() + 60_000 }, SSO_SECRET);
+  return `cw_d_session_info=${encodeURIComponent(JSON.stringify(info))}; drip_session=${session}`;
+};
+
+async function withSsoApp(fetchImpl, fn) {
+  const app = createApp({
+    databaseUrl: process.env.DATABASE_URL_TEST,
+    chatwootBaseUrl: 'http://chatwoot.invalid',
+    mediaDir: '/tmp',
+    ssoSecret: SSO_SECRET,
+    pool,
+    fetchImpl,
+  });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    await fn(`http://127.0.0.1:${server.address().port}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    initStore(cfg);
+  }
+}
+
+test('an administrator holding a roleless drip_session cookie is still an administrator', async () => {
+  await withSsoApp(asAdmin(), async (base) => {
+    const res = await fetch(`${base}/drip-api?account_id=${ACCT}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: bothCookies(ADMIN_UID, ACCT) },
+      body: JSON.stringify({ action: 'tpl_my_access', payload: {} }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).data, { allowed: true, admin: true });
+  });
+});
+
+test('the drip_session cookie still authorizes when there is no Chatwoot session at all', async () => {
+  // The cookie-less WebView it was built for: no cw_d_session_info, so the mobile door decides.
+  await withSsoApp(asAdmin(), async (base) => {
+    const session = sign(SESSION, { u: AGENT_UID, a: ACCT, exp: Date.now() + 60_000 }, SSO_SECRET);
+    const res = await fetch(`${base}/drip-api?account_id=${ACCT}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `drip_session=${session}` },
+      body: JSON.stringify({ action: 'templates', payload: {} }),
+    });
+    assert.notEqual(res.status, 401);   // it got in — the door still works
+    assert.notEqual(res.status, 403);
+  });
+});
