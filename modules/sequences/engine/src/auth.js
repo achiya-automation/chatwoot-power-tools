@@ -312,13 +312,50 @@ export function authGate(config) {
     const cookie = req.headers.cookie || '';
     const acc = parseInt(req.query?.account_id || '0', 10);
 
-    // Pick the credential that authorizes this account. A fresh matching URL ticket beats a stale
-    // cookie when the WebView moves from account A to B; a ticket for A must not displace a cookie
-    // that already authorizes B. Only the selected ticket is consumed and allowed to mint a cookie.
+    // ── credential order: the real Chatwoot session first, the mobile door second ──────────
+    //
+    // The mobile door's signed claims name one user and one account — but never a ROLE, because
+    // Chatwoot mints them on a request that has none to give (see the jbuilder in deploy/).
+    // Trying that door FIRST was a silent demotion: any browser that had once opened the panel
+    // as a Chatwoot dashboard app kept the roleless drip_session cookie for 60 days, and every
+    // later request — desktop included — was authenticated by it. The account's own
+    // administrator therefore arrived as a plain member, and Template Studio answered 403 to
+    // exactly the person it exists for, while the browser's real Chatwoot session sat unread.
+    //
+    // The Chatwoot session is strictly more informative (real roles, super-admin), so whenever
+    // the browser carries one it decides. The ticket and drip_session stay as the fallback they
+    // were meant to be: the cookie-less WebView, an expired Chatwoot token, a Chatwoot outage.
     const ticketClaims = claimsFromTicket(req);
     const ticketCandidate = ticketClaims ? accessFromClaims(ticketClaims) : null;
     const cookieAccess = sessionFromCookie(cookie);
 
+    let access = null;
+    if (sessionAuthHeaders(cookie)) {
+      const key = createHash('sha256').update(cookie).digest('hex');
+      const hit = cache.get(key);
+      if (hit && hit.expiry > Date.now()) {
+        access = hit.access;                                 // fresh positive → skip Rails
+      } else if (inflight.has(key)) {
+        access = await inflight.get(key);                    // a verify is already running → join it
+      } else {
+        const p = resolveUserAccess(cookie, config.chatwootBaseUrl, fetchImpl, master);
+        inflight.set(key, p);
+        try { access = await p; } finally { inflight.delete(key); }
+        if (access && access.ok) cache.set(key, { access, expiry: Date.now() + TTL_MS });
+      }
+    }
+
+    // Tenant isolation applies to every door: a user only reaches accounts they belong to (a
+    // super-admin any). A Chatwoot session that doesn't cover this account falls through to the
+    // mobile door rather than denying outright — the WebView may legitimately hold a ticket for it.
+    if (access && access.ok && (!acc || canAccessAccount(access, acc))) {
+      req.dripAccess = access;
+      return next();
+    }
+
+    // A fresh matching URL ticket beats a stale cookie when the WebView moves from account A to
+    // B; a ticket for A must not displace a cookie that already authorizes B. Only the selected
+    // ticket is consumed and allowed to mint a cookie.
     if (ticketCandidate && (!acc || canAccessAccount(ticketCandidate, acc))) {
       const ticketAccess = await sessionFromTicket(ticketClaims, res);
       if (ticketAccess) {
@@ -332,46 +369,17 @@ export function authGate(config) {
       return next();
     }
 
-    // If neither mobile credential authorizes the requested account, fall through to the regular
-    // Chatwoot browser session. This is required by injected surfaces (campaign statistics,
-    // sequences navigation), which carry cw_d_session_info but no URL ticket of their own.
-    const mobileMismatch = Boolean(acc && (
+    // 403 only when a credential is genuinely about someone else's account — a sign-in page
+    // there would loop the user through a login that changes nothing. Everything else (no
+    // credential, an expired session, a ticket already spent) is an AUTHENTICATION failure:
+    // 401, and a navigation gets the sign-in page instead of the JSON.
+    const wrongAccount = Boolean(acc && (
+      (access && access.ok && !canAccessAccount(access, acc)) ||
       (ticketCandidate && !canAccessAccount(ticketCandidate, acc)) ||
       (cookieAccess && !canAccessAccount(cookieAccess, acc))
     ));
-
-    if (!cookie) {
-      return mobileMismatch
-        ? deny(req, res, 403, 'forbidden')
-        : deny(req, res, 401, 'unauthorized');
-    }
-
-    const key = createHash('sha256').update(cookie).digest('hex');
-    let access = null;
-    const hit = cache.get(key);
-    if (hit && hit.expiry > Date.now()) {
-      access = hit.access;                                   // fresh positive → skip Rails
-    } else if (inflight.has(key)) {
-      access = await inflight.get(key);                      // a verify is already running → join it
-    } else {
-      const p = resolveUserAccess(cookie, config.chatwootBaseUrl, fetchImpl, master);
-      inflight.set(key, p);
-      try { access = await p; } finally { inflight.delete(key); }
-      if (access && access.ok) cache.set(key, { access, expiry: Date.now() + TTL_MS });
-    }
-    if (!access || !access.ok) {
-      return mobileMismatch
-        ? deny(req, res, 403, 'forbidden')
-        : deny(req, res, 401, 'unauthorized');
-    }
-
-    req.dripAccess = access;
-
-    // Tenant isolation: a logged-in user may only act on accounts they belong to (a
-    // super-admin on any). Stops ?account_id=N from reading another tenant's leads.
-    if (acc && !canAccessAccount(access, acc)) {
-      return deny(req, res, 403, 'forbidden');
-    }
-    return next();
+    return wrongAccount
+      ? deny(req, res, 403, 'forbidden')
+      : deny(req, res, 401, 'unauthorized');
   };
 }

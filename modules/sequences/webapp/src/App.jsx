@@ -14,6 +14,7 @@ import {
   Tag,
   Megaphone,
   ShieldCheck,
+  LayoutTemplate,
 } from 'lucide-react';
 import Button from './components/ui/Button.jsx';
 import Switch from './components/ui/Switch.jsx';
@@ -37,6 +38,8 @@ import BulkEnrollModal from './components/BulkEnrollModal.jsx';
 import CampaignsView from './components/CampaignsView.jsx';
 import CampaignDetailView from './components/CampaignDetailView.jsx';
 import ComplianceView from './components/ComplianceView.jsx';
+import TemplatesView from './components/TemplatesView.jsx';
+import TemplateBuilder from './components/TemplateBuilder.jsx';
 import useChatwootContext from './useChatwootContext.js';
 import useVersionCheck from './useVersionCheck.js';
 import UpdateBanner from './components/UpdateBanner.jsx';
@@ -67,6 +70,7 @@ const M = {
     tab_contacts: 'אנשי קשר',
     tab_campaigns: 'קמפיינים',
     tab_compliance: 'ציות',
+    tab_templates: 'תבניות',
     appTitle: 'רצפי WhatsApp',
     subtitle: 'ניהול רצפי הודעות אוטומטיים (drip)',
     subtitleFull: 'ניהול רצפי הודעות אוטומטיים (drip) ללקוחות',
@@ -116,6 +120,7 @@ const M = {
     tab_contacts: 'Contacts',
     tab_campaigns: 'Campaigns',
     tab_compliance: 'Compliance',
+    tab_templates: 'Templates',
     appTitle: 'WhatsApp Sequences',
     subtitle: 'Manage automated (drip) message sequences',
     subtitleFull: 'Manage automated (drip) message sequences for your customers',
@@ -188,7 +193,7 @@ export default function App() {
   // טאב פעיל: סקירה (ברירת מחדל) / רצפים / אנשי קשר.
   // נשמר ב-localStorage כדי שריענון העמוד יישאר באותו טאב; ?tab= גובר (deep-link).
   const [view, setView] = useState(() => {
-    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview' || v === 'campaigns' || v === 'compliance';
+    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview' || v === 'campaigns' || v === 'compliance' || v === 'templates';
     const t = new URLSearchParams(window.location.search).get('tab');
     if (valid(t)) return t;
     try {
@@ -217,7 +222,7 @@ export default function App() {
       if (e.origin !== window.location.origin) return; // same-origin embed בלבד
       const d = e?.data;
       if (d && typeof d === 'object' && d.type === 'drip-nav'
-          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns' || d.tab === 'compliance')) {
+          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns' || d.tab === 'compliance' || d.tab === 'templates')) {
         setView(d.tab);
         setCampaignId(null); // איפוס צלילת הקמפיין — לא לנחות על תצוגת פרטים ישנה (כמו TabButton הפנימי)
       }
@@ -247,7 +252,7 @@ export default function App() {
     else setCampaignId(null);
   };
   // כותרת לפי הטאב הפעיל — בסגנון הכותרות הנייטיביות של Chatwoot (text-base font-medium)
-  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : view === 'compliance' ? t('tab_compliance') : t('tab_overview');
+  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : view === 'compliance' ? t('tab_compliance') : view === 'templates' ? t('tab_templates') : t('tab_overview');
 
   // מצב "שיחה" — האפליקציה רצה כ-Dashboard App בתוך שיחה (סרגל צד צר).
   // אז מציגים תצוגת מצב קומפקטית לקריאה-בלבד של הליד הזה בלבד (בלי ניהול).
@@ -483,13 +488,16 @@ export default function App() {
               <TabButton active={view === 'compliance'} onClick={() => setView('compliance')} icon={ShieldCheck}>
                 {t('tab_compliance')}
               </TabButton>
+              <TabButton active={view === 'templates'} onClick={() => setView('templates')} icon={LayoutTemplate}>
+                {t('tab_templates')}
+              </TabButton>
             </div>
           )}
           <div className="flex items-center gap-2">
             {/* "שיוך לפי תווית" משייך רצף לאנשי קשר — לא רלוונטי בהקשר הקמפיינים, שם מסתירים אותו.
                 גם בטאב הציות מסתירים: שם יש "רישום הסכמה לפי תווית" — שתי פעולות-לפי-תווית שונות
-                באותו מסך הן מלכודת. */}
-            {!noAccount && view !== 'campaigns' && view !== 'compliance' ? (
+                באותו מסך הן מלכודת. גם בטאב התבניות מסתירים: אין שם רצפים לשייך אליהם תווית. */}
+            {!noAccount && view !== 'campaigns' && view !== 'compliance' && view !== 'templates' ? (
               <Button
                 variant="faded"
                 color="slate"
@@ -521,6 +529,8 @@ export default function App() {
             : <CampaignsView accountId={accountId} onSelect={setCampaignId} />
         ) : view === 'compliance' ? (
           <ComplianceView accountId={accountId} />
+        ) : view === 'templates' ? (
+          <TemplatesScreen accountId={accountId} />
         ) : view === 'contacts' ? (
           <EnrollmentsView accountId={accountId} />
         ) : loading ? (
@@ -756,6 +766,53 @@ function ContextBanner({ conversation, contact, agent }) {
         </span>
       ) : null}
     </div>
+  );
+}
+
+// Templates tab wrapper — switches between the list (TemplatesView) and the editor
+// (TemplateBuilder). TemplatesView owns WABA selection + its own template list loading;
+// this just remembers which screen is showing and what to hand the builder.
+// existingTemplates comes straight off wabaCtx.templates (the raw Graph template array
+// TemplatesView already loaded for that WABA) — no need to thread it separately through
+// TemplatesView's callbacks.
+function TemplatesScreen({ accountId }) {
+  const [screen, setScreen] = useState({ mode: 'list' });
+  // Bumped on every return-to-list so TemplatesView remounts and reloads — simplest way
+  // to pick up a just-created/edited template (mirrors this app's other "just reload"
+  // patterns; no shared-cache invalidation machinery exists here).
+  const [listKey, setListKey] = useState(0);
+
+  const backToList = () => {
+    setScreen({ mode: 'list' });
+    setListKey((k) => k + 1);
+  };
+
+  const openBuilder = (wabaCtx, initial, editTemplateId) => {
+    setScreen({ mode: 'builder', wabaCtx, initial, editTemplateId, existingTemplates: wabaCtx?.templates || [] });
+  };
+
+  if (screen.mode === 'builder') {
+    return (
+      <TemplateBuilder
+        accountId={accountId}
+        wabaCtx={screen.wabaCtx}
+        initial={screen.initial}
+        editTemplateId={screen.editTemplateId}
+        existingTemplates={screen.existingTemplates}
+        onDone={backToList}
+        onCancel={backToList}
+      />
+    );
+  }
+
+  return (
+    <TemplatesView
+      key={listKey}
+      accountId={accountId}
+      onEdit={(uiTpl, wabaCtx, graphTemplateId) => openBuilder(wabaCtx, uiTpl, graphTemplateId)}
+      onCreate={(wabaCtx) => openBuilder(wabaCtx, null, null)}
+      onDuplicate={(uiTpl, wabaCtx) => openBuilder(wabaCtx, uiTpl, null)}
+    />
   );
 }
 
