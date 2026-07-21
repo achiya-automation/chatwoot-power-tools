@@ -310,6 +310,7 @@ test('no_reply + skip: customer replied → skips the step but CONTINUES the seq
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => true, // replied
+    outgoingByHumanSince: async () => false, // no human takeover — required whenever last_sent_at + conversation_id are set
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, [], 'gated step is skipped (not sent) when the customer replied');
@@ -338,6 +339,7 @@ test('no_reply + skip: customer did NOT reply → sends the step, then advances'
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => false, // no reply
+    outgoingByHumanSince: async () => false, // no human takeover — required whenever last_sent_at + conversation_id are set
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, ['reminder'], 'step is sent when the customer did not reply');
@@ -366,6 +368,7 @@ test('no_reply + stop: customer replied → stops the sequence (no send)', async
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => true, // replied
+    outgoingByHumanSince: async () => false, // no human takeover — required whenever last_sent_at + conversation_id are set
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, [], 'nothing sent');
@@ -393,6 +396,7 @@ test('replied condition: customer replied → sends the step (e.g. a thank-you)'
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => true, // replied → condition met
+    outgoingByHumanSince: async () => false, // no human takeover — required whenever last_sent_at + conversation_id are set
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, ['thankyou'], 'replied-gated step is sent when the customer replied');
@@ -418,6 +422,7 @@ test('no_reply + skip on the LAST step: replied → skips and completes', async 
     getContact: async () => ({ name: 'R' }),
     patchAttrs: async () => {},
     incomingSince: async () => true, // replied
+    outgoingByHumanSince: async () => false, // no human takeover — required whenever last_sent_at + conversation_id are set
   };
   await reconcileAccount(pool, client, 1, new Date());
   assert.deepEqual(sent, [], 'last gated step skipped');
