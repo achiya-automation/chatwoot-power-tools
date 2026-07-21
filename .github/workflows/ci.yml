@@ -52,7 +52,8 @@ jobs:
           CREATE TABLE IF NOT EXISTS public.contact_inboxes (
             id int PRIMARY KEY, contact_id int, inbox_id int, source_id text);
           CREATE TABLE IF NOT EXISTS public.channel_whatsapp (
-            id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb);
+            id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb,
+            provider_config jsonb DEFAULT '{}'::jsonb);
           CREATE TABLE IF NOT EXISTS public.accounts (id int PRIMARY KEY, name text);
           CREATE TABLE IF NOT EXISTS public.campaigns (
             id int PRIMARY KEY, display_id int, account_id int, inbox_id int,
