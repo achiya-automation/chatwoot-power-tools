@@ -312,3 +312,29 @@ test('createImportJob: a listener that throws does not break the job', async () 
   assert.equal(job.progress.state, 'done');
   assert.equal(job.progress.created, 1);
 });
+
+test('links the imported contact to the WhatsApp inbox with a digits-only source_id', async () => {
+  const links = [];
+  const api = fakeApi({ createContactInbox: async (id, body) => { links.push({ id, body }); return {}; } });
+  await runImport({
+    contacts: [{ name: 'דנה', phone_number: '+972501234567', __row: 1 }],
+    api, waInboxId: 7, sleep: async () => {},
+  });
+  assert.deepEqual(links, [{ id: 100, body: { inbox_id: 7, source_id: '972501234567' } }]);
+});
+
+test('skips inbox linking when no WhatsApp inbox was resolved', async () => {
+  const links = [];
+  const api = fakeApi({ createContactInbox: async (...a) => { links.push(a); return {}; } });
+  await runImport({ contacts: [{ name: 'דנה', phone_number: '+972501234567', __row: 1 }], api, sleep: async () => {} });
+  assert.equal(links.length, 0);
+});
+
+test('a contact already linked to the inbox never fails the imported row', async () => {
+  const api = fakeApi({ createContactInbox: async () => { const e = new Error('taken'); e.status = 422; throw e; } });
+  const log = await runImport({
+    contacts: [{ name: 'דנה', phone_number: '+972501234567', __row: 1 }],
+    api, waInboxId: 7, sleep: async () => {},
+  });
+  assert.deepEqual(log.summary(), { created: 1, updated: 0, skipped: 0, failed: 0, total: 1 });
+});

@@ -10,7 +10,7 @@ const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // merge into the contact an earlier row just created instead of duplicating it.
 // On HTTP 429 one shared cooldown pauses every worker, then the request retries.
 export async function runImport({
-  contacts, api, labelTitle, onProgress,
+  contacts, api, labelTitle, waInboxId = null, onProgress,
   concurrency = 5, isCancelled = () => false, cooldownMs = 20000, sleep = defaultSleep,
 }) {
   const log = new ImportLog();
@@ -63,6 +63,17 @@ export async function runImport({
         if (!contactId) throw new Error('Chatwoot create response is missing the contact id');
         status = 'created';
       }
+      // Link the contact to the WhatsApp inbox so the conversation Chatwoot opens
+      // later resolves to THIS contact — with its real name — instead of a nameless
+      // auto-created twin. Best-effort: a contact that is already linked (source_id is
+      // unique per inbox) or an older Chatwoot without the route must never fail the row.
+      if (waInboxId && contactId) {
+        const sourceId = waSourceId(body.phone_number);
+        if (sourceId) {
+          try { await call(() => api.createContactInbox(contactId, { inbox_id: waInboxId, source_id: sourceId })); }
+          catch { /* already linked, or unsupported — the contact itself imported fine */ }
+        }
+      }
       if (labelTitle && contactId) {
         if (match) {
           let cur = [];
@@ -103,7 +114,7 @@ export async function runImport({
 // an onUpdate subscriber list. The wizard closes its dialog right after starting
 // one and hands it to the floating pill (ui/wizard.js). Never rejects — a fatal
 // error parks the job in state 'error' for the pill to display.
-export function createImportJob({ contacts, api, labelTitle, concurrency }) {
+export function createImportJob({ contacts, api, labelTitle, waInboxId, concurrency }) {
   const listeners = new Set();
   const progress = {
     done: 0, total: contacts.length,
@@ -121,7 +132,7 @@ export function createImportJob({ contacts, api, labelTitle, concurrency }) {
     onUpdate(cb) { listeners.add(cb); return () => listeners.delete(cb); },
   };
   job.promise = runImport({
-    contacts, api, labelTitle, concurrency,
+    contacts, api, labelTitle, waInboxId, concurrency,
     isCancelled: () => cancelled,
     onProgress(done, totalCount, log) {
       progress.done = done;
@@ -148,4 +159,11 @@ export function createImportJob({ contacts, api, labelTitle, concurrency }) {
 function stripMeta(c) {
   const { __row, __match, __dupTail, ...rest } = c;
   return rest;
+}
+
+// WhatsApp addresses a contact by bare digits (972501234567) while imported phones are
+// E.164 ("+972501234567") — strip to digits so Chatwoot's channel lookup matches.
+function waSourceId(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits || null;
 }

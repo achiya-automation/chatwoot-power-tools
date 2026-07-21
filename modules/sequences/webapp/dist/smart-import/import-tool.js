@@ -342,6 +342,7 @@ var __cwImport = (() => {
     contacts,
     api,
     labelTitle,
+    waInboxId = null,
     onProgress,
     concurrency = 5,
     isCancelled = () => false,
@@ -395,6 +396,15 @@ var __cwImport = (() => {
           if (!contactId) throw new Error("Chatwoot create response is missing the contact id");
           status = "created";
         }
+        if (waInboxId && contactId) {
+          const sourceId = waSourceId(body.phone_number);
+          if (sourceId) {
+            try {
+              await call(() => api.createContactInbox(contactId, { inbox_id: waInboxId, source_id: sourceId }));
+            } catch {
+            }
+          }
+        }
         if (labelTitle && contactId) {
           if (match) {
             let cur = [];
@@ -430,7 +440,7 @@ var __cwImport = (() => {
     }
     return log;
   }
-  function createImportJob({ contacts, api, labelTitle, concurrency }) {
+  function createImportJob({ contacts, api, labelTitle, waInboxId, concurrency }) {
     const listeners = /* @__PURE__ */ new Set();
     const progress = {
       done: 0,
@@ -470,6 +480,7 @@ var __cwImport = (() => {
       contacts,
       api,
       labelTitle,
+      waInboxId,
       concurrency,
       isCancelled: () => cancelled,
       onProgress(done, totalCount, log) {
@@ -499,6 +510,10 @@ var __cwImport = (() => {
     const { __row, __match, __dupTail, ...rest } = c;
     return rest;
   }
+  function waSourceId(phone) {
+    const digits = String(phone || "").replace(/\D/g, "");
+    return digits || null;
+  }
 
   // lib/apiClient.js
   var ApiError = class extends Error {
@@ -526,6 +541,13 @@ var __cwImport = (() => {
       filterContacts: (payload, page) => req("POST", "/contacts/filter" + (page ? `?page=${page}` : ""), payload),
       createContact: (c) => req("POST", "/contacts", c),
       updateContact: (id, c) => req("PUT", `/contacts/${id}`, c),
+      listInboxes: () => req("GET", "/inboxes"),
+      // Links a contact to a channel inbox at import time. Chatwoot resolves an
+      // inbound/outbound WhatsApp message through contact_inboxes.source_id — never
+      // through phone_number — so an imported contact without this row is invisible to
+      // the channel: Chatwoot opens the conversation on a nameless auto-created twin
+      // ("aged-glitter-248") and the real name never reaches the conversation or the bot.
+      createContactInbox: (contactId, body) => req("POST", `/contacts/${contactId}/contact_inboxes`, body),
       getContactLabels: (id) => req("GET", `/contacts/${id}/labels`),
       assignLabels: (id, labels) => req("POST", `/contacts/${id}/labels`, { labels }),
       listLabels: () => req("GET", "/labels"),
@@ -765,7 +787,13 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
   function openWizard({ accountId, authHeaders, assetBase }) {
     injectStyles();
     const api = createApiClient(accountId, authHeaders);
-    const state = { table: null, mapping: [], customMap: [], labelTitle: "", labelNeedsCreation: false };
+    const state = { table: null, mapping: [], customMap: [], labelTitle: "", labelNeedsCreation: false, waInboxId: null };
+    api.listInboxes().then((r) => {
+      const list = r?.payload || r || [];
+      const wa = list.find((i) => /whatsapp/i.test(i?.channel_type || ""));
+      state.waInboxId = wa?.id || null;
+    }).catch(() => {
+    });
     var dlg = document.createElement("dialog");
     dlg.className = "cwi-dlg";
     const pageIsDark = document.documentElement.classList.contains("dark") || document.body.classList.contains("dark");
@@ -1366,7 +1394,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         showError(t("alreadyRunning"));
         return;
       }
-      const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle });
+      const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
       window.__cwImportJob = job;
       mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
       close();

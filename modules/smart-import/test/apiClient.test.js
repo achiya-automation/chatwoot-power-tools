@@ -85,3 +85,13 @@ test('assignLabels writes labels to the contact endpoint, not a conversation', a
   assert.doesNotMatch(calls[0].url, /conversations/);
   assert.deepEqual(JSON.parse(calls[0].opts.body), { labels: ['לקוחות-חדשים'] });
 });
+
+test('createContactInbox POSTs the inbox link under the contact', async () => {
+  const calls = [];
+  const fakeFetch = async (url, opts) => { calls.push({ url, opts }); return { ok: true, status: 200, json: async () => ({}) }; };
+  const api = createApiClient(6, { 'access-token': 'AT' }, fakeFetch);
+  await api.createContactInbox(42, { inbox_id: 7, source_id: '972501234567' });
+  assert.equal(calls[0].url, '/api/v1/accounts/6/contacts/42/contact_inboxes');
+  assert.equal(calls[0].opts.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].opts.body), { inbox_id: 7, source_id: '972501234567' });
+});
