@@ -130,7 +130,19 @@ function loadXlsx(assetBase) {
 export function openWizard({ accountId, authHeaders, assetBase }) {
   injectStyles();
   const api = createApiClient(accountId, authHeaders);
-  const state = { table: null, mapping: [], customMap: [], labelTitle: '', labelNeedsCreation: false };
+  const state = { table: null, mapping: [], customMap: [], labelTitle: '', labelNeedsCreation: false, waInboxId: null };
+
+  // Resolve the WhatsApp inbox once, up front: every imported contact is linked to it
+  // so Chatwoot opens future conversations on the IMPORTED contact (real name) instead
+  // of auto-creating a nameless twin. Fire-and-forget — it settles long before the user
+  // reaches step 5, and a missing inbox or a failed lookup simply skips linking.
+  api.listInboxes()
+    .then((r) => {
+      const list = r?.payload || r || [];
+      const wa = list.find((i) => /whatsapp/i.test(i?.channel_type || ''));
+      state.waInboxId = wa?.id || null;
+    })
+    .catch(() => { /* no inbox list — the import still runs, just without linking */ });
 
   // FIX 1: native <dialog> opened with showModal() — goes to browser top layer,
   // above any Chatwoot native dialog.
@@ -790,7 +802,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       showError(t('alreadyRunning'));
       return;
     }
-    const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle });
+    const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
     window.__cwImportJob = job;
     mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
     close();
