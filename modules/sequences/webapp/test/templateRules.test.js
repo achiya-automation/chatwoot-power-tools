@@ -386,3 +386,21 @@ test('validate: carousel card with more than 2 buttons is rejected (CAROUSEL_CAR
     ] } };
   assert.ok(validateTemplate(t).some((e) => e.field === 'carousel'));
 });
+
+// ---------------------------------------------------------------------------
+// Final review wave: deserializeButton's default case left VOICE_CALL's
+// ttl_minutes in snake_case instead of mapping it to ttlMinutes (the shape
+// serializeButton reads back), so editing an existing VOICE_CALL template
+// silently dropped its TTL on save.
+// ---------------------------------------------------------------------------
+
+test('deserialize: VOICE_CALL button maps ttl_minutes back to ttlMinutes (round-trip)', () => {
+  const g = { name: 'call_rt', language: 'he', category: 'MARKETING', components: [
+    { type: 'BODY', text: 'Ready?' },
+    { type: 'BUTTONS', buttons: [{ type: 'VOICE_CALL', text: 'Call us', ttl_minutes: 1440 }] },
+  ] };
+  const ui = deserializeTemplate(g);
+  assert.equal(ui.buttons[0].ttlMinutes, 1440);
+  const btns = serializeTemplate(ui).components.find((c) => c.type === 'BUTTONS').buttons;
+  assert.deepEqual(btns[0], { type: 'VOICE_CALL', text: 'Call us', ttl_minutes: 1440 });
+});

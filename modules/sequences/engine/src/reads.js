@@ -56,7 +56,10 @@ export function makeDbReads(query) {
           WHERE i.id = $1`,
         [inboxId]
       );
-      return rows.flatMap((r) => r.message_templates || []);
+      // production default for this column is '{}'::jsonb (an object, not an array) on a
+      // never-synced channel — flatMap((r) => r.message_templates || []) would inject that
+      // spurious {} into the result instead of contributing zero templates.
+      return rows.flatMap((r) => (Array.isArray(r.message_templates) ? r.message_templates : []));
     },
 
     // Current custom_attributes of a conversation — so patchAttrs can MERGE (the POST

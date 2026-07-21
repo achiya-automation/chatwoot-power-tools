@@ -639,12 +639,17 @@ function deserializeButton(b) {
       return { type: 'URL', text: b.text, url: b.url, urlExample: b.example?.[0] || '' };
     case 'PHONE_NUMBER':
       return { type: 'PHONE_NUMBER', text: b.text, phone: b.phone_number };
+    case 'VOICE_CALL':
+      // matches the shape serializeButton reads back (b.ttlMinutes); the default
+      // case previously left this as snake_case ttl_minutes, so editing an
+      // existing VOICE_CALL template silently dropped its TTL on save.
+      return { type: 'VOICE_CALL', text: b.text, ttlMinutes: b.ttl_minutes ?? null };
     case 'COPY_CODE':
       return { type: 'COPY_CODE', code: b.example || '' };
     case 'FLOW':
       return { type: 'FLOW', text: b.text, flowId: b.flow_id || '' };
     default:
-      return { ...b }; // QUICK_REPLY, VOICE_CALL, CATALOG, MPM already round-trip as-is
+      return { ...b }; // QUICK_REPLY, CATALOG, MPM already round-trip as-is
   }
 }
 
