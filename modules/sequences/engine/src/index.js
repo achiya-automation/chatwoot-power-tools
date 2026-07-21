@@ -7,6 +7,7 @@ import { refreshHealth } from './meta.js';
 import { notifyNewLeads } from './notify.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
+import { pollTemplateStatuses } from './templates.js';
 import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
 import * as compliance from './compliance.js';
 
@@ -202,6 +203,9 @@ async function tick() {
       }
     }
   }
+
+  // Template Studio: refresh pending template statuses (read-only; see templates.js)
+  try { await pollTemplateStatuses(); } catch (e) { console.error('[tpl] poll error:', e.message); }
 }
 
 setInterval(() => tick().catch((e) => console.error('[drip] tick error:', e.message)),

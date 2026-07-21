@@ -93,6 +93,14 @@ Adds a "Sequences" item to the main sidebar, upgrades Chatwoot's native WhatsApp
 <tr><td><img src="docs/screenshots/campaign-en.png" alt="Enhanced campaign modal — English"></td><td><img src="docs/screenshots/campaign-he.png" alt="Enhanced campaign modal — Hebrew"></td></tr>
 </table>
 
+### 🗂️ Template Studio
+Create, submit, and manage WhatsApp message templates without leaving Chatwoot — track each template's Meta approval status and quality rating, and edit with a full builder that has a live WhatsApp-style preview, carousel cards, authentication (OTP) templates, Limited-Time Offers, and every button type including phone, URL, coupon codes and WhatsApp Flow forms. Approved templates sync instantly into Chatwoot's native template picker, and the screen is restricted to account admins.
+
+<table>
+<tr><td width="50%" align="center"><b>🇬🇧 English</b></td><td width="50%" align="center"><b>🇮🇱 עברית</b></td></tr>
+<tr><td><img src="docs/screenshots/templates-en.png" alt="Template Studio — English"></td><td><img src="docs/screenshots/templates-he.png" alt="Template Studio — Hebrew"></td></tr>
+</table>
+
 ---
 
 ## Quick Start
