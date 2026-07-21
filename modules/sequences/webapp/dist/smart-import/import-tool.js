@@ -383,10 +383,10 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 `;
 
   // ui/wizard.js
-  var DRIP_LOCALE = function() {
+  var DRIP_LOCALE = (function() {
     const a = document.querySelector("#app[dir]");
     return (a || document.documentElement).getAttribute("dir") === "rtl" ? "he" : "en";
-  }();
+  })();
   var I18N = {
     he: {
       // system-field labels (mapping dropdown)
