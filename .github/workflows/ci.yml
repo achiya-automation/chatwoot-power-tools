@@ -51,8 +51,12 @@ jobs:
             id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int);
           CREATE TABLE IF NOT EXISTS public.contact_inboxes (
             id int PRIMARY KEY, contact_id int, inbox_id int, source_id text);
+          -- provider_config חייב להופיע כאן: migration 025 קוראת cw.provider_config.
+          -- ה-scaffold הזה רץ ראשון, ו-CREATE TABLE IF NOT EXISTS ב-test/helpers.js
+          -- וב-test/reads.test.js הופך ל-no-op — כלומר הצורה נקבעת כאן בלבד.
           CREATE TABLE IF NOT EXISTS public.channel_whatsapp (
-            id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb);
+            id int PRIMARY KEY, message_templates jsonb DEFAULT '[]'::jsonb,
+            provider_config jsonb DEFAULT '{}'::jsonb);
           CREATE TABLE IF NOT EXISTS public.accounts (id int PRIMARY KEY, name text);
           CREATE TABLE IF NOT EXISTS public.campaigns (
             id int PRIMARY KEY, display_id int, account_id int, inbox_id int,
@@ -100,9 +104,15 @@ jobs:
       - name: Install smart-import dependencies (postbuild merge)
         working-directory: modules/smart-import
         run: npm ci
+      # BUILD_ID נופל חזרה על שעון הקיר (vite.config.js), כך שבנייה לא מקובעת משנה את
+      # שם כל נכס ב-dist וה-diff שלמטה לא יכול לעבור לעולם. מקבעים למזהה שכבר צרוב
+      # ב-dist המקומם, כך שהשער משווה תוכן — וזה מה שהוא באמת בודק.
       - name: Build (dist freshness gate)
         working-directory: modules/sequences/webapp
-        run: npm run build
+        run: |
+          BUILD_ID="$(ls dist/assets | grep -oE '[0-9]{14}' | head -1)"
+          test -n "$BUILD_ID" || { echo "::error::לא נמצא build id ב-dist/assets המקומם"; exit 1; }
+          VITE_BUILD_ID="$BUILD_ID" npm run build
       - name: Verify committed dist matches src
         run: |
           git diff --exit-code -- modules/sequences/webapp/dist
