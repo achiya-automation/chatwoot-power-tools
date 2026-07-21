@@ -105,7 +105,7 @@ const M = {
     ltoLabel: 'מבצע מוגבל בזמן (LTO)', ltoHint: 'זמין רק בקטגוריית שיווק',
     ltoTextLabel: 'טקסט ההצעה', ltoHasExpirationLabel: 'עם ספירה לאחור בוואטסאפ',
 
-    otpTypeLabel: 'סוג קוד האימות', otp_copy_code: 'העתקת קוד', otp_one_tap: 'אימות בלחיצה אחת', otp_zero_tap: 'אימות אוטומטי',
+    otpTypeLabel: 'סוג קוד האימות', otp_copy_code: 'העתקת קוד',
     securityRecommendationLabel: 'הוספת שורת אבטחה ("אין לשתף קוד זה")',
     expirationMinutesLabel: 'תפוגת הקוד (דקות)', expirationMinutesHint: 'בין 1 ל-90 דקות',
 
@@ -158,7 +158,7 @@ const M = {
     ltoLabel: 'Limited-Time Offer (LTO)', ltoHint: 'Only available for the Marketing category',
     ltoTextLabel: 'Offer text', ltoHasExpirationLabel: 'With a WhatsApp countdown',
 
-    otpTypeLabel: 'Verification code type', otp_copy_code: 'Copy code', otp_one_tap: 'One-tap autofill', otp_zero_tap: 'Zero-tap autofill',
+    otpTypeLabel: 'Verification code type', otp_copy_code: 'Copy code',
     securityRecommendationLabel: 'Add a security line ("do not share this code")',
     expirationMinutesLabel: 'Code expiration (minutes)', expirationMinutesHint: 'Between 1 and 90 minutes',
 
@@ -824,7 +824,10 @@ function LtoSection({ tpl, dispatch, t }) {
   );
 }
 
-const OTP_TYPES = ['copy_code', 'one_tap', 'zero_tap'];
+// one_tap/zero_tap need Android package_name+signature_hash collection that
+// serializeAuthComponents doesn't emit yet — Meta rejects them without it.
+// Add those fields (and re-add the types here) when a client needs OTP autofill.
+const OTP_TYPES = ['copy_code'];
 
 function AuthSection({ tpl, dispatch, t }) {
   const auth = tpl.auth || {};
