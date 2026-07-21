@@ -15,7 +15,7 @@
  * ב-jsdom על שלד DOM בצורת Chatwoot, ודורשת שהכפתורים באמת ייווצרו. כל שגיאה שנזרקת בתוך
  * ה-IIFE נאספת (window error) ומכשילה — כישלון שקט הוא בדיוק מה שהחמצנו.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -41,11 +41,21 @@ function scriptBodies(html) {
 // Vue טרם רינדר, ולכן #app[dir]="rtl" עוד לא קיים. renderPage() הוא זה שיוצר אותו, בדיוק כמו
 // שקורה בדפדפן (Chatwoot מרנדר #app פנימי, עם dir, בתוך ה-#app שהוא נקודת ההרכבה של Vue).
 // fixture שמגדיר dir מראש מחביא באג אמיתי: כל תרגום שמחושב בזמן טעינה ננעל על אנגלית.
+// this bundle includes the sequences module, whose templates-nav.js runs a self-healing
+// setInterval (highlight sync) — a real timer that outlives the test unless the window is
+// closed explicitly. jsdom does not tear this down on its own (unlike a real browser tab
+// closing); window.close() is jsdom's own documented way to stop pending timers.
+const OPEN_WINDOWS = [];
+after(() => {
+  for (const w of OPEN_WINDOWS) { try { w.close(); } catch (e) {} }
+});
+
 function makeDom(path) {
   const dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', {
     url: `https://chatwoot.test${path}`,
     runScripts: 'outside-only',
   });
+  OPEN_WINDOWS.push(dom.window);
   const errors = [];
   dom.window.addEventListener('error', (e) => errors.push(e.message));
   // campaign-stats מושך סטטיסטיקות; import-button לא נוגע ברשת עד שלוחצים.

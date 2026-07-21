@@ -59,6 +59,13 @@ test('loadTemplates returns [] for an account with no WhatsApp inbox', async () 
   assert.deepEqual(await reads.loadTemplates(999), []);
 });
 
+test('loadTemplates returns [] for a never-synced channel (message_templates is the {} column default, not an array)', async () => {
+  await query(`INSERT INTO public.channel_whatsapp(id, message_templates) VALUES (16, '{}'::jsonb)`);
+  await query(`INSERT INTO public.inboxes(id, account_id, name, channel_type, channel_id) VALUES (36, 17, 'WA', 'Channel::Whatsapp', 16)`);
+  const t = await reads.loadTemplates(17);
+  assert.deepEqual(t, [], 'a {} default must contribute zero templates, not [{}]');
+});
+
 // ── getContact: contact behind a conversation, by display_id ──
 test('getContact resolves the conversation contact name/phone', async () => {
   await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (50, 7, 'דנה', '+97250')`);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runImport } from '../lib/importRunner.js';
+import { runImport, createImportJob } from '../lib/importRunner.js';
 
 function fakeApi(overrides = {}) {
   return {
@@ -180,4 +180,135 @@ test('precomputed __match: null creates without calling filterContacts', async (
   assert.ok(created);
   assert.equal(log.summary().created, 1);
   assert.equal(log.summary().updated, 0);
+});
+
+// ── Concurrency / backoff / cancel / dup-tail ────────────────────────────────
+
+const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('runs the pool concurrently, capped at the concurrency limit', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const api = fakeApi({
+    createContact: async (c) => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await tick(5);
+      inFlight--;
+      return { id: 100, ...c };
+    },
+  });
+  const contacts = Array.from({ length: 12 }, (_, i) => ({
+    name: `c${i}`, phone_number: `+9725${i}`, __row: i + 2, __match: null,
+  }));
+  const log = await runImport({ contacts, api, concurrency: 4 });
+  assert.equal(log.summary().created, 12);
+  assert.equal(peak, 4); // all 4 workers claim a row in the same tick
+});
+
+test('429 pauses on the shared cooldown and retries the request', async () => {
+  let calls = 0;
+  const api = fakeApi({
+    createContact: async (c) => {
+      calls++;
+      if (calls === 1) { const e = new Error('throttled'); e.status = 429; throw e; }
+      return { id: 9, ...c };
+    },
+  });
+  const log = await runImport({
+    contacts: [{ name: 'x', phone_number: '+97250', __row: 2, __match: null }],
+    api, sleep: async () => {},
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(log.summary(), { created: 1, updated: 0, skipped: 0, failed: 0, total: 1 });
+});
+
+test('non-429 errors are not retried', async () => {
+  let calls = 0;
+  const api = fakeApi({
+    createContact: async () => { calls++; const e = new Error('nope'); e.status = 422; e.body = 'invalid'; throw e; },
+  });
+  const log = await runImport({
+    contacts: [{ name: 'x', phone_number: '+97250', __row: 2, __match: null }],
+    api, sleep: async () => {},
+  });
+  assert.equal(calls, 1);
+  assert.equal(log.summary().failed, 1);
+});
+
+test('cancel stops claiming new rows; finished rows stay logged', async () => {
+  let cancelled = false;
+  const api = fakeApi({
+    createContact: async (c) => { cancelled = true; return { id: 100, ...c }; },
+  });
+  const contacts = Array.from({ length: 10 }, (_, i) => ({
+    name: `c${i}`, phone_number: `+9725${i}`, __row: i + 2, __match: null,
+  }));
+  const log = await runImport({ contacts, api, concurrency: 1, isCancelled: () => cancelled });
+  assert.equal(log.rows.length, 1);
+  assert.equal(log.summary().created, 1);
+});
+
+test('__dupTail rows run serially after the pool with a fresh filter', async () => {
+  const order = [];
+  const api = fakeApi({
+    filterContacts: async () => { order.push('filter'); return { payload: [{ id: 42, phone_number: '+97250' }] }; },
+    createContact: async (c) => { order.push('create'); return { id: 42, ...c }; },
+    updateContact: async (id) => { order.push(`update:${id}`); return { id }; },
+  });
+  const log = await runImport({
+    contacts: [
+      { name: 'א', phone_number: '+97250', __row: 2, __match: null },
+      { name: 'ב', phone_number: '+97250', __row: 3, __dupTail: true },
+    ],
+    api,
+  });
+  assert.deepEqual(order, ['create', 'filter', 'update:42']);
+  assert.equal(log.summary().created, 1);
+  assert.equal(log.summary().updated, 1);
+});
+
+test('createImportJob: live progress, summary counts, done state', async () => {
+  const api = fakeApi();
+  const job = createImportJob({
+    contacts: [
+      { name: 'א', phone_number: '+97250', __row: 2, __match: null },
+      { name: 'ב', phone_number: '+97251', __row: 3, __match: { id: 7 } },
+    ],
+    api,
+  });
+  const states = [];
+  job.onUpdate((p) => states.push({ done: p.done, state: p.state }));
+  const log = await job.promise;
+  assert.equal(job.progress.state, 'done');
+  assert.equal(job.progress.created, 1);
+  assert.equal(job.progress.updated, 1);
+  assert.equal(job.progress.done, 2);
+  assert.equal(log, job.log);
+  assert.equal(states[states.length - 1].state, 'done');
+});
+
+test('createImportJob: cancel mid-run ends in cancelled state with partial counts', async () => {
+  const api = fakeApi({
+    createContact: async (c) => { await tick(2); return { id: 100, ...c }; },
+  });
+  const contacts = Array.from({ length: 6 }, (_, i) => ({
+    name: `c${i}`, phone_number: `+9725${i}`, __row: i + 2, __match: null,
+  }));
+  const job = createImportJob({ contacts, api, concurrency: 1 });
+  const un = job.onUpdate(() => { job.cancel(); un(); }); // cancel on the first progress event
+  await job.promise;
+  assert.equal(job.progress.state, 'cancelled');
+  assert.ok(job.progress.done >= 1 && job.progress.done < 6, `done=${job.progress.done}`);
+  assert.equal(job.log.rows.length, job.progress.done);
+});
+
+test('createImportJob: a listener that throws does not break the job', async () => {
+  const job = createImportJob({
+    contacts: [{ name: 'א', phone_number: '+97250', __row: 2, __match: null }],
+    api: fakeApi(),
+  });
+  job.onUpdate(() => { throw new Error('bad listener'); });
+  await job.promise;
+  assert.equal(job.progress.state, 'done');
+  assert.equal(job.progress.created, 1);
 });

@@ -145,6 +145,136 @@ const PROJECTED = [
   { step_order: 4, send_at: '2026-06-29 10:00' },
 ];
 
+// ---------------------------------------------------------------------------
+// Template Studio (tpl_list / tpl_create / tpl_edit / tpl_delete / tpl_flows).
+// Templates are Graph-API-shaped (components array) — this is exactly what
+// TemplatesView renders directly and what deserializeTemplate() (templateRules.js)
+// expects as input, so opening any of these in the Builder round-trips cleanly.
+// One WABA, 2 inboxes, 6 templates spanning every status/quality/component shape.
+// ---------------------------------------------------------------------------
+
+const TPL_FLOWS = [
+  { id: '1', name: 'טופס לידים', status: 'PUBLISHED' },
+];
+
+const TPL_TEMPLATES = [
+  // APPROVED marketing, image header, two buttons (URL + PHONE_NUMBER), GREEN quality.
+  {
+    id: '1001',
+    name: 'summer_launch_promo',
+    language: 'he',
+    category: 'MARKETING',
+    status: 'APPROVED',
+    quality_score: { score: 'GREEN' },
+    last_updated_time: '2026-07-15T09:30:00+0000',
+    components: [
+      { type: 'HEADER', format: 'IMAGE', example: { header_handle: ['mock_header_handle_summer'] } },
+      { type: 'BODY', text: 'היי {{1}}! 🎉 השקנו מבצע קיץ מיוחד — 20% הנחה על הקמת אוטומציה חדשה עד סוף החודש.', example: { body_text: [['דנה']] } },
+      { type: 'FOOTER', text: 'העסק שלי' },
+      { type: 'BUTTONS', buttons: [
+        { type: 'URL', text: 'לקביעת פגישה', url: 'https://example.com/book' },
+        { type: 'PHONE_NUMBER', text: 'התקשרו עכשיו', phone_number: '+972500000000' },
+      ] },
+    ],
+  },
+  // PENDING utility, no quality data yet (not scored until approved).
+  {
+    id: '1002',
+    name: 'appointment_reminder_24h',
+    language: 'he',
+    category: 'UTILITY',
+    status: 'PENDING',
+    last_updated_time: '2026-07-19T14:00:00+0000',
+    components: [
+      { type: 'BODY', text: 'תזכורת ידידותית: הפגישה שלכם עם העסק שלי מתוכננת מחר בשעה {{1}}. נשמח לראותכם!', example: { body_text: [['10:00']] } },
+    ],
+  },
+  // REJECTED — exercises the expandable rejected_reason row.
+  {
+    id: '1003',
+    name: 'weekend_flash_deal',
+    language: 'he',
+    category: 'MARKETING',
+    status: 'REJECTED',
+    rejected_reason: 'Invalid content: promotional message does not comply with WhatsApp Business Messaging Policy (Abusive Content: excessive urgency/pressure tactics).',
+    last_updated_time: '2026-07-12T11:00:00+0000',
+    components: [
+      { type: 'BODY', text: 'רק היום {{1}}! מבצע בזק ל-6 שעות בלבד — אל תפספסו 🔥', example: { body_text: [['דנה']] } },
+    ],
+  },
+  // PAUSED — commonly caused by quality dropping to RED, modeled that way here.
+  {
+    id: '1004',
+    name: 'winback_quiet_leads',
+    language: 'he',
+    category: 'MARKETING',
+    status: 'PAUSED',
+    quality_score: { score: 'RED' },
+    last_updated_time: '2026-07-10T08:00:00+0000',
+    components: [
+      { type: 'BODY', text: 'עדיין כאן בשבילכם {{1}} — רוצים לחדש את השיחה עם העסק שלי?', example: { body_text: [['דנה']] } },
+      { type: 'FOOTER', text: 'ניתן להשיב STOP להסרה' },
+    ],
+  },
+  // AUTHENTICATION — fixed OTP component shape (serializeAuthComponents in templateRules.js).
+  {
+    id: '1005',
+    name: 'login_verification_code',
+    language: 'he',
+    category: 'AUTHENTICATION',
+    status: 'APPROVED',
+    quality_score: { score: 'YELLOW' },
+    last_updated_time: '2026-07-05T12:00:00+0000',
+    components: [
+      { type: 'BODY', add_security_recommendation: true },
+      { type: 'FOOTER', code_expiration_minutes: 10 },
+      { type: 'BUTTONS', buttons: [{ type: 'OTP', otp_type: 'copy_code' }] },
+    ],
+  },
+  // CAROUSEL — 2 cards, top-level components are [BODY, CAROUSEL] only (no top-level
+  // header/footer/buttons — see templateRules.js validateTemplate's carousel branch).
+  {
+    id: '1006',
+    name: 'services_showcase',
+    language: 'he',
+    category: 'MARKETING',
+    status: 'APPROVED',
+    quality_score: { score: 'GREEN' },
+    last_updated_time: '2026-07-18T11:00:00+0000',
+    components: [
+      { type: 'BODY', text: 'הצצה למה שהעסק שלי בונה לכם {{1}} 👇', example: { body_text: [['דנה']] } },
+      { type: 'CAROUSEL', cards: [
+        {
+          components: [
+            { type: 'HEADER', format: 'IMAGE', example: { header_handle: ['mock_header_handle_card1'] } },
+            { type: 'BODY', text: 'אוטומציית וואטסאפ מקצה לקצה — בלי קוד.' },
+            { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'ספרו לי עוד' }] },
+          ],
+        },
+        {
+          components: [
+            { type: 'HEADER', format: 'IMAGE', example: { header_handle: ['mock_header_handle_card2'] } },
+            { type: 'BODY', text: 'ניהול תבניות מלא, ישר מתוך Chatwoot.' },
+            { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'לפרטים נוספים', url: 'https://example.com/templates' }] },
+          ],
+        },
+      ] },
+    ],
+  },
+];
+
+const TPL_WABAS = [
+  {
+    wabaId: '109876543210987',
+    inboxes: [
+      { inboxId: 501, name: 'העסק שלי — תמיכה', phone: '+972501234567' },
+      { inboxId: 502, name: 'העסק שלי — מכירות', phone: '+972501234568' },
+    ],
+    capabilities: { mediaUpload: true, flows: true },
+    templates: TPL_TEMPLATES,
+  },
+];
+
 function dataFor(action) {
   switch (action) {
     case 'list': return SEQUENCES;
@@ -158,6 +288,11 @@ function dataFor(action) {
     case 'bulk_enroll': return { count: 89, total: 89, label: 'מכירות', sequence: 'seq_welcome' };
     case 'save': return SEQUENCES[0];
     case 'delete': return null;
+    case 'tpl_list': return { wabas: TPL_WABAS };
+    case 'tpl_create': return { id: 'tpl_mock_new' };
+    case 'tpl_edit': return { ok: true };
+    case 'tpl_delete': return null;
+    case 'tpl_flows': return TPL_FLOWS;
     default: return null;
   }
 }

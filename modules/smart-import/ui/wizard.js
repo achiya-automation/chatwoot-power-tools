@@ -1,9 +1,9 @@
 import { readFileToTable } from '../lib/xlsxReader.js';
 import { detectColumns, SYSTEM_FIELDS } from '../lib/columnDetector.js';
 import { buildContactPayload } from '../lib/fieldMapper.js';
-import { runImport } from '../lib/importRunner.js';
+import { createImportJob } from '../lib/importRunner.js';
 import { createApiClient } from '../lib/apiClient.js';
-import { buildFilterPayload, pickMatch } from '../lib/dedup.js';
+import { batchDedup } from '../lib/dedup.js';
 import { vendorUrl } from '../lib/basepath.js';
 import { isValidLabelTitle, normalizeLabelTitle } from '../lib/labelTitle.js';
 import { STYLES } from './styles.js';
@@ -51,6 +51,14 @@ const I18N = {
     importing: 'מייבא…', importDone: 'הייבוא הושלם',
     createdWord: 'נוצרו', updatedWord: 'עודכנו', skippedWord: 'דולגו', failedWord: 'נכשלו',
     downloadReport: 'הורד דוח CSV', close: 'סגור',
+    // background pill
+    bgImporting: 'מייבא אנשי קשר ברקע…', bgCancelling: 'עוצר…',
+    bgCancelled: 'הייבוא הופסק', bgError: 'הייבוא נעצר עקב שגיאה',
+    stopImport: 'עצירת הייבוא',
+    bgHint: 'אפשר להמשיך לעבוד בינתיים — רק אל תסגרו את הטאב עד לסיום',
+    dupInFile: 'כפולים בקובץ (ימוזגו)',
+    alreadyRunning: 'ייבוא קודם עדיין רץ ברקע — המתינו לסיומו',
+    dedupFailed: 'בדיקת הכפילויות נכשלה — הכפילויות ייבדקו שוב במהלך הייבוא',
     // footer
     back: 'חזרה', continue: 'המשך',
     // preview table headers
@@ -83,6 +91,13 @@ const I18N = {
     importing: 'Importing…', importDone: 'Import complete',
     createdWord: 'Created', updatedWord: 'Updated', skippedWord: 'Skipped', failedWord: 'Failed',
     downloadReport: 'Download CSV report', close: 'Close',
+    bgImporting: 'Importing contacts in the background…', bgCancelling: 'Stopping…',
+    bgCancelled: 'Import stopped', bgError: 'Import stopped due to an error',
+    stopImport: 'Stop import',
+    bgHint: 'You can keep working — just don\'t close this tab until it finishes',
+    dupInFile: 'duplicates in file (will be merged)',
+    alreadyRunning: 'A previous import is still running in the background — wait for it to finish',
+    dedupFailed: 'Duplicate check failed — duplicates will be re-checked during the import',
     back: 'Back', continue: 'Continue',
     thName: 'Name', thPhone: 'Phone', thEmail: 'Email', thCompany: 'Company',
   },
@@ -715,26 +730,27 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     state.contacts = contacts;
     const N = contacts.length;
 
-    // Full dedup — run now so runImport can skip the filter calls
-    for (let i = 0; i < N; i++) {
-      status.textContent = `${t('checkingDupes')} ${i + 1}/${N}`;
-      const c = contacts[i];
-      try {
-        const fp = buildFilterPayload(c);
-        if (fp) {
-          const res = await api.filterContacts(fp);
-          c.__match = pickMatch(res?.payload || [], c);
-        } else {
-          c.__match = null;
-        }
-      } catch {
-        c.__match = null;
-      }
+    // Full dedup — batched OR-filter calls (a handful of requests instead of one
+    // per row) so runImport can skip per-row filters and the preview shows fast.
+    let dedupOk = true;
+    try {
+      await batchDedup(contacts, api, (d, tot) => {
+        status.textContent = `${t('checkingDupes')} ${d}/${tot}`;
+      });
+    } catch {
+      // Partial batch state is unreliable — clear it; the runner falls back to a
+      // fresh per-row filter for every row during the import itself.
+      dedupOk = false;
+      contacts.forEach((c) => { delete c.__match; delete c.__dupTail; });
     }
 
+    const dupes = contacts.filter((c) => c.__dupTail).length;
     const existing = contacts.filter((c) => c.__match).length;
-    const created = N - existing;
-    status.textContent = `${t('readyToImport')} ${N} · ${created} ${t('newWord')} · ${existing} ${t('existingWillUpdate')}`;
+    const created = N - existing - dupes;
+    status.textContent = dedupOk
+      ? `${t('readyToImport')} ${N} · ${created} ${t('newWord')} · ${existing} ${t('existingWillUpdate')}` +
+        (dupes ? ` · ${dupes} ${t('dupInFile')}` : '')
+      : t('dedupFailed');
 
     modal.append(
       previewTable(contacts.slice(0, 10)),
@@ -764,48 +780,20 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     state.labelNeedsCreation = false;
   }
 
-  // ── Step 5 — Run + Done ──────────────────────────────────────────────────────
-  async function stepRun() {
-    modal.replaceChildren();
-    modal.appendChild(header(t('importing'), ''));
-
-    const track = el('div', 'h-2 w-full rounded-full bg-n-alpha-2 overflow-hidden');
-    const fill = el('div', 'cwi-prog-fill'); fill.style.width = '0%';
-    track.appendChild(fill);
-    const label = el('div', 'text-sm text-n-slate-11');
-    modal.append(track, label);
-
-    const log = await runImport({
-      contacts: state.contacts,
-      api,
-      labelTitle: state.labelTitle,
-      onProgress: (d, t) => {
-        fill.style.width = (d / t * 100) + '%';
-        label.textContent = `${d}/${t}`;
-      },
-    });
-    stepDone(log);
-  }
-
-  function stepDone(log) {
-    modal.replaceChildren();
-    modal.appendChild(header(t('importDone'), ''));
-    const s = log.summary();
-    const summary = el('div', 'text-sm text-n-slate-12');
-    summary.textContent = `${t('createdWord')} ${s.created} · ${t('updatedWord')} ${s.updated} · ${t('skippedWord')} ${s.skipped} · ${t('failedWord')} ${s.failed}`;
-    modal.appendChild(summary);
-
-    const dlBtn = btn('primary'); dlBtn.className += ' w-full';
-    dlBtn.textContent = t('downloadReport');
-    dlBtn.addEventListener('click', () => downloadCsv(log.toCsv(), 'import-log.csv'));
-
-    const closeBtn = btn('ghost'); closeBtn.className += ' w-full';
-    closeBtn.textContent = t('close');
-    closeBtn.addEventListener('click', close);
-
-    const bar = el('div', 'flex items-center justify-between w-full gap-3');
-    bar.append(closeBtn, dlBtn);
-    modal.appendChild(bar);
+  // ── Step 5 — Run in the background ───────────────────────────────────────────
+  // Starting the import closes the dialog and hands the job to a floating pill:
+  // the user keeps working in Chatwoot while it runs (SPA navigation is safe —
+  // the job lives on window and the pill on <body>). Closing the tab mid-run is
+  // guarded by beforeunload inside mountPill.
+  function stepRun() {
+    if (window.__cwImportJob && ['running', 'cancelling'].includes(window.__cwImportJob.progress.state)) {
+      showError(t('alreadyRunning'));
+      return;
+    }
+    const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle });
+    window.__cwImportJob = job;
+    mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
+    close();
   }
 
   // ── DOM helpers ──────────────────────────────────────────────────────────────
@@ -868,6 +856,87 @@ function injectStyles() {
   s.id = 'cwi-styles';
   s.textContent = STYLES;
   document.head.appendChild(s);
+}
+
+// ── Background progress pill ─────────────────────────────────────────────────
+// Floating status card (bottom corner of the page, on <body>) that tracks a
+// running import job after the wizard dialog closed. Survives Chatwoot's SPA
+// route changes; while the job runs, a beforeunload guard warns against closing
+// the tab (the import runs in the page — closing the tab stops it).
+function mountPill(job, { dark, rtl }) {
+  injectStyles();
+  document.getElementById('cwi-pill')?.remove();
+
+  const pill = el('div', 'cwi-pill flex flex-col gap-2 p-4 rounded-xl shadow-lg border border-n-strong bg-n-solid-1');
+  pill.id = 'cwi-pill';
+  if (dark) pill.classList.add('dark');
+  pill.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+
+  const head = el('div', 'flex items-center justify-between gap-3');
+  const title = el('span', 'text-sm font-medium text-n-slate-12');
+  const xBtn = el('button', BTN_BASE + ' text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-6 w-6 p-0 shrink-0 cursor-pointer');
+  xBtn.appendChild(icon('x', 'size-4'));
+  head.append(title, xBtn);
+
+  const track = el('div', 'h-1.5 w-full rounded-full bg-n-alpha-2 overflow-hidden');
+  const fill = el('div', 'cwi-prog-fill');
+  fill.style.width = '0%';
+  track.appendChild(fill);
+
+  const detail = el('div', 'text-xs text-n-slate-11');
+  const hint = elWithText('div', 'text-xs text-n-slate-11', t('bgHint'));
+  const actions = el('div', 'flex items-center gap-2');
+  actions.style.display = 'none';
+  pill.append(head, track, detail, hint, actions);
+  document.body.appendChild(pill);
+
+  function warnUnload(e) { e.preventDefault(); e.returnValue = ''; }
+  window.addEventListener('beforeunload', warnUnload);
+
+  function dismiss() {
+    off();
+    window.removeEventListener('beforeunload', warnUnload);
+    pill.remove();
+    if (window.__cwImportJob === job) window.__cwImportJob = null;
+  }
+
+  // While running the X stops the import (finished rows stay; a re-run merges
+  // them safely thanks to dedup). Once finished it just dismisses the pill.
+  xBtn.addEventListener('click', () => {
+    const st = job.progress.state;
+    if (st === 'running') job.cancel();
+    else if (st !== 'cancelling') dismiss();
+  });
+
+  function render(p) {
+    fill.style.width = (p.total ? Math.round((p.done / p.total) * 100) : 100) + '%';
+    const counts = `${t('createdWord')} ${p.created} · ${t('updatedWord')} ${p.updated}` +
+      (p.skipped ? ` · ${t('skippedWord')} ${p.skipped}` : '') +
+      (p.failed ? ` · ${t('failedWord')} ${p.failed}` : '');
+    if (p.state === 'running' || p.state === 'cancelling') {
+      title.textContent = p.state === 'running' ? t('bgImporting') : t('bgCancelling');
+      xBtn.title = t('stopImport');
+      detail.textContent = `${p.done}/${p.total} · ${counts}`;
+      return;
+    }
+    // Finished: done / cancelled / error
+    window.removeEventListener('beforeunload', warnUnload);
+    xBtn.title = t('close');
+    hint.remove();
+    title.textContent = p.state === 'done' ? t('importDone')
+      : p.state === 'cancelled' ? `${t('bgCancelled')} (${p.done}/${p.total})`
+        : t('bgError');
+    detail.textContent = counts;
+    if (job.log && !actions.childElementCount) {
+      actions.style.display = '';
+      const dl = btn('ghost');
+      dl.textContent = t('downloadReport');
+      dl.addEventListener('click', () => downloadCsv(job.log.toCsv(), 'import-log.csv'));
+      actions.appendChild(dl);
+    }
+  }
+  const off = job.onUpdate(render);
+  render(job.progress);
 }
 
 function el(tag, cls) {

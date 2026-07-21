@@ -27,7 +27,9 @@ _cwpt_module_parts() {
       echo "modules/smart-import/inject/import-button.js"
       ;;
     sequences)
-      echo "modules/sequences/inject/sequences-nav.js"
+      printf '%s\n' \
+        "modules/sequences/inject/sequences-nav.js" \
+        "modules/sequences/inject/templates-nav.js"
       ;;
     enhancements)
       printf '%s\n' \

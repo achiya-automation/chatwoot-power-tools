@@ -36,6 +36,16 @@ test('non-ok response throws ApiError with status', async () => {
   await assert.rejects(() => api.createContact({}), (e) => e instanceof ApiError && e.status === 422);
 });
 
+test('filterContacts appends the page param only when given', async () => {
+  const calls = [];
+  const fakeFetch = async (url) => { calls.push(url); return { ok: true, status: 200, json: async () => ({ payload: [] }) }; };
+  const api = createApiClient(6, {}, fakeFetch);
+  await api.filterContacts({ payload: [] });
+  await api.filterContacts({ payload: [] }, 2);
+  assert.equal(calls[0], '/api/v1/accounts/6/contacts/filter');
+  assert.equal(calls[1], '/api/v1/accounts/6/contacts/filter?page=2');
+});
+
 test('listCustomAttributes filters by contact_attribute model', async () => {
   const calls = [];
   const fakeFetch = async (url) => { calls.push(url); return { ok: true, status: 200, json: async () => [] }; };

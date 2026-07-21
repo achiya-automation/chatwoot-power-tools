@@ -80,7 +80,9 @@
   function dripFromUrl() {
     try {
       var t = new URL(location.href).searchParams.get('drip');
-      return TAB_KEYS.indexOf(t) !== -1 ? t : null;
+      // 'templates' isn't in TAB_KEYS (it's not a sequences sub-tab — see show()/expand below),
+      // but it's still a valid panel tab that must survive a refresh, so it's allowed here too.
+      return (TAB_KEYS.indexOf(t) !== -1 || t === 'templates') ? t : null;
     } catch (e) { return null; }
   }
   function urlWithDrip(tab) {
@@ -98,7 +100,7 @@
   function dripFromState() {
     try {
       var cur = history.state && history.state.current;
-      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts|compliance)\b/);
+      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts|compliance|templates)\b/);
       return m ? m[1] : null;
     } catch (e) { return null; }
   }
@@ -152,7 +154,7 @@
     holder.style.display = 'block';
     position();
     markActiveSub(tab);
-    expand(true);
+    if (TAB_KEYS.indexOf(tab) !== -1) expand(true); // templates isn't a sequences sub-tab — don't auto-expand the sub-list
     try { sessionStorage.setItem('drip_open', tab); } catch (e) {}
     // URL sync (deep-link). Only push a new history entry on an actual selection (click); on
     // restore-from-URL (dripFromUrl already matches) skip it — otherwise we'd duplicate
@@ -177,6 +179,7 @@
     }
   }
   window.__cwptSeqHide = hide; // let campaign-stats close this panel before opening its overlay
+  window.__dripShowPanel = show; window.__dripHidePanel = hide; // hook for templates-nav.js (separate part module, same window)
   // expand/collapse the sub-items (the "slider")
   function expand(open) {
     var item = document.getElementById('drip-nav-item'); if (!item) return;

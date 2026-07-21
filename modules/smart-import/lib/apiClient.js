@@ -34,7 +34,9 @@ export function createApiClient(accountId, headers, fetchImpl = fetch) {
     return r.status === 204 ? null : r.json();
   }
   return {
-    filterContacts: (payload) => req('POST', '/contacts/filter', payload),
+    // page: contacts/filter is paginated at 15 results/page (RESULTS_PER_PAGE) —
+    // batchDedup walks the pages of each chunked OR query.
+    filterContacts: (payload, page) => req('POST', '/contacts/filter' + (page ? `?page=${page}` : ''), payload),
     createContact: (c) => req('POST', '/contacts', c),
     updateContact: (id, c) => req('PUT', `/contacts/${id}`, c),
     getContactLabels: (id) => req('GET', `/contacts/${id}/labels`),
