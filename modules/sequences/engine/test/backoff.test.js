@@ -55,6 +55,7 @@ const throwingClient = {
   getContact: async () => ({ name: 'D' }),
   patchAttrs: async () => {},
   incomingSince: async () => false,
+  outgoingByHumanSince: async () => false,
 };
 
 // ── a throwing send backs off (counts the attempt, pushes next_send_at out) ──
