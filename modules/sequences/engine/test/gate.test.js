@@ -32,6 +32,7 @@ function spyClient() {
     getContact: async () => ({ name: 'דנה', phone: '+972541234567' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
 }
 
@@ -174,8 +175,11 @@ test('GATE: a paused template defers every lead using it — nobody is failed', 
   assert.ok(new Date(e.next_send_at) > new Date());
 });
 
-test('GATE: a halted account sends nothing at all', async () => {
+test('GATE: a halted account sends nothing at all (non-fresh lead)', async () => {
   await seed({ consent: true });
+  // מיישנים את הרישום מעבר לחלון fresh_opener_hours (48h) — ליד ישן וקר הוא בדיוק
+  // מה שהעצירה חייבת לחסום. ליד טרי נבדק בטסט הבא, שם המעקף מכוון.
+  await query(`UPDATE drip.enrollments SET enrolled_at = now() - interval '3 days' WHERE account_id = $1`, [ACCT]);
   await query(
     `INSERT INTO drip.account_health(account_id, halted, halt_reason)
      VALUES ($1, true, 'quality RED')`, [ACCT]
@@ -184,6 +188,19 @@ test('GATE: a halted account sends nothing at all', async () => {
   await run(c);
   assert.equal(c.sent.length, 0);
   assert.equal((await enrollment()).status, 'active');
+});
+
+test('GATE: a fresh lead still gets its opener during a halt (fresh-opener bypass)', async () => {
+  // הפיצ'ר (51c7c17): ליד שנרשם ממש עכשיו, step 1, שמעולם לא קיבל הודעה — הפתיחה
+  // שלו עוברת גם בעצירת RED. engagement טרי מסייע להתאוששות; ליד בלי פתיחה בזמן אבוד.
+  await seed({ consent: true });
+  await query(
+    `INSERT INTO drip.account_health(account_id, halted, halt_reason)
+     VALUES ($1, true, 'quality RED')`, [ACCT]
+  );
+  const c = spyClient();
+  await run(c);
+  assert.equal(c.sent.length, 1, 'the opener passes the halt for a genuinely fresh lead');
 });
 
 test('GATE: marketing to a US number is dropped before it costs anything', async () => {

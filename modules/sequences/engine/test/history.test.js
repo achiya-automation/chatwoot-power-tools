@@ -25,6 +25,7 @@ const clientReturning = (content) => ({
   getContact: async () => ({ name: 'L', phone: '050' }),
   patchAttrs: async () => {},
   incomingSince: async () => false,
+  outgoingByHumanSince: async () => false,
 });
 
 test('reconcile records a sent_messages row with template, step and rendered content', async () => {
@@ -74,6 +75,7 @@ test('history is still recorded when the client returns a bare id (no content ob
   );
   // legacy/mock client returning a number — must not crash; logs empty content.
   const client = { sendTemplate: async () => 1, getContact: async () => ({ name: 'L' }), patchAttrs: async () => {}, incomingSince: async () => false };
+  outgoingByHumanSince: async () => false,
   await reconcileAccount(pool, client, 1, new Date());
   const rows = await query(`SELECT content FROM drip.sent_messages WHERE conversation_id=78`);
   assert.equal(rows.length, 1);

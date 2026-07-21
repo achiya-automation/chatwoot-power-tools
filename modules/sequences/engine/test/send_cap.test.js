@@ -45,6 +45,7 @@ function makeClient(calls) {
     getContact: async () => ({ name: 'דנה', phone: '+972500000000' }),
     patchAttrs: async () => {},
     incomingSince: async () => false,
+    outgoingByHumanSince: async () => false,
   };
 }
 
