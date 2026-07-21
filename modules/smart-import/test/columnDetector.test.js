@@ -46,3 +46,23 @@ test('SYSTEM_FIELDS contains exactly expected fields in order', () => {
     'email', 'identifier', 'company_name', 'city', 'country'
   ]);
 });
+
+// Real-world REDACTED format (REDACTED REDACTED): every header carries a
+// "לקוח" filler word, and the ת"ז column holds 9-digit IDs that look like
+// normalizable phone numbers. The header must win so the ID column never
+// steals the phone_number slot from the real cellular column.
+test('insurance export: filler word stripped, ID column not mistaken for phone', () => {
+  const headers = ['שם פרטי לקוח', 'שם משפחה לקוח', 'מספר ת.ז', 'סלולרי לקוח', 'דוא"ל לקוח', 'יישוב'];
+  const rows = [
+    ['REDACTED', 'REDACTED', 'REDACTED', 'REDACTED', 'REDACTED', 'הרצליה'],
+    ['אלון', 'כהן', 'REDACTED', 'REDACTED', 'REDACTED', 'פתח תקווה'],
+  ];
+  const res = detectColumns(headers, rows);
+  const f = (h) => res.find((r) => r.header === h).field;
+  assert.equal(f('שם פרטי לקוח'), 'first_name');
+  assert.equal(f('שם משפחה לקוח'), 'last_name');
+  assert.equal(f('מספר ת.ז'), 'identifier');
+  assert.equal(f('סלולרי לקוח'), 'phone_number');
+  assert.equal(f('דוא"ל לקוח'), 'email');
+  assert.equal(f('יישוב'), 'city');
+});
