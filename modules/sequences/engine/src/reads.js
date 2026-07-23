@@ -88,6 +88,41 @@ export function makeDbReads(query) {
       return rows[0] || {};
     },
 
+    // journeys: current custom_attributes of a CONTACT (merge before PUT).
+    getContactAttrs: async (contactId, accountId) => {
+      const rows = await query(
+        `SELECT custom_attributes
+           FROM public.contacts
+          WHERE account_id = $1 AND id = $2
+          LIMIT 1`,
+        [accountId, contactId]
+      );
+      return rows[0]?.custom_attributes || {};
+    },
+
+    // journeys: current labels of a conversation (POST /labels replaces — we must merge).
+    getConversationLabels: async (conversationId, accountId) => {
+      const rows = await query(
+        `SELECT t.name
+           FROM public.conversations c
+           JOIN public.taggings tg ON tg.taggable_type = 'Conversation'
+                                  AND tg.taggable_id = c.id AND tg.context = 'labels'
+           JOIN public.tags t ON t.id = tg.tag_id
+          WHERE c.account_id = $1 AND c.display_id = $2`,
+        [accountId, conversationId]
+      );
+      return rows.map((r) => r.name);
+    },
+
+    // journeys: channel class of an inbox — decides real buttons vs numbered fallback.
+    getInboxChannelType: async (inboxId) => {
+      const rows = await query(
+        `SELECT channel_type FROM public.inboxes WHERE id = $1 LIMIT 1`,
+        [inboxId]
+      );
+      return rows[0]?.channel_type || '';
+    },
+
     // True if the customer replied (an INCOMING message) after sinceISO (stop_on_reply).
     // Chatwoot stores messages.created_at as naive UTC; compare last_sent_at in that frame.
     incomingSince: async (conversationId, sinceISO, accountId) => {

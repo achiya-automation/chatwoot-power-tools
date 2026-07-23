@@ -209,6 +209,21 @@ _cwpt_write_addons_env() {
   # path sidesteps that entirely.
   _cwpt_upsert_env_var "$env_file" CWPT_BUILD_CONTEXT "${compose_dir}/chatwoot-power-tools/modules/sequences"
   echo "  CWPT_BUILD_CONTEXT=${compose_dir}/chatwoot-power-tools/modules/sequences"
+
+  # Flow Builder (journeys) real-time hook secret — generated once, never rotated by the
+  # installer (rotating would orphan the webhook rows Chatwoot already points at the old
+  # path). The path IS the secret; compose composes the full URL from it.
+  if ! grep -q '^CWPT_JOURNEY_HOOK_SECRET=' "$env_file" 2>/dev/null; then
+    local hook_secret=""
+    hook_secret="$(openssl rand -hex 24 2>/dev/null)" || hook_secret=""
+    if [ -n "$hook_secret" ]; then
+      _cwpt_upsert_env_var "$env_file" CWPT_JOURNEY_HOOK_SECRET "$hook_secret"
+      echo "  CWPT_JOURNEY_HOOK_SECRET=(generated)"
+    else
+      echo "  WARNING: openssl unavailable — CWPT_JOURNEY_HOOK_SECRET not generated;" >&2
+      echo "    journeys will run on the 60s tick scan only (no real-time hook)." >&2
+    fi
+  fi
 }
 
 # _cwpt_find_nginx_conf
