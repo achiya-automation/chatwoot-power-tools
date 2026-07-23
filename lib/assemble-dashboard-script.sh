@@ -29,7 +29,9 @@ _cwpt_module_parts() {
     sequences)
       printf '%s\n' \
         "modules/sequences/inject/sequences-nav.js" \
-        "modules/sequences/inject/templates-nav.js"
+        "modules/sequences/inject/templates-nav.js" \
+        "modules/sequences/inject/journeys-nav.js" \
+        "modules/sequences/inject/journey-launch.js"
       ;;
     enhancements)
       printf '%s\n' \
