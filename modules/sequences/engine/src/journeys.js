@@ -582,10 +582,20 @@ export async function handleJourneysAction(ctx, action, payload, accountId) {
       if (!journey) throw new Error('journey not found');
       const client = await makeClientFor(accountId);
       await prepJourney(query, journey);
+      // הזנקה ידנית מהשיחה שולחת רק display_id — משלימים את איש הקשר מה-DB כדי
+      // שתשובות שנשמרות ל"שדה איש קשר" יידעו לאן ללכת.
+      let contactId = Number(payload.contact_id) || null;
+      if (!contactId) {
+        const c = await query(
+          `SELECT contact_id FROM public.conversations WHERE account_id = $1 AND display_id = $2 LIMIT 1`,
+          [accountId, Number(payload.display_id)]
+        );
+        contactId = c[0]?.contact_id ? Number(c[0].contact_id) : null;
+      }
       const run = await startRun({ ...ctx, client }, journey, {
         accountId,
         displayId: Number(payload.display_id),
-        contactId: Number(payload.contact_id) || null,
+        contactId,
       });
       if (!run) throw new Error('פלואו אחר כבר פעיל בשיחה הזו');
       return { started: true, run_id: run.id };
