@@ -59,5 +59,13 @@ export function loadConfig(env = process.env) {
     // Empty means the ticket door does not exist; everything else keeps working. NEVER give this a
     // default: a guessable value here would let anyone mint a ticket into any account.
     ssoSecret: String(env.DRIP_SSO_SECRET || ''),
+    // בונה פלואו: אירועי זמן-אמת מ-Chatwoot נכנסים ב-POST /drip-api/journey-hook/<secret>.
+    // הסוד הוא חלק מהנתיב (כמו NOTIFY_WEBHOOK_URL: "הנתיב הוא הסוד"). ריק = הדלת לא קיימת
+    // והפלואו עובד רק על סריקת ה-tick (איטי אך תקין). JOURNEY_HOOK_URL הוא הכתובת המלאה
+    // שנרשמת ב-public.webhooks — פנימית לרשת ה-Docker, למשל:
+    //   http://drip-engine:3100/drip-api/journey-hook/<secret>   (achiya)
+    //   http://cwpt-engine:3100/drip-api/journey-hook/<secret>   (התקנות installer)
+    journeyHookSecret: String(env.JOURNEY_HOOK_SECRET || ''),
+    journeyHookUrl: String(env.JOURNEY_HOOK_URL || ''),
   };
 }

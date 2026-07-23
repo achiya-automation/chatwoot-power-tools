@@ -7,6 +7,9 @@ import { authGate } from './auth.js';
 import { query, getPool } from './db.js';
 import { validateWhatsAppMedia, extForMime } from './media.js';
 import { uploadExampleMedia, hasTemplateAccess } from './templates.js';
+import { handleJourneyHook, makeJourneysCtx } from './journeys.js';
+import { makeClient } from './chatwoot.js';
+import { makeDbReads } from './reads.js';
 
 /**
  * createApp(config) — express app factory.
@@ -140,6 +143,20 @@ export function createApp(config) {
     );
   }
 
+  // ── journey hook (PUBLIC — Chatwoot דוחף אירועי זמן-אמת; הנתיב נושא את הסוד) ──
+  // עונים 200 מיד ומעבדים אחר-כך: WebhookJob של Chatwoot לא צריך להמתין לביצוע הגרף,
+  // וכישלון עיבוד אצלנו לא מייצר retries שמכפילים הודעות. סוד ריק = הדלת לא קיימת.
+  if (config.journeyHookSecret) {
+    const journeysCtx = makeJourneysCtx({ query, makeClient, makeDbReads, config });
+    app.post('/drip-api/journey-hook/:secret', (req, res) => {
+      if (req.params.secret !== config.journeyHookSecret) return res.status(404).end();
+      res.json({ ok: true });
+      handleJourneyHook(journeysCtx, req.body || {}).catch((e) =>
+        console.error('[journeys] hook error:', e.message)
+      );
+    });
+  }
+
   // ── auth gate ──────────────────────────────────────────────────────────────
   // The panel + API are reachable on the open web (Caddy /drip/ → engine). Everything
   // below this line requires a valid Chatwoot session cookie (verified against
@@ -266,6 +283,15 @@ export function createApp(config) {
       // them (not merely defaulting them) is what keeps both honest.
       payload.__actor = { uid: String(req.dripAccess.userId ?? ''), name: '' };
       payload.__isAdmin = admin;
+    }
+
+    // בונה פלואו: ניהול (שמירה/מחיקה/הפעלה-כיבוי) לאדמינים בלבד; רשימה והפעלה-ידנית
+    // פתוחות לכל חבר בחשבון — נציג מזניק פלואו מתוך שיחה, אבל לא עורך אותו.
+    if (/^jrn_/.test(action)) {
+      const JRN_ANY_MEMBER = new Set(['jrn_list', 'jrn_launch']);
+      if (!JRN_ANY_MEMBER.has(action) && !isTplAdmin(req.dripAccess, accountId)) {
+        return res.status(403).json({ ok: false, error: 'administrator role required' });
+      }
     }
 
     try {
