@@ -431,3 +431,11 @@ test('jrn_save / jrn_list / jrn_set_status / jrn_launch round-trip', async () =>
   const other = await handleJourneysAction(ctx, 'jrn_list', {}, 2);
   assert.equal(other.length, 0);
 });
+
+// חוזה ה-wire: api.js משדר result.data → ה-dispatch של store חייב לעטוף { data }.
+// (הבאג שנתפס בדמו: מערך חזר ישירות → הלקוח קיבל {ok:true} בלי data.)
+test('store dispatch wraps jrn_ results as { data } for the wire format', async () => {
+  const { handleAction } = await import('../src/store.js');
+  const r = await handleAction(1, 'jrn_list', {});
+  assert.ok(Array.isArray(r.data), 'jrn_list must come back under .data as an array');
+});
