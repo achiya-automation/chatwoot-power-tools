@@ -11,8 +11,10 @@ const SYNONYMS = {
   first_name: ['שם פרטי', 'פרטי', 'firstname', 'first name', 'fname', 'given name'],
   last_name: ['שם משפחה', 'משפחה', 'lastname', 'last name', 'surname', 'family name'],
   name: ['שם', 'שם מלא', 'שם איש קשר', 'איש קשר', 'name', 'full name', 'fullname', 'contact name', 'contact'],
-  phone_number: ['טלפון', 'נייד', 'פלאפון', 'פל', 'סלולרי', 'סלולארי', 'מספר טלפון', 'מספר', 'וואטסאפ', 'whatsapp', 'phone', 'mobile', 'cell', 'cellphone', 'tel', 'telephone', 'phone number', 'msisdn'],
-  email: ['אימייל', 'מייל', 'דוא"ל', 'דואל', 'כתובת מייל', 'email', 'e-mail', 'mail', 'email address'],
+  // 'phonenumber'/'emailaddress' cover snake_case exports (phone_number, email_address):
+  // normHeader strips underscores, so the joined form is what actually gets compared.
+  phone_number: ['טלפון', 'נייד', 'פלאפון', 'פל', 'סלולרי', 'סלולארי', 'מספר טלפון', 'מספר', 'וואטסאפ', 'whatsapp', 'phone', 'mobile', 'cell', 'cellphone', 'tel', 'telephone', 'phone number', 'phonenumber', 'msisdn'],
+  email: ['אימייל', 'מייל', 'דוא"ל', 'דואל', 'כתובת מייל', 'email', 'e-mail', 'mail', 'email address', 'emailaddress'],
   // ⚠️ ID-number headers must be recognized here: Israeli IDs are 9 digits, which
   // normalizePhone happily turns into +972XXXXXXXXX — so an unrecognized ת"ז column
   // gets content-detected as phone_number and steals the real phone column's slot.
@@ -58,6 +60,32 @@ function contentField(values) {
   const phoneish = nonEmpty.filter((v) => normalizePhone(v) !== null).length;
   if (phoneish / nonEmpty.length >= 0.6) return 'phone_number';
   return null;
+}
+
+// Guard against a destructive mis-mapping (the "note column mapped to email" incident:
+// email became the dedup key → bogus in-file-duplicate counts, then every create/update
+// failed server-side validation). For each mapped email/phone_number column, check the
+// actual values; if fewer than half of the non-empty values fit the field, block the
+// import before anything (dedup, attribute/label creation) runs. Fields that accept
+// arbitrary strings (name/identifier/…) are not validated.
+const VALIDATORS = {
+  email: (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.trim()),
+  phone_number: (v) => normalizePhone(v) !== null,
+};
+
+export function validateMapping(headers, rows, mapping) {
+  const blockers = [];
+  for (const { index, field } of mapping) {
+    const check = VALIDATORS[field];
+    if (!check) continue;
+    const values = rows.map((r) => r[index] || '').filter((v) => v.trim() !== '');
+    if (!values.length) continue; // nothing to import from this column anyway
+    const valid = values.filter(check).length;
+    if (valid / values.length < 0.5) {
+      blockers.push({ header: headers[index], field, valid, total: values.length });
+    }
+  }
+  return blockers;
 }
 
 export function detectColumns(headers, sampleRows) {

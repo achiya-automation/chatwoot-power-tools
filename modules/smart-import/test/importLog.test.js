@@ -19,3 +19,18 @@ test('toCsv has header and escapes commas/quotes', () => {
   assert.equal(lines[0], 'row,name,status,contact_id,reason');
   assert.equal(lines[1], '1,"כהן, דנה",failed,,"said ""no"""');
 });
+
+test('topError returns the most frequent failure reason', () => {
+  const log = new ImportLog();
+  log.add(1, 'א', 'failed', null, 'Email is invalid');
+  log.add(2, 'ב', 'failed', null, 'Email is invalid');
+  log.add(3, 'ג', 'failed', null, 'Phone taken');
+  log.add(4, 'ד', 'created', 10, '');
+  assert.deepEqual(log.topError(), { reason: 'Email is invalid', count: 2 });
+});
+
+test('topError is null when nothing failed', () => {
+  const log = new ImportLog();
+  log.add(1, 'א', 'created', 10, '');
+  assert.equal(log.topError(), null);
+});
