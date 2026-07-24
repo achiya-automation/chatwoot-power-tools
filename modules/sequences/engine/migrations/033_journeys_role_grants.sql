@@ -18,10 +18,25 @@ BEGIN
     RAISE WARNING 'drip.ensure_journey_webhook: empty url for account %', p_account_id;
     RETURN false;
   END IF;
+  -- 🔒 p_url is caller-supplied and this function is SECURITY DEFINER, so a compromised engine
+  -- could otherwise register a webhook to an ATTACKER URL and exfiltrate a tenant's events via
+  -- Chatwoot's own dispatcher. Constrain it to exactly the journeys-hook shape: http(s), and a
+  -- path of /drip-api/journey-hook/<hex-token>. This blocks arbitrary collector URLs/paths.
+  IF p_url !~ '^https?://[A-Za-z0-9._:-]+/drip-api/journey-hook/[a-f0-9]{16,}$' THEN
+    RAISE WARNING 'drip.ensure_journey_webhook: url % is not a valid journey-hook url', p_url;
+    RETURN false;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM public.accounts WHERE id = p_account_id) THEN
     RAISE WARNING 'drip.ensure_journey_webhook: account % does not exist', p_account_id;
     RETURN false;
   END IF;
+
+  -- REPLACE, not add: remove any prior journeys webhook for this account first, so a call with a
+  -- different URL can't leave a second, silent copy running alongside the legitimate one.
+  DELETE FROM public.webhooks
+   WHERE account_id = p_account_id
+     AND name = 'בונה פלואו — אירועי זמן-אמת'
+     AND url IS DISTINCT FROM p_url;
 
   INSERT INTO public.webhooks (account_id, url, webhook_type, subscriptions, name, created_at, updated_at)
   VALUES (p_account_id, p_url, 0,

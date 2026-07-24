@@ -1,13 +1,13 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { handleAction, initStore } from './store.js';
 import { authGate } from './auth.js';
 import { query, getPool } from './db.js';
 import { validateWhatsAppMedia, extForMime } from './media.js';
 import { uploadExampleMedia, hasTemplateAccess } from './templates.js';
-import { handleJourneyHook, makeJourneysCtx } from './journeys.js';
+import { handleJourneyHook, makeJourneysCtx, perAccountHookToken } from './journeys.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 
@@ -143,13 +143,23 @@ export function createApp(config) {
     );
   }
 
-  // ── journey hook (PUBLIC — Chatwoot דוחף אירועי זמן-אמת; הנתיב נושא את הסוד) ──
+  // ── journey hook (PUBLIC — Chatwoot דוחף אירועי זמן-אמת; הנתיב נושא סוד לכל חשבון) ──
   // עונים 200 מיד ומעבדים אחר-כך: WebhookJob של Chatwoot לא צריך להמתין לביצוע הגרף,
-  // וכישלון עיבוד אצלנו לא מייצר retries שמכפילים הודעות. סוד ריק = הדלת לא קיימת.
+  // וכישלון עיבוד אצלנו לא מייצר retries שמכפילים הודעות. סוד-אב ריק = הדלת לא קיימת.
+  //
+  // 🔒 בידוד דיירים: הסוד בנתיב הוא HMAC(master, account_id) ספציפי לחשבון, לא סוד גלובלי.
+  // אנחנו מאמתים שהוא תואם ל-account.id שבגוף הבקשה, בהשוואת זמן-קבוע. כך אדמין של דייר A
+  // שרואה את ה-webhook שלו (Settings→Integrations) יודע רק את הסוד של A, ולא יכול לזייף
+  // אירוע עבור דייר B — הוא לא יכול לחשב HMAC(master, B) בלי סוד-האב.
   if (config.journeyHookSecret) {
     const journeysCtx = makeJourneysCtx({ query, makeClient, makeDbReads, config });
     app.post('/drip-api/journey-hook/:secret', (req, res) => {
-      if (req.params.secret !== config.journeyHookSecret) return res.status(404).end();
+      const accountId = Number(req.body?.account?.id);
+      const got = String(req.params.secret || '');
+      const expected = accountId ? perAccountHookToken(config.journeyHookSecret, accountId) : '';
+      const ok = expected.length > 0 && got.length === expected.length
+        && timingSafeEqual(Buffer.from(got), Buffer.from(expected));
+      if (!ok) return res.status(404).end();
       res.json({ ok: true });
       handleJourneyHook(journeysCtx, req.body || {}).catch((e) =>
         console.error('[journeys] hook error:', e.message)
@@ -287,11 +297,14 @@ export function createApp(config) {
 
     // בונה פלואו: ניהול (שמירה/מחיקה/הפעלה-כיבוי) לאדמינים בלבד; רשימה והפעלה-ידנית
     // פתוחות לכל חבר בחשבון — נציג מזניק פלואו מתוך שיחה, אבל לא עורך אותו.
+    // זהות הפועל נקבעת בשרת (לעולם לא מהלקוח) כדי ש-jrn_launch יוכל לאכוף ראיית-שיחה.
     if (/^jrn_/.test(action)) {
       const JRN_ANY_MEMBER = new Set(['jrn_list', 'jrn_launch']);
-      if (!JRN_ANY_MEMBER.has(action) && !isTplAdmin(req.dripAccess, accountId)) {
+      const admin = isTplAdmin(req.dripAccess, accountId);
+      if (!JRN_ANY_MEMBER.has(action) && !admin) {
         return res.status(403).json({ ok: false, error: 'administrator role required' });
       }
+      payload.__actor = { uid: Number(req.dripAccess?.userId) || null, isAdmin: admin };
     }
 
     try {
