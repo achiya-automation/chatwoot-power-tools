@@ -1,5 +1,5 @@
 import { readFileToTable } from '../lib/xlsxReader.js';
-import { detectColumns, SYSTEM_FIELDS } from '../lib/columnDetector.js';
+import { detectColumns, SYSTEM_FIELDS, validateMapping } from '../lib/columnDetector.js';
 import { buildContactPayload } from '../lib/fieldMapper.js';
 import { createImportJob } from '../lib/importRunner.js';
 import { createApiClient } from '../lib/apiClient.js';
@@ -57,6 +57,10 @@ const I18N = {
     stopImport: 'עצירת הייבוא',
     bgHint: 'אפשר להמשיך לעבוד בינתיים — רק אל תסגרו את הטאב עד לסיום',
     dupInFile: 'כפולים בקובץ (ימוזגו)',
+    // mapping sanity blocker — {header} column mapped to {field} but values don't fit
+    badMapping: (header, fieldLabel, bad, total) =>
+      `העמודה "${header}" ממופה לשדה "${fieldLabel}", אבל ${bad} מתוך ${total} מהערכים בה אינם מתאימים לשדה הזה. חזרו לשלב המיפוי ובחרו שדה אחר (או "התעלם").`,
+    topError: 'הסיבה הנפוצה',
     alreadyRunning: 'ייבוא קודם עדיין רץ ברקע — המתינו לסיומו',
     dedupFailed: 'בדיקת הכפילויות נכשלה — הכפילויות ייבדקו שוב במהלך הייבוא',
     // footer
@@ -96,6 +100,9 @@ const I18N = {
     stopImport: 'Stop import',
     bgHint: 'You can keep working — just don\'t close this tab until it finishes',
     dupInFile: 'duplicates in file (will be merged)',
+    badMapping: (header, fieldLabel, bad, total) =>
+      `The "${header}" column is mapped to "${fieldLabel}", but ${bad} of ${total} of its values don't fit that field. Go back to the mapping step and pick another field (or "Ignore").`,
+    topError: 'Most common error',
     alreadyRunning: 'A previous import is still running in the background — wait for it to finish',
     dedupFailed: 'Duplicate check failed — duplicates will be re-checked during the import',
     back: 'Back', continue: 'Continue',
@@ -722,6 +729,20 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     modal.replaceChildren();
     modal.appendChild(header(t('previewTitle'), ''));
 
+    // Mapping sanity gate — runs FIRST, before any server side effect (custom-attribute
+    // creation, label creation, dedup). A notes column mapped to email once turned the
+    // dedup counts into nonsense and failed all 459 rows on server-side validation.
+    const badMaps = validateMapping(state.table.headers, state.table.rows, state.mapping);
+    if (badMaps.length) {
+      for (const b of badMaps) {
+        const e = el('div', 'text-sm text-n-ruby-11');
+        e.textContent = t('badMapping')(b.header, FIELD_LABELS[b.field] || b.field, b.total - b.valid, b.total);
+        modal.appendChild(e);
+      }
+      modal.appendChild(footer({ onBack: stepMapping }));
+      return;
+    }
+
     const status = el('div', 'text-sm text-n-slate-11');
     status.textContent = t('checkingDupes');
     modal.appendChild(status);
@@ -939,6 +960,10 @@ function mountPill(job, { dark, rtl }) {
       : p.state === 'cancelled' ? `${t('bgCancelled')} (${p.done}/${p.total})`
         : t('bgError');
     detail.textContent = counts;
+    // Mass failures must explain themselves — surface the dominant API error inline
+    // instead of hiding it behind the CSV report.
+    const top = p.failed ? job.log?.topError() : null;
+    if (top) detail.textContent += ` · ${t('topError')}: ${top.reason} (×${top.count})`;
     if (job.log && !actions.childElementCount) {
       actions.style.display = '';
       const dl = btn('ghost');

@@ -106,6 +106,7 @@ var __cwImport = (() => {
       return d.length === 9 || d.length === 8 ? "+972" + d : null;
     }
     if (d.length === 9) return "+972" + d;
+    if (d.length >= 10 && d.length <= 15) return "+" + d;
     return null;
   }
 
@@ -125,8 +126,10 @@ var __cwImport = (() => {
     first_name: ["\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9", "\u05E4\u05E8\u05D8\u05D9", "firstname", "first name", "fname", "given name"],
     last_name: ["\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4", "\u05DE\u05E9\u05E4\u05D7\u05D4", "lastname", "last name", "surname", "family name"],
     name: ["\u05E9\u05DD", "\u05E9\u05DD \u05DE\u05DC\u05D0", "\u05E9\u05DD \u05D0\u05D9\u05E9 \u05E7\u05E9\u05E8", "\u05D0\u05D9\u05E9 \u05E7\u05E9\u05E8", "name", "full name", "fullname", "contact name", "contact"],
-    phone_number: ["\u05D8\u05DC\u05E4\u05D5\u05DF", "\u05E0\u05D9\u05D9\u05D3", "\u05E4\u05DC\u05D0\u05E4\u05D5\u05DF", "\u05E4\u05DC", "\u05E1\u05DC\u05D5\u05DC\u05E8\u05D9", "\u05E1\u05DC\u05D5\u05DC\u05D0\u05E8\u05D9", "\u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF", "\u05DE\u05E1\u05E4\u05E8", "\u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4", "whatsapp", "phone", "mobile", "cell", "cellphone", "tel", "telephone", "phone number", "msisdn"],
-    email: ["\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC", "\u05DE\u05D9\u05D9\u05DC", '\u05D3\u05D5\u05D0"\u05DC', "\u05D3\u05D5\u05D0\u05DC", "\u05DB\u05EA\u05D5\u05D1\u05EA \u05DE\u05D9\u05D9\u05DC", "email", "e-mail", "mail", "email address"],
+    // 'phonenumber'/'emailaddress' cover snake_case exports (phone_number, email_address):
+    // normHeader strips underscores, so the joined form is what actually gets compared.
+    phone_number: ["\u05D8\u05DC\u05E4\u05D5\u05DF", "\u05E0\u05D9\u05D9\u05D3", "\u05E4\u05DC\u05D0\u05E4\u05D5\u05DF", "\u05E4\u05DC", "\u05E1\u05DC\u05D5\u05DC\u05E8\u05D9", "\u05E1\u05DC\u05D5\u05DC\u05D0\u05E8\u05D9", "\u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF", "\u05DE\u05E1\u05E4\u05E8", "\u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4", "whatsapp", "phone", "mobile", "cell", "cellphone", "tel", "telephone", "phone number", "phonenumber", "msisdn"],
+    email: ["\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC", "\u05DE\u05D9\u05D9\u05DC", '\u05D3\u05D5\u05D0"\u05DC', "\u05D3\u05D5\u05D0\u05DC", "\u05DB\u05EA\u05D5\u05D1\u05EA \u05DE\u05D9\u05D9\u05DC", "email", "e-mail", "mail", "email address", "emailaddress"],
     // ⚠️ ID-number headers must be recognized here: Israeli IDs are 9 digits, which
     // normalizePhone happily turns into +972XXXXXXXXX — so an unrecognized ת"ז column
     // gets content-detected as phone_number and steals the real phone column's slot.
@@ -166,6 +169,24 @@ var __cwImport = (() => {
     const phoneish = nonEmpty.filter((v) => normalizePhone(v) !== null).length;
     if (phoneish / nonEmpty.length >= 0.6) return "phone_number";
     return null;
+  }
+  var VALIDATORS = {
+    email: (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.trim()),
+    phone_number: (v) => normalizePhone(v) !== null
+  };
+  function validateMapping(headers, rows, mapping) {
+    const blockers = [];
+    for (const { index, field } of mapping) {
+      const check = VALIDATORS[field];
+      if (!check) continue;
+      const values = rows.map((r) => r[index] || "").filter((v) => v.trim() !== "");
+      if (!values.length) continue;
+      const valid = values.filter(check).length;
+      if (valid / values.length < 0.5) {
+        blockers.push({ header: headers[index], field, valid, total: values.length });
+      }
+    }
+    return blockers;
   }
   function detectColumns(headers, sampleRows) {
     const taken = /* @__PURE__ */ new Set();
@@ -328,6 +349,20 @@ var __cwImport = (() => {
       const s = { created: 0, updated: 0, skipped: 0, failed: 0, total: this.rows.length };
       for (const r of this.rows) if (STATUSES.includes(r.status)) s[r.status]++;
       return s;
+    }
+    // Most frequent failure reason — lets the UI explain a mass failure instead of
+    // showing a bare count. Returns { reason, count } or null when nothing failed.
+    topError() {
+      const counts = /* @__PURE__ */ new Map();
+      for (const r of this.rows) {
+        if (r.status !== "failed" || !r.reason) continue;
+        counts.set(r.reason, (counts.get(r.reason) || 0) + 1);
+      }
+      let top = null;
+      for (const [reason, count] of counts) {
+        if (!top || count > top.count) top = { reason, count };
+      }
+      return top;
     }
     toCsv() {
       const head = "row,name,status,contact_id,reason";
@@ -670,6 +705,9 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       stopImport: "\u05E2\u05E6\u05D9\u05E8\u05EA \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0",
       bgHint: "\u05D0\u05E4\u05E9\u05E8 \u05DC\u05D4\u05DE\u05E9\u05D9\u05DA \u05DC\u05E2\u05D1\u05D5\u05D3 \u05D1\u05D9\u05E0\u05EA\u05D9\u05D9\u05DD \u2014 \u05E8\u05E7 \u05D0\u05DC \u05EA\u05E1\u05D2\u05E8\u05D5 \u05D0\u05EA \u05D4\u05D8\u05D0\u05D1 \u05E2\u05D3 \u05DC\u05E1\u05D9\u05D5\u05DD",
       dupInFile: "\u05DB\u05E4\u05D5\u05DC\u05D9\u05DD \u05D1\u05E7\u05D5\u05D1\u05E5 (\u05D9\u05DE\u05D5\u05D6\u05D2\u05D5)",
+      // mapping sanity blocker — {header} column mapped to {field} but values don't fit
+      badMapping: (header2, fieldLabel, bad, total) => `\u05D4\u05E2\u05DE\u05D5\u05D3\u05D4 "${header2}" \u05DE\u05DE\u05D5\u05E4\u05D4 \u05DC\u05E9\u05D3\u05D4 "${fieldLabel}", \u05D0\u05D1\u05DC ${bad} \u05DE\u05EA\u05D5\u05DA ${total} \u05DE\u05D4\u05E2\u05E8\u05DB\u05D9\u05DD \u05D1\u05D4 \u05D0\u05D9\u05E0\u05DD \u05DE\u05EA\u05D0\u05D9\u05DE\u05D9\u05DD \u05DC\u05E9\u05D3\u05D4 \u05D4\u05D6\u05D4. \u05D7\u05D6\u05E8\u05D5 \u05DC\u05E9\u05DC\u05D1 \u05D4\u05DE\u05D9\u05E4\u05D5\u05D9 \u05D5\u05D1\u05D7\u05E8\u05D5 \u05E9\u05D3\u05D4 \u05D0\u05D7\u05E8 (\u05D0\u05D5 "\u05D4\u05EA\u05E2\u05DC\u05DD").`,
+      topError: "\u05D4\u05E1\u05D9\u05D1\u05D4 \u05D4\u05E0\u05E4\u05D5\u05E6\u05D4",
       alreadyRunning: "\u05D9\u05D9\u05D1\u05D5\u05D0 \u05E7\u05D5\u05D3\u05DD \u05E2\u05D3\u05D9\u05D9\u05DF \u05E8\u05E5 \u05D1\u05E8\u05E7\u05E2 \u2014 \u05D4\u05DE\u05EA\u05D9\u05E0\u05D5 \u05DC\u05E1\u05D9\u05D5\u05DE\u05D5",
       dedupFailed: "\u05D1\u05D3\u05D9\u05E7\u05EA \u05D4\u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA \u05E0\u05DB\u05E9\u05DC\u05D4 \u2014 \u05D4\u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA \u05D9\u05D9\u05D1\u05D3\u05E7\u05D5 \u05E9\u05D5\u05D1 \u05D1\u05DE\u05D4\u05DC\u05DA \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0",
       // footer
@@ -745,6 +783,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       stopImport: "Stop import",
       bgHint: "You can keep working \u2014 just don't close this tab until it finishes",
       dupInFile: "duplicates in file (will be merged)",
+      badMapping: (header2, fieldLabel, bad, total) => `The "${header2}" column is mapped to "${fieldLabel}", but ${bad} of ${total} of its values don't fit that field. Go back to the mapping step and pick another field (or "Ignore").`,
+      topError: "Most common error",
       alreadyRunning: "A previous import is still running in the background \u2014 wait for it to finish",
       dedupFailed: "Duplicate check failed \u2014 duplicates will be re-checked during the import",
       back: "Back",
@@ -1332,6 +1372,16 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     async function stepPreview() {
       modal.replaceChildren();
       modal.appendChild(header(t("previewTitle"), ""));
+      const badMaps = validateMapping(state.table.headers, state.table.rows, state.mapping);
+      if (badMaps.length) {
+        for (const b of badMaps) {
+          const e = el("div", "text-sm text-n-ruby-11");
+          e.textContent = t("badMapping")(b.header, FIELD_LABELS[b.field] || b.field, b.total - b.valid, b.total);
+          modal.appendChild(e);
+        }
+        modal.appendChild(footer({ onBack: stepMapping }));
+        return;
+      }
       const status = el("div", "text-sm text-n-slate-11");
       status.textContent = t("checkingDupes");
       modal.appendChild(status);
@@ -1516,6 +1566,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       hint.remove();
       title.textContent = p.state === "done" ? t("importDone") : p.state === "cancelled" ? `${t("bgCancelled")} (${p.done}/${p.total})` : t("bgError");
       detail.textContent = counts;
+      const top = p.failed ? job.log?.topError() : null;
+      if (top) detail.textContent += ` \xB7 ${t("topError")}: ${top.reason} (\xD7${top.count})`;
       if (job.log && !actions.childElementCount) {
         actions.style.display = "";
         const dl = btn("ghost");
