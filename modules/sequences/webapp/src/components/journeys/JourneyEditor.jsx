@@ -64,6 +64,9 @@ const M = {
     err_q_text: '{node}: חסר טקסט לשאלה',
     err_q_key: '{node}: חסר שם שדה לשמירת התשובה',
     err_btn_options: '{node}: נדרשות 1-10 אפשרויות עם כיתוב',
+    err_cond_branch: '{node}: חברו גם את "כן" וגם את "לא" ליעד',
+    err_wh_url: '{node}: חסרה כתובת URL תקינה (https://…)',
+    confirmLeave: 'יש שינויים שלא נשמרו. לצאת בלי לשמור?',
     status_draft: 'טיוטה',
     status_active: 'פעיל',
     status_paused: 'מושהה',
@@ -96,6 +99,9 @@ const M = {
     err_q_text: '{node}: question text is missing',
     err_q_key: '{node}: the answer needs a field key',
     err_btn_options: '{node}: 1-10 options with labels are required',
+    err_cond_branch: '{node}: connect both the "yes" and "no" outputs',
+    err_wh_url: '{node}: a valid URL is required (https://…)',
+    confirmLeave: 'You have unsaved changes. Leave without saving?',
     status_draft: 'Draft',
     status_active: 'Active',
     status_paused: 'Paused',
@@ -158,6 +164,15 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
   const [apiError, setApiError] = useState('');
   const [meta, setMeta] = useState({ inboxes: [], agents: [], teams: [], labels: [] });
 
+  // Every real edit bumps this. doSave captures it at start and only clears `dirty`
+  // if nothing changed while the request was in flight — so an edit made mid-save
+  // isn't mistaken for "saved". markDirty is stable, safe to omit from deps.
+  const editVersion = useRef(0);
+  const markDirty = useCallback(() => {
+    editVersion.current += 1;
+    setDirty(true);
+  }, []);
+
   // Engine meta (inboxes) + Chatwoot session meta (agents/teams/labels) — both best-effort.
   useEffect(() => {
     if (accountId == null) return;
@@ -167,19 +182,28 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     fetchChatwootMeta(accountId).then((m) => setMeta((prev) => ({ ...prev, ...m }))).catch(() => {});
   }, [accountId]);
 
+  // Native safety net for a browser tab close/refresh with unsaved changes
+  // (in-app "back" is guarded separately by handleBack).
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
   // 'select' is navigation and 'dimensions' is React Flow measuring nodes on
   // mount — neither is a user edit, so neither may trip the dirty flag.
   const isRealChange = (c) => c.type !== 'select' && c.type !== 'dimensions';
 
   const onNodesChange = useCallback((changes) => {
     setNodes((ns) => applyNodeChanges(changes, ns));
-    if (changes.some(isRealChange)) setDirty(true);
-  }, []);
+    if (changes.some(isRealChange)) markDirty();
+  }, [markDirty]);
 
   const onEdgesChange = useCallback((changes) => {
     setEdges((es) => applyEdgeChanges(changes, es));
-    if (changes.some(isRealChange)) setDirty(true);
-  }, []);
+    if (changes.some(isRealChange)) markDirty();
+  }, [markDirty]);
 
   // One outgoing edge per source handle — the runtime follows exactly one path,
   // so a new connection replaces the previous one. Self-loops are blocked.
@@ -193,21 +217,21 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
         )
       )
     );
-    setDirty(true);
-  }, []);
+    markDirty();
+  }, [markDirty]);
 
   const selectedNode = useMemo(() => nodes.find((n) => n.selected) || null, [nodes]);
 
   const patchNode = useCallback((id, patch) => {
     setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)));
-    setDirty(true);
-  }, []);
+    markDirty();
+  }, [markDirty]);
 
   const removeNode = useCallback((id) => {
     setNodes((ns) => ns.filter((n) => n.id !== id));
     setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
-    setDirty(true);
-  }, []);
+    markDirty();
+  }, [markDirty]);
 
   // New nodes land below the lowest node — predictable in a vertical flow —
   // and the viewport pans there so the node is never added out of sight.
@@ -231,7 +255,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
         },
       ];
     });
-    setDirty(true);
+    markDirty();
   };
 
   // Field suggestions for condition nodes: saved answer keys + webhook targets + contact basics.
@@ -265,6 +289,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     }
     setSaving(true);
     setApiError('');
+    const versionAtSave = editVersion.current;
     try {
       const graph = toGraph(nodes, edges);
       const saved = await saveJourney(accountId, {
@@ -275,7 +300,8 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
       });
       setJid(saved.id);
       setStatus(saved.status);
-      setDirty(false);
+      // Only clear the dirty flag if nothing was edited while the save was in flight.
+      if (editVersion.current === versionAtSave) setDirty(false);
       // Best-effort: create the custom attribute definitions behind saveTo keys
       // (admin session; failures are silent — see ensureAttributeDefinition).
       await Promise.all(
@@ -326,18 +352,24 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     }
   };
 
+  // Back guards unsaved work — the one exit point where edits could be silently lost.
+  const handleBack = () => {
+    if (dirty && !window.confirm(t('confirmLeave'))) return;
+    onBack();
+  };
+
   return (
     <div className="flex flex-col gap-3">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" color="slate" size="sm" icon={BackIcon} onClick={() => onBack(true)}>
+        <Button variant="ghost" color="slate" size="sm" icon={BackIcon} onClick={handleBack}>
           {t('back')}
         </Button>
         <input
           value={name}
           onChange={(e) => {
             setName(e.target.value);
-            setDirty(true);
+            markDirty();
           }}
           placeholder={t('namePh')}
           aria-label={t('namePh')}
@@ -359,7 +391,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
               {t('pause')}
             </Button>
           ) : (
-            <Button variant="solid" color="teal" size="sm" icon={Play} loading={statusBusy} onClick={doActivate}>
+            <Button variant="solid" color="teal" size="sm" icon={Play} loading={statusBusy} disabled={saving} onClick={doActivate}>
               {t('activate')}
             </Button>
           )}
@@ -423,12 +455,12 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
             name={name}
             onName={(v) => {
               setName(v);
-              setDirty(true);
+              markDirty();
             }}
             trigger={trigger}
             onTrigger={(v) => {
               setTrigger(v);
-              setDirty(true);
+              markDirty();
             }}
             patchNode={patchNode}
             removeNode={removeNode}
@@ -450,6 +482,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
             fitView
             fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
             defaultEdgeOptions={{ type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed } }}
+            deleteKeyCode={['Backspace', 'Delete']}
             proOptions={{ hideAttribution: false }}
           >
             <Background gap={16} />

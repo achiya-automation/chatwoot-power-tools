@@ -544,7 +544,7 @@ export async function handleJourneysAction(ctx, action, payload, accountId) {
         `SELECT drip._journey_json($1::uuid) AS j`, [String(payload.id)]
       );
       const j = rows[0]?.j;
-      if (!j || Number(j.account_id) !== Number(accountId)) throw new Error('journey not found');
+      if (!j || Number(j.account_id) !== Number(accountId)) throw new Error('הפלואו לא נמצא');
       return j;
     }
     case 'jrn_save':
@@ -579,7 +579,7 @@ export async function handleJourneysAction(ctx, action, payload, accountId) {
         [String(payload.id), accountId]
       );
       const journey = rows[0];
-      if (!journey) throw new Error('journey not found');
+      if (!journey) throw new Error('הפלואו לא נמצא');
       const client = await makeClientFor(accountId);
       await prepJourney(query, journey);
       // הזנקה ידנית מהשיחה שולחת רק display_id — משלימים את איש הקשר מה-DB כדי
@@ -625,7 +625,7 @@ export function makeJourneysCtx({ query, makeClient, makeDbReads, config = {} })
       [accountId]
     );
     const a = rows[0];
-    if (!a) throw new Error(`account ${accountId} not connected (no bot token)`);
+    if (!a) throw new Error('החשבון עדיין לא מחובר למנוע — נסו שוב בעוד רגע');
     return makeClient({
       baseUrl: a.base_url || config.chatwootBaseUrl || process.env.CHATWOOT_BASE_URL,
       token: a.chatwoot_token,

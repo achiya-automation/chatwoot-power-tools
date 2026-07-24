@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { OctagonX, AlertCircle } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
 import Badge from '../ui/Badge.jsx';
@@ -75,13 +75,18 @@ export default function RunsModal({ open, onClose, journey, accountId }) {
   const fmt = (iso) =>
     iso ? new Date(iso).toLocaleString(locale === 'he' ? 'he-IL' : 'en-GB') : '—';
 
+  // Guards against a stale response landing after the modal was reopened for a
+  // different journey — only the latest request may write state.
+  const reqRef = useRef(0);
   const load = useCallback(() => {
     if (!open || !journey) return;
+    const reqId = ++reqRef.current;
     setRuns(null);
     setError('');
     listJourneyRuns(accountId, journey.id)
-      .then((rows) => setRuns(rows || []))
+      .then((rows) => { if (reqRef.current === reqId) setRuns(rows || []); })
       .catch((e) => {
+        if (reqRef.current !== reqId) return;
         setError(e.message || t('errLoad'));
         setRuns([]);
       });

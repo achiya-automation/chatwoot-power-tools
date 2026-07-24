@@ -219,6 +219,34 @@ test('validateGraph: buttons need 1-10 non-empty options', () => {
   assert.deepEqual(validateGraph(mk([{ title: 'yes' }, { title: 'no' }])), []);
 });
 
+test('validateGraph: condition needs BOTH yes and no edges (else runtime misroutes)', () => {
+  const cond = { id: 'c', type: 'condition', data: { field: 'x', op: 'eq', value: '1' } };
+  const end = { id: 'e', type: 'handoff', data: {} };
+  // only "yes" wired → cond_branch
+  const onlyYes = connectedGraph([cond, end], [
+    { id: 'e2', source: 'n1', target: 'c', sourceHandle: null },
+    { id: 'e3', source: 'c', target: 'e', sourceHandle: 'yes' },
+  ]);
+  assert.deepEqual(validateGraph(onlyYes), [{ code: 'cond_branch', nodeId: 'c' }]);
+  // both wired → valid
+  const both = connectedGraph([cond, end], [
+    { id: 'e2', source: 'n1', target: 'c', sourceHandle: null },
+    { id: 'e3', source: 'c', target: 'e', sourceHandle: 'yes' },
+    { id: 'e4', source: 'c', target: 'n1', sourceHandle: 'no' },
+  ]);
+  assert.deepEqual(validateGraph(both), []);
+});
+
+test('validateGraph: webhook needs a valid http(s) URL', () => {
+  const mk = (url) => connectedGraph(
+    [{ id: 'w', type: 'webhook', data: { url } }],
+    [{ id: 'e2', source: 'n1', target: 'w', sourceHandle: null }]
+  );
+  assert.deepEqual(validateGraph(mk('')), [{ code: 'wh_url', nodeId: 'w' }]);
+  assert.deepEqual(validateGraph(mk('not a url')), [{ code: 'wh_url', nodeId: 'w' }]);
+  assert.deepEqual(validateGraph(mk('https://n8n.example/hook')), []);
+});
+
 // ---------------------------------------------------------------------------
 // ids + attribute keys
 // ---------------------------------------------------------------------------

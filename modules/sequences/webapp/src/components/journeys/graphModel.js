@@ -229,10 +229,13 @@ export function startNodeOf(graph) {
  *   q_text      — question/buttons node with empty prompt text
  *   q_key       — question/buttons node without saveTo.key
  *   btn_options — buttons node without 1-10 non-empty options
+ *   cond_branch — condition node missing a 'yes' AND/OR 'no' outgoing edge
+ *   wh_url      — webhook node with an empty/invalid URL
  */
 export function validateGraph(graph) {
   const errors = [];
   if (!startNodeOf(graph)) errors.push({ code: 'no_start' });
+  const edges = graph?.edges || [];
   for (const n of graph?.nodes || []) {
     const d = n.data || {};
     if (n.type === 'question' || n.type === 'buttons') {
@@ -244,6 +247,20 @@ export function validateGraph(graph) {
       const bad = opts.length < 1 || opts.length > MAX_BUTTON_OPTIONS
         || opts.some((o) => !String(o?.title || '').trim());
       if (bad) errors.push({ code: 'btn_options', nodeId: n.id });
+    }
+    // A condition routes by sourceHandle. If a branch is unconnected the runtime's
+    // nextNodeId falls back to the OTHER edge — silently routing the wrong way. Both
+    // 'yes' and 'no' must be wired before a flow can go live.
+    if (n.type === 'condition') {
+      const out = edges.filter((e) => e.source === n.id);
+      const hasYes = out.some((e) => e.sourceHandle === 'yes');
+      const hasNo = out.some((e) => e.sourceHandle === 'no');
+      if (!hasYes || !hasNo) errors.push({ code: 'cond_branch', nodeId: n.id });
+    }
+    // The webhook node calls its URL unconditionally per contact — an empty URL
+    // throws on every run. Require a real http(s) URL.
+    if (n.type === 'webhook') {
+      if (!/^https?:\/\/\S+/i.test(String(d.url || '').trim())) errors.push({ code: 'wh_url', nodeId: n.id });
     }
   }
   return errors;
