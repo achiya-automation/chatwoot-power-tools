@@ -104,11 +104,14 @@ export async function handleAction(accountId, action, payload) {
   if (action.startsWith('tpl_')) return handleTemplatesAction(accId, action, payload);
 
   // בונה פלואו (journeys) — אותו דפוס: מודול נפרד, פריפיקס jrn_.
+  // api.js משדר ללקוח את result.data — לכן העטיפה כאן, פעם אחת לכל פעולות ה-jrn_
+  // (הלקוח קורא json.data; ההחזרות של handleJourneysAction הן הערך עצמו).
   if (action.startsWith('jrn_')) {
-    return handleJourneysAction(
+    const result = await handleJourneysAction(
       makeJourneysCtx({ query, makeClient, makeDbReads, config: {} }),
       action, payload, accId
     );
+    return { data: result };
   }
 
   switch (action) {
