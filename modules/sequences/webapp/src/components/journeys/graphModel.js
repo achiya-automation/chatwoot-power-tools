@@ -1,0 +1,270 @@
+/*
+ * graphModel — pure graph helpers for the Flow Builder (journeys) editor.
+ *
+ * React-Flow-free on purpose: node --test imports this directly (no DOM, no
+ * canvas). Everything the editor serializes MUST match what the engine runtime
+ * executes (modules/sequences/engine/src/journeys.js):
+ *
+ *   graph = { nodes: [{id, type, data, position}], edges: [{id, source, target, sourceHandle}] }
+ *   node types: trigger | message | question | buttons | condition | delay |
+ *               action | webhook | handoff
+ *   condition edges carry sourceHandle 'yes'/'no'; every other edge keeps
+ *   sourceHandle null (the engine's nextNodeId falls back to the null-handle edge).
+ *
+ * `position` is kept in the saved graph for the editor only — the runtime ignores it.
+ */
+
+export const NODE_TYPES = [
+  'trigger', 'message', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
+];
+
+// Types the palette can add (exactly one trigger exists, created by emptyGraph).
+export const ADDABLE_TYPES = NODE_TYPES.filter((t) => t !== 'trigger');
+
+export const VALIDATIONS = ['text', 'number', 'email', 'phone'];
+export const CONDITION_OPS = ['eq', 'contains', 'exists'];
+export const GIVEUP_MODES = ['continue', 'stop', 'handoff'];
+export const MAX_BUTTON_OPTIONS = 10;
+
+/** Editor defaults for a freshly added node — field names mirror executeFrom/feedAnswer. */
+export function defaultDataFor(type) {
+  switch (type) {
+    case 'message':
+      return { text: '', mediaUrl: '' };
+    case 'question':
+      return {
+        text: '',
+        validation: 'text',
+        saveTo: { scope: 'contact', key: '' },
+        retryMessage: '',
+        followUp: null,
+      };
+    case 'buttons':
+      return {
+        text: '',
+        options: [{ title: '' }],
+        saveTo: { scope: 'contact', key: '' },
+        retryMessage: '',
+        followUp: null,
+      };
+    case 'condition':
+      return { field: '', op: 'eq', value: '' };
+    case 'delay':
+      return { minutes: 0, hours: 1, days: 0 };
+    case 'action':
+      return { labels: [], assigneeId: null, teamId: null, status: '', webhookUrl: '' };
+    case 'webhook':
+      return { url: '', saveResponseTo: '' };
+    case 'handoff':
+      return { message: '', assigneeId: null, teamId: null };
+    default:
+      return {}; // trigger — its config lives on journey.trigger, not node data
+  }
+}
+
+const num = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+
+// Chatwoot ids come back from <select> as strings — the engine expects numbers or null.
+const idOrNull = (v) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+};
+
+const normSaveTo = (s) => ({
+  scope: s?.scope === 'conversation' ? 'conversation' : 'contact',
+  key: String(s?.key || '').trim(),
+});
+
+const normFollowUp = (f) => {
+  if (!f) return null;
+  return {
+    afterMinutes: num(f.afterMinutes),
+    message: String(f.message || ''),
+    maxRetries: num(f.maxRetries) || 1,
+    onGiveUp: GIVEUP_MODES.includes(f.onGiveUp) ? f.onGiveUp : 'continue',
+  };
+};
+
+// Empty-string `value` must be OMITTED: the engine resolves `o.value ?? o.title`,
+// and '' is not nullish — it would win over the title and save an empty answer.
+const normOption = (o) => {
+  const out = { title: String(o?.title || '').trim() };
+  const v = String(o?.value ?? '').trim();
+  if (v) out.value = v;
+  return out;
+};
+
+/** Coerce editor state into the exact shapes the runtime reads. */
+export function normalizeData(type, d = {}) {
+  switch (type) {
+    case 'message':
+      return { text: String(d.text || ''), mediaUrl: String(d.mediaUrl || '').trim() };
+    case 'question':
+      return {
+        text: String(d.text || ''),
+        validation: VALIDATIONS.includes(d.validation) ? d.validation : 'text',
+        saveTo: normSaveTo(d.saveTo),
+        retryMessage: String(d.retryMessage || ''),
+        followUp: normFollowUp(d.followUp),
+      };
+    case 'buttons':
+      return {
+        text: String(d.text || ''),
+        options: (Array.isArray(d.options) ? d.options : []).map(normOption),
+        saveTo: normSaveTo(d.saveTo),
+        retryMessage: String(d.retryMessage || ''),
+        followUp: normFollowUp(d.followUp),
+      };
+    case 'condition':
+      return {
+        field: String(d.field || '').trim(),
+        op: CONDITION_OPS.includes(d.op) ? d.op : 'eq',
+        value: String(d.value ?? ''),
+      };
+    case 'delay':
+      return { minutes: num(d.minutes), hours: num(d.hours), days: num(d.days) };
+    case 'action':
+      return {
+        labels: (Array.isArray(d.labels) ? d.labels : []).map((s) => String(s).trim()).filter(Boolean),
+        assigneeId: idOrNull(d.assigneeId),
+        teamId: idOrNull(d.teamId),
+        status: String(d.status || ''),
+        webhookUrl: String(d.webhookUrl || '').trim(),
+      };
+    case 'webhook':
+      return { url: String(d.url || '').trim(), saveResponseTo: String(d.saveResponseTo || '').trim() };
+    case 'handoff':
+      return { message: String(d.message || ''), assigneeId: idOrNull(d.assigneeId), teamId: idOrNull(d.teamId) };
+    default:
+      return {};
+  }
+}
+
+/** Serialize React Flow state → the graph jsonb the engine executes. */
+export function toGraph(rfNodes, rfEdges) {
+  return {
+    nodes: (rfNodes || []).map((n) => ({
+      id: String(n.id),
+      type: n.type,
+      data: normalizeData(n.type, n.data),
+      position: { x: Math.round(n.position?.x || 0), y: Math.round(n.position?.y || 0) },
+    })),
+    edges: (rfEdges || []).map((e) => ({
+      id: String(e.id || `e_${e.source}_${e.sourceHandle || 'out'}_${e.target}`),
+      source: String(e.source),
+      target: String(e.target),
+      sourceHandle: e.sourceHandle ?? null,
+    })),
+  };
+}
+
+// Grid fallback for graphs saved without positions (e.g. seeded manually).
+const autoPos = (i) => ({ x: 120 + (i % 3) * 300, y: 60 + Math.floor(i / 3) * 200 });
+
+/** Deserialize a saved graph → React Flow nodes/edges. */
+export function fromGraph(graph) {
+  const nodes = (graph?.nodes || []).map((n, i) => ({
+    id: String(n.id),
+    type: n.type,
+    data: n.data || {},
+    position:
+      n.position && Number.isFinite(Number(n.position.x)) && Number.isFinite(Number(n.position.y))
+        ? { x: Number(n.position.x), y: Number(n.position.y) }
+        : autoPos(i),
+    // Exactly one trigger per journey — it anchors startNodeOf, so it can't be deleted.
+    ...(n.type === 'trigger' ? { deletable: false } : {}),
+  }));
+  const edges = (graph?.edges || []).map((e, i) => ({
+    id: String(e.id || `e${i}`),
+    source: String(e.source),
+    target: String(e.target),
+    // Only condition edges carry a handle; null must stay ABSENT for React Flow
+    // (a null sourceHandle is fine, but omitting keeps round-trips clean).
+    ...(e.sourceHandle != null ? { sourceHandle: String(e.sourceHandle) } : {}),
+  }));
+  return { nodes, edges };
+}
+
+/** A brand-new journey graph: just the trigger anchor. */
+export function emptyGraph() {
+  return {
+    nodes: [{ id: 'trigger', type: 'trigger', data: {}, position: { x: 260, y: 40 } }],
+    edges: [],
+  };
+}
+
+/** Next free node id (n1, n2, …) — stable across delete/re-add. */
+export function newNodeId(nodes) {
+  let max = 0;
+  for (const n of nodes || []) {
+    const m = /^n(\d+)$/.exec(String(n.id));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `n${max + 1}`;
+}
+
+/**
+ * Mirror of the engine's startNodeOf (journeys.js) — kept in sync by the
+ * round-trip test. Used only for validation ("does the flow have a reachable start?").
+ */
+export function startNodeOf(graph) {
+  const nodes = graph?.nodes || [];
+  const edges = graph?.edges || [];
+  const trigger = nodes.find((n) => n.type === 'trigger');
+  if (trigger) {
+    const e = edges.find((x) => x.source === trigger.id);
+    return e ? e.target : null;
+  }
+  const hasIncoming = new Set(edges.map((e) => e.target));
+  return nodes.find((n) => !hasIncoming.has(n.id))?.id || nodes[0]?.id || null;
+}
+
+/**
+ * Pre-activation validation. Returns [{code, nodeId?}] — empty array = ready.
+ * Codes (translated to Hebrew/English by the editor):
+ *   no_start    — no trigger-reachable start node
+ *   q_text      — question/buttons node with empty prompt text
+ *   q_key       — question/buttons node without saveTo.key
+ *   btn_options — buttons node without 1-10 non-empty options
+ */
+export function validateGraph(graph) {
+  const errors = [];
+  if (!startNodeOf(graph)) errors.push({ code: 'no_start' });
+  for (const n of graph?.nodes || []) {
+    const d = n.data || {};
+    if (n.type === 'question' || n.type === 'buttons') {
+      if (!String(d.text || '').trim()) errors.push({ code: 'q_text', nodeId: n.id });
+      if (!String(d.saveTo?.key || '').trim()) errors.push({ code: 'q_key', nodeId: n.id });
+    }
+    if (n.type === 'buttons') {
+      const opts = Array.isArray(d.options) ? d.options : [];
+      const bad = opts.length < 1 || opts.length > MAX_BUTTON_OPTIONS
+        || opts.some((o) => !String(o?.title || '').trim());
+      if (bad) errors.push({ code: 'btn_options', nodeId: n.id });
+    }
+  }
+  return errors;
+}
+
+/**
+ * All custom-attribute keys the flow saves answers into, deduped —
+ * [{key, scope}] for best-effort definition creation on save.
+ */
+export function collectAttributeKeys(graph) {
+  const seen = new Set();
+  const out = [];
+  for (const n of graph?.nodes || []) {
+    if (n.type !== 'question' && n.type !== 'buttons') continue;
+    const key = String(n.data?.saveTo?.key || '').trim();
+    if (!key) continue;
+    const scope = n.data?.saveTo?.scope === 'conversation' ? 'conversation' : 'contact';
+    const sig = `${scope}:${key}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push({ key, scope });
+  }
+  return out;
+}

@@ -15,6 +15,7 @@ import {
   Megaphone,
   ShieldCheck,
   LayoutTemplate,
+  Workflow,
 } from 'lucide-react';
 import Button from './components/ui/Button.jsx';
 import Switch from './components/ui/Switch.jsx';
@@ -40,6 +41,7 @@ import CampaignDetailView from './components/CampaignDetailView.jsx';
 import ComplianceView from './components/ComplianceView.jsx';
 import TemplatesView from './components/TemplatesView.jsx';
 import TemplateBuilder from './components/TemplateBuilder.jsx';
+import JourneysScreen from './components/journeys/JourneysScreen.jsx';
 import useChatwootContext from './useChatwootContext.js';
 import useVersionCheck from './useVersionCheck.js';
 import UpdateBanner from './components/UpdateBanner.jsx';
@@ -71,6 +73,7 @@ const M = {
     tab_campaigns: 'קמפיינים',
     tab_compliance: 'ציות',
     tab_templates: 'תבניות',
+    tab_journeys: 'בונה פלואו',
     appTitle: 'רצפי WhatsApp',
     subtitle: 'ניהול רצפי הודעות אוטומטיים (drip)',
     subtitleFull: 'ניהול רצפי הודעות אוטומטיים (drip) ללקוחות',
@@ -121,6 +124,7 @@ const M = {
     tab_campaigns: 'Campaigns',
     tab_compliance: 'Compliance',
     tab_templates: 'Templates',
+    tab_journeys: 'Flow Builder',
     appTitle: 'WhatsApp Sequences',
     subtitle: 'Manage automated (drip) message sequences',
     subtitleFull: 'Manage automated (drip) message sequences for your customers',
@@ -193,7 +197,7 @@ export default function App() {
   // טאב פעיל: סקירה (ברירת מחדל) / רצפים / אנשי קשר.
   // נשמר ב-localStorage כדי שריענון העמוד יישאר באותו טאב; ?tab= גובר (deep-link).
   const [view, setView] = useState(() => {
-    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview' || v === 'campaigns' || v === 'compliance' || v === 'templates';
+    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview' || v === 'campaigns' || v === 'compliance' || v === 'templates' || v === 'journeys';
     const t = new URLSearchParams(window.location.search).get('tab');
     if (valid(t)) return t;
     try {
@@ -222,7 +226,7 @@ export default function App() {
       if (e.origin !== window.location.origin) return; // same-origin embed בלבד
       const d = e?.data;
       if (d && typeof d === 'object' && d.type === 'drip-nav'
-          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns' || d.tab === 'compliance' || d.tab === 'templates')) {
+          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns' || d.tab === 'compliance' || d.tab === 'templates' || d.tab === 'journeys')) {
         setView(d.tab);
         setCampaignId(null); // איפוס צלילת הקמפיין — לא לנחות על תצוגת פרטים ישנה (כמו TabButton הפנימי)
       }
@@ -252,7 +256,7 @@ export default function App() {
     else setCampaignId(null);
   };
   // כותרת לפי הטאב הפעיל — בסגנון הכותרות הנייטיביות של Chatwoot (text-base font-medium)
-  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : view === 'compliance' ? t('tab_compliance') : view === 'templates' ? t('tab_templates') : t('tab_overview');
+  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : view === 'compliance' ? t('tab_compliance') : view === 'templates' ? t('tab_templates') : view === 'journeys' ? t('tab_journeys') : t('tab_overview');
 
   // מצב "שיחה" — האפליקציה רצה כ-Dashboard App בתוך שיחה (סרגל צד צר).
   // אז מציגים תצוגת מצב קומפקטית לקריאה-בלבד של הליד הזה בלבד (בלי ניהול).
@@ -491,13 +495,16 @@ export default function App() {
               <TabButton active={view === 'templates'} onClick={() => setView('templates')} icon={LayoutTemplate}>
                 {t('tab_templates')}
               </TabButton>
+              <TabButton active={view === 'journeys'} onClick={() => setView('journeys')} icon={Workflow}>
+                {t('tab_journeys')}
+              </TabButton>
             </div>
           )}
           <div className="flex items-center gap-2">
             {/* "שיוך לפי תווית" משייך רצף לאנשי קשר — לא רלוונטי בהקשר הקמפיינים, שם מסתירים אותו.
                 גם בטאב הציות מסתירים: שם יש "רישום הסכמה לפי תווית" — שתי פעולות-לפי-תווית שונות
-                באותו מסך הן מלכודת. גם בטאב התבניות מסתירים: אין שם רצפים לשייך אליהם תווית. */}
-            {!noAccount && view !== 'campaigns' && view !== 'compliance' && view !== 'templates' ? (
+                באותו מסך הן מלכודת. גם בטאב התבניות ובבונה הפלואו מסתירים: אין שם רצפים לשייך אליהם תווית. */}
+            {!noAccount && view !== 'campaigns' && view !== 'compliance' && view !== 'templates' && view !== 'journeys' ? (
               <Button
                 variant="faded"
                 color="slate"
@@ -531,6 +538,8 @@ export default function App() {
           <ComplianceView accountId={accountId} />
         ) : view === 'templates' ? (
           <TemplatesScreen accountId={accountId} />
+        ) : view === 'journeys' ? (
+          <JourneysScreen accountId={accountId} />
         ) : view === 'contacts' ? (
           <EnrollmentsView accountId={accountId} />
         ) : loading ? (

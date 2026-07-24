@@ -275,7 +275,80 @@ const TPL_WABAS = [
   },
 ];
 
-function dataFor(action) {
+// ── בונה פלואו (journeys) ──
+const JRN_GRAPH = {
+  nodes: [
+    { id: 'trigger', type: 'trigger', data: {}, position: { x: 260, y: 40 } },
+    { id: 'n1', type: 'message', data: { text: 'היי {{שם}} 👋 כאן העוזר של העסק.', mediaUrl: '' }, position: { x: 240, y: 200 } },
+    {
+      id: 'n2',
+      type: 'buttons',
+      data: {
+        text: 'במה נוכל לעזור?',
+        options: [{ title: 'הצעת מחיר', value: 'quote' }, { title: 'תמיכה', value: 'support' }],
+        saveTo: { scope: 'contact', key: 'topic' },
+        retryMessage: '',
+        followUp: { afterMinutes: 60, message: 'עדיין כאן 🙂 במה נוכל לעזור?', maxRetries: 1, onGiveUp: 'continue' },
+      },
+      position: { x: 240, y: 360 },
+    },
+    { id: 'n3', type: 'condition', data: { field: 'topic', op: 'eq', value: 'quote' }, position: { x: 240, y: 540 } },
+    {
+      id: 'n4',
+      type: 'question',
+      data: {
+        text: 'מה התקציב המשוער?',
+        validation: 'number',
+        saveTo: { scope: 'contact', key: 'budget' },
+        retryMessage: '',
+        followUp: null,
+      },
+      position: { x: 60, y: 720 },
+    },
+    { id: 'n5', type: 'handoff', data: { message: 'מעביר לנציג 🙏', assigneeId: null, teamId: null }, position: { x: 420, y: 720 } },
+  ],
+  edges: [
+    { id: 'e1', source: 'trigger', target: 'n1', sourceHandle: null },
+    { id: 'e2', source: 'n1', target: 'n2', sourceHandle: null },
+    { id: 'e3', source: 'n2', target: 'n3', sourceHandle: null },
+    { id: 'e4', source: 'n3', target: 'n4', sourceHandle: 'yes' },
+    { id: 'e5', source: 'n3', target: 'n5', sourceHandle: 'no' },
+  ],
+};
+
+const JOURNEYS = [
+  {
+    id: 'jrn_1', account_id: 1, name: 'קליטת ליד חדש', status: 'active',
+    trigger: { inbox_ids: [501], keywords: ['הצעת מחיר'], on_new_conversation: true, manual: true },
+    graph: JRN_GRAPH, node_count: 7, live_runs: 2, done_runs: 14, updated_at: '2026-07-20T10:00:00Z',
+  },
+  {
+    id: 'jrn_2', account_id: 1, name: 'שאלון שביעות רצון', status: 'draft',
+    trigger: { inbox_ids: [], keywords: [], on_new_conversation: false, manual: true },
+    graph: { nodes: [{ id: 'trigger', type: 'trigger', data: {}, position: { x: 260, y: 40 } }], edges: [] },
+    node_count: 1, live_runs: 0, done_runs: 0, updated_at: '2026-07-18T08:30:00Z',
+  },
+];
+
+const JRN_RUNS = [
+  {
+    id: 'run_1', display_id: 214, status: 'waiting_answer', current_node: 'n4',
+    answers: { topic: 'quote' }, retry_count: 0, waiting_since: '2026-07-21T09:15:00Z',
+    next_action_at: null, last_error: null, created_at: '2026-07-21T09:00:00Z', updated_at: '2026-07-21T09:15:00Z',
+  },
+  {
+    id: 'run_2', display_id: 209, status: 'done', current_node: 'n5',
+    answers: { topic: 'support' }, retry_count: 0, waiting_since: null,
+    next_action_at: null, last_error: null, created_at: '2026-07-20T14:00:00Z', updated_at: '2026-07-20T14:05:00Z',
+  },
+  {
+    id: 'run_3', display_id: 187, status: 'failed', current_node: 'n2',
+    answers: {}, retry_count: 2, waiting_since: null,
+    next_action_at: null, last_error: 'buttons: send failed', created_at: '2026-07-19T11:00:00Z', updated_at: '2026-07-19T11:02:00Z',
+  },
+];
+
+function dataFor(action, payload = {}) {
   switch (action) {
     case 'list': return SEQUENCES;
     case 'templates': return TEMPLATES;
@@ -293,6 +366,24 @@ function dataFor(action) {
     case 'tpl_edit': return { ok: true };
     case 'tpl_delete': return null;
     case 'tpl_flows': return TPL_FLOWS;
+    case 'jrn_list': return JOURNEYS;
+    case 'jrn_get': return JOURNEYS.find((j) => j.id === payload.id) || JOURNEYS[0];
+    case 'jrn_save': return {
+      id: payload.id || 'jrn_mock_new', account_id: 1, name: payload.name,
+      status: 'draft', trigger: payload.trigger || {}, graph: payload.graph || { nodes: [], edges: [] },
+      updated_at: new Date().toISOString(),
+    };
+    case 'jrn_delete': return { deleted: true };
+    case 'jrn_set_status': return { ...(JOURNEYS.find((j) => j.id === payload.id) || JOURNEYS[0]), status: payload.status };
+    case 'jrn_meta': return {
+      inboxes: [
+        { id: 501, name: 'העסק שלי — תמיכה', channel_type: 'Channel::Whatsapp' },
+        { id: 502, name: 'העסק שלי — מכירות (WAHA)', channel_type: 'Channel::Api' },
+      ],
+    };
+    case 'jrn_runs': return JRN_RUNS;
+    case 'jrn_launch': return { started: true, run_id: 'run_new' };
+    case 'jrn_stop_run': return { stopped: true };
     default: return null;
   }
 }
@@ -303,9 +394,14 @@ export function installMockFetch() {
     const u = String(url);
     if (u.includes('/drip-api')) {
       let action = '';
-      try { action = JSON.parse(opts.body || '{}').action || ''; } catch { /* ignore */ }
+      let payload = {};
+      try {
+        const body = JSON.parse(opts.body || '{}');
+        action = body.action || '';
+        payload = body.payload || {};
+      } catch { /* ignore */ }
       // בלי setTimeout — חלון Safari ברקע מקפיא timers; promise resolve (microtask) תמיד רץ.
-      return new Response(JSON.stringify({ ok: true, data: dataFor(action) }), {
+      return new Response(JSON.stringify({ ok: true, data: dataFor(action, payload) }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
