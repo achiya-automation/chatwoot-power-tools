@@ -412,6 +412,7 @@ function OptionsEditor({ data, patch }) {
             iconOnly
             icon={Trash2}
             aria-label={t('removeOption', { n: i + 1 })}
+            disabled={options.length <= 1}
             onClick={() => patch({ options: options.filter((_, j) => j !== i) })}
           />
         </div>
