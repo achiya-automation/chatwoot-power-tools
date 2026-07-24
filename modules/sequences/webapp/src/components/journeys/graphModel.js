@@ -15,7 +15,7 @@
  */
 
 export const NODE_TYPES = [
-  'trigger', 'message', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
+  'trigger', 'message', 'template', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
 ];
 
 // Types the palette can add (exactly one trigger exists, created by emptyGraph).
@@ -31,6 +31,9 @@ export function defaultDataFor(type) {
   switch (type) {
     case 'message':
       return { text: '', mediaUrl: '' };
+    case 'template':
+      // WhatsApp template message — the only first message allowed outside the 24h window.
+      return { name: '', language: '', category: '', params: [], mediaUrl: '' };
     case 'question':
       return {
         text: '',
@@ -40,9 +43,11 @@ export function defaultDataFor(type) {
         followUp: null,
       };
     case 'buttons':
+      // id from birth — ButtonsNode renders a per-option branching handle only for
+      // options that have one, and nothing normalizes editor state before save.
       return {
         text: '',
-        options: [{ title: '' }],
+        options: [{ title: '', id: 'o1' }],
         saveTo: { scope: 'contact', key: '' },
         retryMessage: '',
         followUp: null,
@@ -90,10 +95,32 @@ const normFollowUp = (f) => {
 
 // Empty-string `value` must be OMITTED: the engine resolves `o.value ?? o.title`,
 // and '' is not nullish — it would win over the title and save an empty answer.
+// `id` is the option's stable identity for per-option branching (sourceHandle `opt:<id>`)
+// — it must survive normalization or every saved graph would orphan its option edges.
 const normOption = (o) => {
   const out = { title: String(o?.title || '').trim() };
   const v = String(o?.value ?? '').trim();
   if (v) out.value = v;
+  if (o?.id != null && String(o.id).trim()) out.id = String(o.id).trim();
+  return out;
+};
+
+/** Next free option id (o1, o2, …) within one buttons node — stable across delete/re-add. */
+export function newOptionId(options) {
+  let max = 0;
+  for (const o of options || []) {
+    const m = /^o(\d+)$/.exec(String(o?.id || ''));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `o${max + 1}`;
+}
+
+// Legacy graphs have options without ids — backfill so per-option handles can be wired.
+const withOptionIds = (options) => {
+  const out = (Array.isArray(options) ? options : []).map((o) => ({ ...o }));
+  for (const o of out) {
+    if (o.id == null || !String(o.id).trim()) o.id = newOptionId(out);
+  }
   return out;
 };
 
@@ -102,6 +129,14 @@ export function normalizeData(type, d = {}) {
   switch (type) {
     case 'message':
       return { text: String(d.text || ''), mediaUrl: String(d.mediaUrl || '').trim() };
+    case 'template':
+      return {
+        name: String(d.name || '').trim(),
+        language: String(d.language || '').trim(),
+        category: String(d.category || '').trim(),
+        params: (Array.isArray(d.params) ? d.params : []).map((p) => String(p ?? '')),
+        mediaUrl: String(d.mediaUrl || '').trim(),
+      };
     case 'question':
       return {
         text: String(d.text || ''),
@@ -113,7 +148,7 @@ export function normalizeData(type, d = {}) {
     case 'buttons':
       return {
         text: String(d.text || ''),
-        options: (Array.isArray(d.options) ? d.options : []).map(normOption),
+        options: withOptionIds((Array.isArray(d.options) ? d.options : []).map(normOption)),
         saveTo: normSaveTo(d.saveTo),
         retryMessage: String(d.retryMessage || ''),
         followUp: normFollowUp(d.followUp),
@@ -145,20 +180,32 @@ export function normalizeData(type, d = {}) {
 
 /** Serialize React Flow state → the graph jsonb the engine executes. */
 export function toGraph(rfNodes, rfEdges) {
-  return {
-    nodes: (rfNodes || []).map((n) => ({
-      id: String(n.id),
-      type: n.type,
-      data: normalizeData(n.type, n.data),
-      position: { x: Math.round(n.position?.x || 0), y: Math.round(n.position?.y || 0) },
-    })),
-    edges: (rfEdges || []).map((e) => ({
+  const nodes = (rfNodes || []).map((n) => ({
+    id: String(n.id),
+    type: n.type,
+    data: normalizeData(n.type, n.data),
+    position: { x: Math.round(n.position?.x || 0), y: Math.round(n.position?.y || 0) },
+  }));
+  // Option handles that no longer exist (option deleted/renumbered) must not survive:
+  // the runtime falls back on stray edges and would route the flow the wrong way.
+  const optionIds = new Map(
+    nodes.filter((n) => n.type === 'buttons')
+      .map((n) => [n.id, new Set((n.data.options || []).map((o) => `opt:${o.id}`))])
+  );
+  const edges = (rfEdges || [])
+    .filter((e) => {
+      const h = e.sourceHandle ?? null;
+      if (h == null || !String(h).startsWith('opt:')) return true;
+      const live = optionIds.get(String(e.source));
+      return !!live && live.has(String(h));
+    })
+    .map((e) => ({
       id: String(e.id || `e_${e.source}_${e.sourceHandle || 'out'}_${e.target}`),
       source: String(e.source),
       target: String(e.target),
       sourceHandle: e.sourceHandle ?? null,
-    })),
-  };
+    }));
+  return { nodes, edges };
 }
 
 // Grid fallback for graphs saved without positions (e.g. seeded manually).
@@ -169,7 +216,10 @@ export function fromGraph(graph) {
   const nodes = (graph?.nodes || []).map((n, i) => ({
     id: String(n.id),
     type: n.type,
-    data: n.data || {},
+    // buttons: legacy options get ids at load so per-option handles render and connect.
+    data: n.type === 'buttons'
+      ? { ...(n.data || {}), options: withOptionIds(n.data?.options) }
+      : (n.data || {}),
     position:
       n.position && Number.isFinite(Number(n.position.x)) && Number.isFinite(Number(n.position.y))
         ? { x: Number(n.position.x), y: Number(n.position.y) }
@@ -231,6 +281,7 @@ export function startNodeOf(graph) {
  *   btn_options — buttons node without 1-10 non-empty options
  *   cond_branch — condition node missing a 'yes' AND/OR 'no' outgoing edge
  *   wh_url      — webhook node with an empty/invalid URL
+ *   tpl_name    — template node without a chosen template
  */
 export function validateGraph(graph) {
   const errors = [];
@@ -261,6 +312,10 @@ export function validateGraph(graph) {
     // throws on every run. Require a real http(s) URL.
     if (n.type === 'webhook') {
       if (!/^https?:\/\/\S+/i.test(String(d.url || '').trim())) errors.push({ code: 'wh_url', nodeId: n.id });
+    }
+    // A template node without a chosen template fails on every send.
+    if (n.type === 'template') {
+      if (!String(d.name || '').trim()) errors.push({ code: 'tpl_name', nodeId: n.id });
     }
   }
   return errors;

@@ -76,9 +76,10 @@ export function makeDbReads(query) {
     },
 
     // Contact name/phone/email behind a conversation (for {{1}} param substitution).
+    // custom_attributes included so journeys' renderText/condition can resolve {{שדה מותאם}}.
     getContact: async (conversationId, accountId) => {
       const rows = await query(
-        `SELECT ct.name, ct.phone_number AS phone, ct.email
+        `SELECT ct.name, ct.phone_number AS phone, ct.email, ct.custom_attributes
            FROM public.conversations c
            JOIN public.contacts ct ON ct.id = c.contact_id
           WHERE c.account_id = $1 AND c.display_id = $2

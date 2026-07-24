@@ -37,6 +37,8 @@ export async function setupDb(pool) {
   await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS campaign_id int');
   await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS source_id text');
   await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS private boolean DEFAULT false');
+  // journeys: convState מסנן הודעות של נציג אנושי (sender_type='User') — כמו ב-Chatwoot האמיתי.
+  await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS sender_type text');
   // real Chatwoot has these; the journeys jrn_launch visibility check reads them.
   await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS assignee_id int');
   await pool.query("ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS settings jsonb DEFAULT '{}'::jsonb");

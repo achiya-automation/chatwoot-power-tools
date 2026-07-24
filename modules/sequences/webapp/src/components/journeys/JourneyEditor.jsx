@@ -32,6 +32,7 @@ import {
   fetchChatwootMeta,
   ensureAttributeDefinition,
 } from '../../api/journeysApi.js';
+import { listTemplates } from '../../api/sequencesApi.js';
 import useT, { useLocale } from '../../useT.js';
 import { translate } from '../../i18n.js';
 
@@ -66,12 +67,14 @@ const M = {
     err_btn_options: '{node}: נדרשות 1-10 אפשרויות עם כיתוב',
     err_cond_branch: '{node}: חברו גם את "כן" וגם את "לא" ליעד',
     err_wh_url: '{node}: חסרה כתובת URL תקינה (https://…)',
+    err_tpl_name: '{node}: לא נבחרה תבנית',
     confirmLeave: 'יש שינויים שלא נשמרו. לצאת בלי לשמור?',
     status_draft: 'טיוטה',
     status_active: 'פעיל',
     status_paused: 'מושהה',
     node_trigger: 'טריגר',
     node_message: 'הודעה',
+    node_template: 'תבנית וואטסאפ',
     node_question: 'שאלה',
     node_buttons: 'כפתורים',
     node_condition: 'תנאי',
@@ -79,6 +82,9 @@ const M = {
     node_action: 'פעולות',
     node_webhook: 'Webhook',
     node_handoff: 'העברה לנציג',
+    var_name: 'שם איש הקשר',
+    var_phone: 'טלפון',
+    var_email: 'מייל',
   },
   en: {
     back: 'Back',
@@ -101,12 +107,14 @@ const M = {
     err_btn_options: '{node}: 1-10 options with labels are required',
     err_cond_branch: '{node}: connect both the "yes" and "no" outputs',
     err_wh_url: '{node}: a valid URL is required (https://…)',
+    err_tpl_name: '{node}: no template selected',
     confirmLeave: 'You have unsaved changes. Leave without saving?',
     status_draft: 'Draft',
     status_active: 'Active',
     status_paused: 'Paused',
     node_trigger: 'Trigger',
     node_message: 'Message',
+    node_template: 'WhatsApp template',
     node_question: 'Question',
     node_buttons: 'Buttons',
     node_condition: 'Condition',
@@ -114,6 +122,9 @@ const M = {
     node_action: 'Actions',
     node_webhook: 'Webhook',
     node_handoff: 'Handoff',
+    var_name: 'Contact name',
+    var_phone: 'Phone',
+    var_email: 'Email',
   },
 };
 
@@ -150,19 +161,27 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
   const dark = useDarkMode();
   const BackIcon = locale === 'he' ? ArrowRight : ArrowLeft;
 
-  const initial = useMemo(() => fromGraph(journey?.graph || emptyGraph()), [journey]);
+  const initial = useMemo(() => {
+    const g = fromGraph(journey?.graph || emptyGraph());
+    // גרף שנשמר בלי טריגר (למשל דרך API) — משחזרים את העוגן; בלעדיו אין לאן לחבר התחלה.
+    if (!g.nodes.some((n) => n.type === 'trigger')) {
+      g.nodes.unshift({ id: 'trigger', type: 'trigger', data: {}, position: { x: 260, y: 40 }, deletable: false });
+    }
+    return g;
+  }, [journey]);
   const [nodes, setNodes] = useState(initial.nodes);
   const [edges, setEdges] = useState(initial.edges);
   const [jid, setJid] = useState(journey?.id || null);
   const [name, setName] = useState(journey?.name || '');
-  const [trigger, setTrigger] = useState(journey?.trigger || {});
+  // פלואו חדש נולד עם הפעלה-ידנית דלוקה — אחרת אין לו שום טריגר פעיל.
+  const [trigger, setTrigger] = useState(journey?.trigger || { manual: true });
   const [status, setStatus] = useState(journey?.status || 'draft');
   const [dirty, setDirty] = useState(!journey?.id); // a brand-new flow starts unsaved
   const [saving, setSaving] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const [errors, setErrors] = useState([]); // [{code, nodeId?}] from validateGraph
   const [apiError, setApiError] = useState('');
-  const [meta, setMeta] = useState({ inboxes: [], agents: [], teams: [], labels: [] });
+  const [meta, setMeta] = useState({ inboxes: [], agents: [], teams: [], labels: [], attrDefs: [], templates: [] });
 
   // Every real edit bumps this. doSave captures it at start and only clears `dirty`
   // if nothing changed while the request was in flight — so an edit made mid-save
@@ -173,13 +192,17 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     setDirty(true);
   }, []);
 
-  // Engine meta (inboxes) + Chatwoot session meta (agents/teams/labels) — both best-effort.
+  // Engine meta (inboxes + WhatsApp templates) + Chatwoot session meta (agents/teams/
+  // labels/attr definitions) — all best-effort: the editor works with empty pickers.
   useEffect(() => {
     if (accountId == null) return;
     getJourneyMeta(accountId)
       .then((m) => setMeta((prev) => ({ ...prev, inboxes: m?.inboxes || [] })))
       .catch(() => {});
     fetchChatwootMeta(accountId).then((m) => setMeta((prev) => ({ ...prev, ...m }))).catch(() => {});
+    listTemplates(accountId)
+      .then((tpls) => setMeta((prev) => ({ ...prev, templates: tpls || [] })))
+      .catch(() => {});
   }, [accountId]);
 
   // Native safety net for a browser tab close/refresh with unsaved changes
@@ -258,7 +281,8 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     markDirty();
   };
 
-  // Field suggestions for condition nodes: saved answer keys + webhook targets + contact basics.
+  // Field suggestions for condition nodes: saved answer keys + webhook targets +
+  // contact basics + the account's custom-attribute definitions.
   const fieldSuggestions = useMemo(() => {
     const keys = new Set(['name', 'phone', 'email']);
     for (const n of nodes) {
@@ -266,8 +290,36 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
       if (k) keys.add(String(k).trim());
       if (n.type === 'webhook' && n.data?.saveResponseTo) keys.add(String(n.data.saveResponseTo).trim());
     }
+    for (const def of meta.attrDefs || []) {
+      if (def?.attribute_key) keys.add(String(def.attribute_key).trim());
+    }
     return [...keys].filter(Boolean);
-  }, [nodes]);
+  }, [nodes, meta.attrDefs]);
+
+  // בורר המשתנים: בסיס (שם/טלפון/מייל) → שדות מותאמים של איש הקשר (מההגדרות של
+  // Chatwoot, עם השם היפה שלהם) → תשובות שהפלואו הזה אוסף.
+  const vars = useMemo(() => {
+    const out = [
+      { key: 'שם', label: t('var_name') },
+      { key: 'טלפון', label: t('var_phone') },
+      { key: 'מייל', label: t('var_email') },
+    ];
+    const seen = new Set(out.map((v) => v.key));
+    const push = (key, label) => {
+      const k = String(key || '').trim();
+      if (!k || seen.has(k)) return;
+      seen.add(k);
+      out.push({ key: k, label: label || '' });
+    };
+    for (const def of meta.attrDefs || []) {
+      if (def?.attribute_model === 'contact_attribute') push(def.attribute_key, def.attribute_display_name);
+    }
+    for (const n of nodes) {
+      push(n.data?.saveTo?.key);
+      if (n.type === 'webhook') push(n.data?.saveResponseTo);
+    }
+    return out;
+  }, [nodes, meta.attrDefs, t]);
 
   const errorText = (e) => {
     if (e.code === 'name') return t('err_name');
@@ -466,6 +518,8 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
             removeNode={removeNode}
             meta={meta}
             fieldSuggestions={fieldSuggestions}
+            vars={vars}
+            accountId={accountId}
           />
         </aside>
         {/* React Flow needs LTR coordinates — content inside nodes is RTL */}

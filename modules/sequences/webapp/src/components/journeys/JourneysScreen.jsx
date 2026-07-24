@@ -7,6 +7,7 @@ import {
   Pause,
   Activity,
   AlertCircle,
+  Copy,
   ShieldAlert,
   Workflow,
   RefreshCw,
@@ -19,7 +20,7 @@ import { Table, THead, TBody, TR, TH, TD } from '../ui/Table.jsx';
 import { useToast } from '../ui/Toast.jsx';
 import RunsModal from './RunsModal.jsx';
 import { validateGraph } from './graphModel.js';
-import { listJourneys, getJourney, deleteJourney, setJourneyStatus } from '../../api/journeysApi.js';
+import { listJourneys, getJourney, deleteJourney, setJourneyStatus, saveJourney } from '../../api/journeysApi.js';
 import useT from '../../useT.js';
 import { translate } from '../../i18n.js';
 
@@ -61,6 +62,10 @@ const M = {
     pauseAria: 'השהיית {name}',
     runsAria: 'ריצות של {name}',
     deleteAria: 'מחיקת {name}',
+    duplicateAria: 'שכפול {name}',
+    duplicated: 'הפלואו שוכפל כטיוטה',
+    errDuplicate: 'השכפול נכשל',
+    copySuffix: '— עותק',
     deleteTitle: 'מחיקת פלואו',
     deleteBody: 'למחוק את "{name}"? הריצות וההיסטוריה שלו יימחקו. פעולה זו אינה ניתנת לשחזור.',
     delete: 'מחיקה',
@@ -100,6 +105,10 @@ const M = {
     pauseAria: 'Pause {name}',
     runsAria: 'Runs of {name}',
     deleteAria: 'Delete {name}',
+    duplicateAria: 'Duplicate {name}',
+    duplicated: 'Flow duplicated as a draft',
+    errDuplicate: 'Duplicate failed',
+    copySuffix: '— copy',
     deleteTitle: 'Delete flow',
     deleteBody: 'Delete "{name}"? Its runs and history will be removed. This cannot be undone.',
     delete: 'Delete',
@@ -206,6 +215,26 @@ export default function JourneysScreen({ accountId }) {
       toast({ message: t('pausedToast'), variant: 'success' });
     } catch (e) {
       setError(e.message || translate(M, 'errStatus'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // שכפול: טוענים את הפלואו המלא ושומרים עותק חדש כטיוטה (בלי id — save יוצר).
+  const duplicate = async (row) => {
+    setBusyId(row.id);
+    setError('');
+    try {
+      const full = await getJourney(accountId, row.id);
+      await saveJourney(accountId, {
+        name: `${row.name} ${t('copySuffix')}`,
+        trigger: full.trigger || {},
+        graph: full.graph,
+      });
+      toast({ message: t('duplicated'), variant: 'success' });
+      load();
+    } catch (e) {
+      setError(e.message || translate(M, 'errDuplicate'));
     } finally {
       setBusyId(null);
     }
@@ -370,6 +399,17 @@ export default function JourneysScreen({ accountId }) {
                         onClick={() => activate(row)}
                       />
                     )}
+                    <Button
+                      variant="ghost"
+                      color="slate"
+                      size="sm"
+                      iconOnly
+                      icon={Copy}
+                      disabled={busyId === row.id}
+                      aria-label={t('duplicateAria', { name: row.name })}
+                      title={t('duplicateAria', { name: row.name })}
+                      onClick={() => duplicate(row)}
+                    />
                     <Button
                       variant="ghost"
                       color="slate"
