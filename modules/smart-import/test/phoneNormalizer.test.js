@@ -37,3 +37,11 @@ test('Israeli landline 03-XXXXXXX → +97231234567', () => {
 test('Israeli landline with spaces 04 1234567 → +97241234567', () => {
   assert.equal(normalizePhone('04 1234567'), '+97241234567');
 });
+
+// Excel strips '+' from numeric cells — a bare foreign number must survive the round-trip.
+test('restores + on bare foreign numbers (Excel strips it)', () => {
+  assert.equal(normalizePhone('17187159550'), '+17187159550');   // US
+  assert.equal(normalizePhone('4367683181856'), '+4367683181856'); // AT
+  assert.equal(normalizePhone(''), null);
+  assert.equal(normalizePhone('12345678'), null); // 8 digits — too short for anything
+});

@@ -66,3 +66,52 @@ test('insurance export: filler word stripped, ID column not mistaken for phone',
   assert.equal(f('דוא"ל לקוח'), 'email');
   assert.equal(f('יישוב'), 'city');
 });
+
+// ── validateMapping — blocks a mapping whose column content contradicts the field ──
+import { validateMapping } from '../lib/columnDetector.js';
+
+const NOTE_ROWS = [
+  ['דנה', 'הזמנה whatsapp', '+972501234567'],
+  ['רון', 'הזמנה sms+whatsapp', '+972529876543'],
+  ['גיל', 'הזמנה whatsapp', '+972541112223'],
+];
+
+test('validateMapping blocks a notes column mapped to email', () => {
+  const mapping = [
+    { index: 0, field: 'first_name' },
+    { index: 1, field: 'email' },       // ← the Hana bug: note column mapped to email
+    { index: 2, field: 'phone_number' },
+  ];
+  const blockers = validateMapping(['שם', 'הערה', 'טלפון'], NOTE_ROWS, mapping);
+  assert.equal(blockers.length, 1);
+  assert.equal(blockers[0].header, 'הערה');
+  assert.equal(blockers[0].field, 'email');
+  assert.equal(blockers[0].valid, 0);
+  assert.equal(blockers[0].total, 3);
+});
+
+test('validateMapping blocks a notes column mapped to phone', () => {
+  const mapping = [{ index: 1, field: 'phone_number' }];
+  const blockers = validateMapping(['שם', 'הערה', 'טלפון'], NOTE_ROWS, mapping);
+  assert.equal(blockers.length, 1);
+  assert.equal(blockers[0].field, 'phone_number');
+});
+
+test('validateMapping passes correct email and phone mappings', () => {
+  const rows = [
+    ['a@b.com', '0501234567'],
+    ['c@d.com', '0529876543'],
+    ['לא אימייל', ''],           // one bad value + one empty — still ≥50% valid
+  ];
+  const mapping = [{ index: 0, field: 'email' }, { index: 1, field: 'phone_number' }];
+  assert.deepEqual(validateMapping(['מייל', 'נייד'], rows, mapping), []);
+});
+
+test('validateMapping ignores empty columns and non-validated fields', () => {
+  const rows = [['', 'הזמנה'], ['', 'הזמנה']];
+  const mapping = [
+    { index: 0, field: 'email' },      // column is entirely empty — nothing to validate
+    { index: 1, field: 'identifier' }, // identifier accepts any string
+  ];
+  assert.deepEqual(validateMapping(['מייל', 'הערה'], rows, mapping), []);
+});
