@@ -147,7 +147,7 @@
       frame.setAttribute('src', src);
       loaded = true;
     } else {
-      try { frame.contentWindow.postMessage({ type: 'drip-nav', tab: tab }, '*'); } catch (e) {}
+      try { frame.contentWindow.postMessage({ type: 'drip-nav', tab: tab }, location.origin); } catch (e) {}
     }
     shown = true;
     document.body.classList.add('drip-active'); // disables Chatwoot's native highlight (see the style block above)
@@ -294,7 +294,7 @@
   // live theme sync to the iframe
   new MutationObserver(function () {
     if (shown && frame && frame.contentWindow) {
-      try { frame.contentWindow.postMessage({ type: 'drip-theme', theme: isDark() ? 'dark' : 'light' }, '*'); } catch (e) {}
+      try { frame.contentWindow.postMessage({ type: 'drip-theme', theme: isDark() ? 'dark' : 'light' }, location.origin); } catch (e) {}
     }
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
@@ -302,7 +302,7 @@
   // (אירוע נדיר, ברמת reload), אבל שומרים parity כך שהחלפה תתפשט בלי לרענן.
   new MutationObserver(function () {
     if (shown && frame && frame.contentWindow) {
-      try { frame.contentWindow.postMessage({ type: 'drip-locale', locale: dripLocale() }, '*'); } catch (e) {}
+      try { frame.contentWindow.postMessage({ type: 'drip-locale', locale: dripLocale() }, location.origin); } catch (e) {}
     }
   }).observe(document.querySelector('#app') || document.documentElement, { attributes: true, attributeFilter: ['dir'] });
 

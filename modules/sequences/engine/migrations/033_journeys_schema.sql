@@ -44,11 +44,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_journey_runs_live ON drip.journey_runs(acco
 
 -- ── CRUD בדפוס ה-RPC של הרצפים (save_sequence) ──
 
-CREATE OR REPLACE FUNCTION drip._journey_json(p_id uuid) RETURNS jsonb
+-- account-scoped: callers always pass their validated account_id, so a leaked/guessed
+-- journey UUID alone can't read another tenant's flow.
+CREATE OR REPLACE FUNCTION drip._journey_json(p_id uuid, p_account int) RETURNS jsonb
 LANGUAGE sql STABLE AS $$
   SELECT to_jsonb(j) FROM (
     SELECT id, account_id, name, status, trigger, graph, created_at, updated_at
-    FROM drip.journeys WHERE id = p_id
+    FROM drip.journeys WHERE id = p_id AND account_id = p_account
   ) j;
 $$;
 
@@ -80,7 +82,7 @@ BEGIN
     RETURNING id INTO v_id;
   END IF;
 
-  RETURN drip._journey_json(v_id);
+  RETURN drip._journey_json(v_id, v_acc);
 END;
 $$;
 
@@ -121,6 +123,23 @@ BEGIN
     UPDATE drip.journey_runs SET status = 'stopped', updated_at = now()
      WHERE journey_id = p_id AND status IN ('active','waiting_answer','waiting_delay');
   END IF;
-  RETURN drip._journey_json(p_id);
+  RETURN drip._journey_json(p_id, p_account);
 END;
 $$;
+
+-- 🔒 least-privilege: these RPCs are for the engine role only. Without an explicit REVOKE,
+-- Postgres grants EXECUTE to PUBLIC on creation, so any role with USAGE on schema drip
+-- (e.g. the chatwoot app role) could call them directly for any account_id.
+DO $$
+DECLARE fn text;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY[
+    'drip._journey_json(uuid, int)', 'drip.save_journey(jsonb)', 'drip.list_journeys(int)',
+    'drip.delete_journey(int, uuid)', 'drip.set_journey_status(int, uuid, text)'
+  ] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', fn);
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'drip_engine') THEN
+      EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO drip_engine', fn);
+    END IF;
+  END LOOP;
+END $$;

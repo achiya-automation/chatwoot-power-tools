@@ -12,9 +12,19 @@
  * טיפוסי צמתים: trigger | message | question | buttons | condition | delay | action | webhook | handoff.
  * מצב הריצה חי ב-drip.journey_runs — צומת נוכחי, תשובות, ותזמון הפעולה הבאה.
  */
+import { createHmac } from 'node:crypto';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { isOptOut } from './compliance.js';
 
 const LIVE = ['active', 'waiting_answer', 'waiting_delay'];
+
+// 🔒 סוד ה-hook הספציפי לחשבון: HMAC(master, account_id). כל חשבון מקבל נתיב-webhook
+// משלו, כך שחשיפת הסוד של דייר אחד (שרואה אותו ב-Settings→Integrations) לא מאפשרת זיוף
+// אירועים עבור דייר אחר — צריך את סוד-האב כדי לחשב HMAC של חשבון אחר.
+export function perAccountHookToken(masterSecret, accountId) {
+  return createHmac('sha256', String(masterSecret)).update(String(accountId)).digest('hex');
+}
 // ולידציות תשובה: מספר/מייל/טלפון — רשימה סגורה קטנה; 'text' מקבל הכל.
 const VALIDATORS = {
   text: (t) => t.trim().length > 0,
@@ -106,8 +116,18 @@ async function getRun(query, accountId, displayId) {
   return toRun(rows[0]) || null;
 }
 
+// Column names become SQL identifiers here (they can't be $-parameters), so they MUST come
+// from this hardcoded allow-list — never from anything caller/attacker-influenced. All values
+// are still passed as bound $-parameters. Every call site uses these literal keys today; the
+// allow-list is defense-in-depth so a future call with a bad key throws instead of injecting.
+const RUN_COLUMNS = new Set([
+  'status', 'current_node', 'answers', 'retry_count',
+  'waiting_since', 'next_action_at', 'last_inbound_message_id', 'last_error',
+]);
 async function updateRun(query, id, fields) {
   const keys = Object.keys(fields);
+  const bad = keys.find((k) => !RUN_COLUMNS.has(k));
+  if (bad) throw new Error(`updateRun: illegal column ${bad}`);
   const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
   const vals = keys.map((k) => (k === 'answers' ? JSON.stringify(fields[k]) : fields[k]));
   await query(`UPDATE drip.journey_runs SET ${sets}, updated_at = now() WHERE id = $1`, [id, ...vals]);
@@ -231,7 +251,44 @@ export async function executeFrom(ctx, run, journey, nodeId) {
   await updateRun(query, run.id, { status: 'done', current_node: currentId, answers, next_action_at: null });
 }
 
+// 🔒 SSRF guard: צומת webhook נשלט ע"י אדמין-החשבון, והמנוע יושב על רשת ה-Docker
+// הפנימית (rails, postgres) עם גישה ל-PII. בלי הגנה, אדמין יכול לכוון את ה-fetch לשירות
+// פנימי או ל-169.254.169.254 (metadata) ואף לחלץ את התשובה דרך saveResponseTo. לכן:
+// רק http/https, והיעד נפתר (DNS) ונבדק שאינו כתובת פרטית/loopback/link-local.
+function isPrivateIp(ip) {
+  const v = isIP(ip);
+  if (v === 4) {
+    const p = ip.split('.').map(Number);
+    return p[0] === 10
+      || (p[0] === 172 && p[1] >= 16 && p[1] <= 31)
+      || (p[0] === 192 && p[1] === 168)
+      || p[0] === 127
+      || (p[0] === 169 && p[1] === 254)          // link-local + cloud metadata
+      || p[0] === 0;
+  }
+  const s = ip.toLowerCase();
+  return s === '::1' || s === '::' || s.startsWith('fc') || s.startsWith('fd')  // ULA
+    || s.startsWith('fe80') || s.startsWith('::ffff:127.') || s.startsWith('::ffff:169.254');
+}
+
+export async function assertPublicUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch { throw new Error('bad webhook url'); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('webhook url must be http(s)');
+  const host = u.hostname;
+  if (isIP(host)) {
+    if (isPrivateIp(host)) throw new Error('webhook url resolves to a private address');
+    return;
+  }
+  // hostname → resolve every address and reject if any is private (DNS-rebinding-safe enough)
+  const addrs = await dnsLookup(host, { all: true }).catch(() => { throw new Error('webhook host does not resolve'); });
+  if (!addrs.length || addrs.some((a) => isPrivateIp(a.address))) {
+    throw new Error('webhook url resolves to a private address');
+  }
+}
+
 async function postWebhook(url, payload) {
+  await assertPublicUrl(url);
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), 8000);
   try {
@@ -240,6 +297,7 @@ async function postWebhook(url, payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: ac.signal,
+      redirect: 'error',                          // a 30x to an internal host would re-open SSRF
     });
     const text = await r.text();
     try { return JSON.parse(text); } catch { return text || null; }
@@ -431,6 +489,16 @@ export async function handleJourneyHook(ctx, event) {
   const j = journeys.find((x) => (x.trigger?.keywords || []).length
     && inboxAllowed(x) && keywordMatch(x.trigger.keywords, event.content));
   if (!j) return;
+  // 🔒 הגבלת-קצב: לקוח חיצוני יכול להקליד את מילת-המפתח שוב ושוב. uq_journey_runs_live מונע
+  // ריצה כפולה בו-זמנית, אבל אחרי סיום/עצירה מילה חוזרת הייתה מפעילה שוב ושוב — ספאם, עלות
+  // תבניות, וסיכון WABA. חוסמים הפעלה חוזרת בשיחה אם כבר הייתה ריצה ב-30 הדקות האחרונות.
+  const recent = await query(
+    `SELECT 1 FROM drip.journey_runs
+      WHERE account_id = $1 AND display_id = $2 AND created_at > now() - interval '30 minutes'
+      LIMIT 1`,
+    [accountId, displayId]
+  );
+  if (recent.length) { log.info?.(`[journeys] keyword rate-limited on conv ${displayId} (account ${accountId})`); return; }
   const client = await makeClientFor(accountId);
   await prepJourney(query, j);
   await startRun({ ...ctx, client }, j, { accountId, displayId, contactId });
@@ -456,9 +524,10 @@ export async function reconcileJourneys(ctx, accountId) {
   if (!journeys.length) return;
   const byId = Object.fromEntries(journeys.map((j) => [j.id, j]));
 
-  // רישום ה-webhook (אידמפוטנטי; הנתיב נושא את הסוד)
-  if (config.journeyHookUrl) {
-    await query(`SELECT drip.ensure_journey_webhook($1, $2)`, [accountId, config.journeyHookUrl])
+  // רישום ה-webhook (אידמפוטנטי; הנתיב נושא סוד ספציפי-לחשבון, לא סוד גלובלי)
+  if (config.journeyHookBase && config.journeyHookSecret) {
+    const url = `${config.journeyHookBase.replace(/\/+$/, '')}/drip-api/journey-hook/${perAccountHookToken(config.journeyHookSecret, accountId)}`;
+    await query(`SELECT drip.ensure_journey_webhook($1, $2)`, [accountId, url])
       .catch((e) => log.warn?.(`[journeys] ensure webhook failed: ${e.message}`));
   }
 
@@ -540,11 +609,12 @@ export async function handleJourneysAction(ctx, action, payload, accountId) {
     case 'jrn_list':
       return (await query(`SELECT drip.list_journeys($1) AS j`, [accountId]))[0].j;
     case 'jrn_get': {
+      // account-scoped in SQL (defense in depth) — not fetch-then-check in JS.
       const rows = await query(
-        `SELECT drip._journey_json($1::uuid) AS j`, [String(payload.id)]
+        `SELECT drip._journey_json($1::uuid, $2) AS j`, [String(payload.id), accountId]
       );
       const j = rows[0]?.j;
-      if (!j || Number(j.account_id) !== Number(accountId)) throw new Error('הפלואו לא נמצא');
+      if (!j) throw new Error('הפלואו לא נמצא');
       return j;
     }
     case 'jrn_save':
@@ -580,23 +650,26 @@ export async function handleJourneysAction(ctx, action, payload, accountId) {
       );
       const journey = rows[0];
       if (!journey) throw new Error('הפלואו לא נמצא');
+      const displayId = Number(payload.display_id);
+      // 🔒 כשהחשבון מגביל נציגים לשיחות שלהם, נציג לא-אדמין רשאי להזניק פלואו רק על שיחה
+      // שמשויכת אליו — אחרת הוא יכול לנחש display_id ולהפעיל בוט על שיחה שהוא כלל לא רואה.
+      const actor = payload.__actor || {};
+      let contactId = Number(payload.contact_id) || null;
+      const c = await query(
+        `SELECT c.contact_id, c.assignee_id,
+                (a.settings->>'restrict_agents_to_assigned' IN ('true','1')) AS restricted
+           FROM public.conversations c JOIN public.accounts a ON a.id = c.account_id
+          WHERE c.account_id = $1 AND c.display_id = $2 LIMIT 1`,
+        [accountId, displayId]
+      );
+      const conv = c[0];
+      if (conv?.restricted && !actor.isAdmin && actor.uid && Number(conv.assignee_id) !== Number(actor.uid)) {
+        throw new Error('אפשר להזניק פלואו רק על שיחה שמשויכת אליך');
+      }
+      if (!contactId) contactId = conv?.contact_id ? Number(conv.contact_id) : null;
       const client = await makeClientFor(accountId);
       await prepJourney(query, journey);
-      // הזנקה ידנית מהשיחה שולחת רק display_id — משלימים את איש הקשר מה-DB כדי
-      // שתשובות שנשמרות ל"שדה איש קשר" יידעו לאן ללכת.
-      let contactId = Number(payload.contact_id) || null;
-      if (!contactId) {
-        const c = await query(
-          `SELECT contact_id FROM public.conversations WHERE account_id = $1 AND display_id = $2 LIMIT 1`,
-          [accountId, Number(payload.display_id)]
-        );
-        contactId = c[0]?.contact_id ? Number(c[0].contact_id) : null;
-      }
-      const run = await startRun({ ...ctx, client }, journey, {
-        accountId,
-        displayId: Number(payload.display_id),
-        contactId,
-      });
+      const run = await startRun({ ...ctx, client }, journey, { accountId, displayId, contactId });
       if (!run) throw new Error('פלואו אחר כבר פעיל בשיחה הזו');
       return { started: true, run_id: run.id };
     }

@@ -57,10 +57,11 @@ services:
       # anyone holding this URL can push a notification. Unset = alerts off.
       NOTIFY_WEBHOOK_URL: ${CWPT_NOTIFY_WEBHOOK_URL:-}
       # Flow Builder (journeys): Chatwoot pushes real-time events to this container at
-      # /drip-api/journey-hook/<secret> — the path carries the secret (install.sh generates
-      # it into .env). Empty = no hook endpoint; journeys then run on the 60s tick scan only.
+      # /drip-api/journey-hook/<token>, where <token>=HMAC(secret, account_id) per account
+      # (see config.js/perAccountHookToken). The master secret NEVER appears in the path or in
+      # public.webhooks — only the per-account HMAC does. Empty secret = no hook (tick-scan only).
       JOURNEY_HOOK_SECRET: ${CWPT_JOURNEY_HOOK_SECRET:-}
-      JOURNEY_HOOK_URL: ${CWPT_JOURNEY_HOOK_SECRET:+http://cwpt-engine:3100/drip-api/journey-hook/${CWPT_JOURNEY_HOOK_SECRET}}
+      JOURNEY_HOOK_BASE: http://cwpt-engine:3100
     volumes:
       - cwpt_media:/app/media
     ports:
