@@ -203,5 +203,5 @@ test('fetchChatwootMeta normalizes array and {payload} shapes, empty on failure'
 test('fetchChatwootMeta without a session returns empty lists', async () => {
   withoutDocumentCookie();
   const meta = await journeysApi.fetchChatwootMeta(7);
-  assert.deepEqual(meta, { agents: [], teams: [], labels: [] });
+  assert.deepEqual(meta, { agents: [], teams: [], labels: [], attrDefs: [] });
 });

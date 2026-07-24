@@ -444,7 +444,7 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       if (reads?.getContact) return reads.getContact(cid, accountId);
       const conv = await req(`/conversations/${cid}`);
       const m = conv.meta?.sender || {};
-      return { name: m.name, phone: m.phone_number, email: m.email };
+      return { name: m.name, phone: m.phone_number, email: m.email, custom_attributes: m.custom_attributes || {} };
     },
 
     /** Returns true if any incoming (customer) message arrived after sinceISO

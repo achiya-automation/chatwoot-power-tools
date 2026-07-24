@@ -10,6 +10,7 @@ import {
   normalizeData,
   validateGraph,
   newNodeId,
+  newOptionId,
   startNodeOf,
   collectAttributeKeys,
 } from '../src/components/journeys/graphModel.js';
@@ -20,7 +21,7 @@ import {
 
 test('node type set matches the engine runtime', () => {
   assert.deepEqual(NODE_TYPES, [
-    'trigger', 'message', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
+    'trigger', 'message', 'template', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
   ]);
   assert.ok(!ADDABLE_TYPES.includes('trigger')); // exactly one trigger, not addable
 });
@@ -30,6 +31,7 @@ test('defaultDataFor covers every addable type with engine-shaped fields', () =>
   assert.equal(defaultDataFor('question').saveTo.scope, 'contact');
   assert.equal(defaultDataFor('question').validation, 'text');
   assert.equal(defaultDataFor('buttons').options.length, 1);
+  assert.equal(defaultDataFor('buttons').options[0].id, 'o1'); // id מלידה — ה-handle פר-אפשרות תלוי בו
   assert.deepEqual(defaultDataFor('condition'), { field: '', op: 'eq', value: '' });
   assert.deepEqual(defaultDataFor('delay'), { minutes: 0, hours: 1, days: 0 });
   assert.deepEqual(defaultDataFor('webhook'), { url: '', saveResponseTo: '' });
@@ -271,4 +273,72 @@ test('collectAttributeKeys: dedupes by scope+key, skips empties', () => {
     { key: 'budget', scope: 'contact' },
     { key: 'budget', scope: 'conversation' },
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// template node + per-option branching (new in the production-hardening pass)
+// ---------------------------------------------------------------------------
+
+test('normalizeData: template node coerces params to strings and trims ids', () => {
+  const d = normalizeData('template', {
+    name: ' welcome_lead ', language: 'he', category: 'MARKETING',
+    params: ['{{שם}}', 7, null], mediaUrl: ' https://x/y.jpg ',
+  });
+  assert.deepEqual(d, {
+    name: 'welcome_lead', language: 'he', category: 'MARKETING',
+    params: ['{{שם}}', '7', ''], mediaUrl: 'https://x/y.jpg',
+  });
+});
+
+test('validateGraph: template node requires a chosen template', () => {
+  const g = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'n1', type: 'template', data: { name: '', params: [] } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'n1' }],
+  };
+  const errs = validateGraph(g);
+  assert.ok(errs.some((e) => e.code === 'tpl_name' && e.nodeId === 'n1'));
+});
+
+test('newOptionId is stable across delete/re-add', () => {
+  assert.equal(newOptionId([]), 'o1');
+  assert.equal(newOptionId([{ id: 'o1' }, { id: 'o3' }]), 'o4');
+  assert.equal(newOptionId([{ title: 'בלי id' }]), 'o1');
+});
+
+test('normalizeData: buttons options keep/backfill stable ids', () => {
+  const d = normalizeData('buttons', {
+    text: 'בחרו',
+    options: [{ title: 'א', id: 'o5' }, { title: 'ב' }],
+    saveTo: { scope: 'contact', key: 'k' },
+  });
+  assert.equal(d.options[0].id, 'o5');       // קיים — נשמר
+  assert.equal(d.options[1].id, 'o6');       // חסר — הושלם אחרי המקסימום
+});
+
+test('fromGraph backfills option ids on legacy buttons nodes', () => {
+  const { nodes } = fromGraph({
+    nodes: [{ id: 'b', type: 'buttons', data: { text: '', options: [{ title: 'ישן' }] } }],
+    edges: [],
+  });
+  assert.equal(nodes[0].data.options[0].id, 'o1');
+});
+
+test('toGraph drops edges whose option handle no longer exists', () => {
+  const rfNodes = [
+    { id: 'b', type: 'buttons', position: { x: 0, y: 0 }, data: {
+      text: 'x', options: [{ id: 'o1', title: 'א' }], saveTo: { scope: 'contact', key: 'k' },
+    } },
+    { id: 'm', type: 'message', position: { x: 0, y: 100 }, data: { text: 'י' } },
+  ];
+  const rfEdges = [
+    { id: 'e1', source: 'b', target: 'm', sourceHandle: 'opt:o1' },  // חי
+    { id: 'e2', source: 'b', target: 'm', sourceHandle: 'opt:o9' },  // אפשרות שנמחקה
+    { id: 'e3', source: 'b', target: 'm' },                          // ברירת מחדל
+  ];
+  const g = toGraph(rfNodes, rfEdges);
+  const handles = g.edges.map((e) => e.sourceHandle);
+  assert.deepEqual(handles.sort(), ['opt:o1', null].sort());
 });

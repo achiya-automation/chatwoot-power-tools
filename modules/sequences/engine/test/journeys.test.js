@@ -26,6 +26,7 @@ function fakeClient() {
     sendText: rec('sendText'),
     sendInputSelect: rec('sendInputSelect'),
     sendMedia: rec('sendMedia'),
+    sendTemplate: rec('sendTemplate'),
     toggleStatus: rec('toggleStatus'),
     assignConversation: rec('assignConversation'),
     addLabels: rec('addLabels'),
@@ -227,16 +228,22 @@ test('buttons node: input_select on Cloud API channel, numbered fallback otherwi
     ],
     edges: [{ source: 't', target: 'b' }, { source: 'b', target: 'h' }],
   };
-  // ערוץ רשמי → כפתורים אמיתיים
+  // סוג הערוץ נקבע לפי התיבה של השיחה עצמה (לא של תיבת הטריגר) — פלואו אחד יכול
+  // לחול גם על תיבה רשמית וגם על WAHA, וכל שיחה מקבלת את הפורמט הנכון לה.
+  await query(`INSERT INTO public.inboxes (id, account_id, name, channel_type) VALUES
+    (31, 1, 'רשמי', 'Channel::Whatsapp'), (32, 1, 'WAHA', 'Channel::Api')
+    ON CONFLICT (id) DO NOTHING`);
+  await query(`INSERT INTO public.conversations (id, display_id, account_id, inbox_id) VALUES
+    (106, 106, 1, 31), (107, 107, 1, 32) ON CONFLICT (id) DO NOTHING`);
+
+  // שיחה בערוץ רשמי → כפתורים אמיתיים
   const j1 = await makeJourney(g);
-  j1._channelType = 'Channel::Whatsapp';
   const c1 = fakeClient();
   await startRun(ctxWith(c1), j1, { accountId: 1, displayId: 106 });
   assert.ok(c1.calls.some((c) => c.name === 'sendInputSelect'));
 
-  // ערוץ WAHA/אחר → טקסט ממוספר
+  // שיחה בערוץ WAHA/אחר → טקסט ממוספר
   const j2 = await makeJourney(g);
-  j2._channelType = 'Channel::Api';
   const c2 = fakeClient();
   await startRun(ctxWith(c2), j2, { accountId: 1, displayId: 107 });
   const sent = c2.calls.filter((c) => c.name === 'sendText');
@@ -325,21 +332,35 @@ test('no answer: follow-up message, then give-up per onGiveUp=continue', async (
 
 // ── hook ──
 
-test('hook: conversation_created starts a journey on a matching inbox only', async () => {
+test('hook: conversation_created (real top-level payload) starts only on a fresh inbound conversation', async () => {
   await makeJourney(GRAPH, { on_new_conversation: true, inbox_ids: [3] });
   const client = fakeClient();
   const ctx = ctxWith(client);
+  await query(`INSERT INTO public.conversations (id, display_id, account_id, inbox_id) VALUES (200, 200, 1, 3)
+    ON CONFLICT (id) DO NOTHING`);
+  await query(`DELETE FROM public.messages WHERE conversation_id = 200`);
 
-  await handleJourneyHook(ctx, {
-    event: 'conversation_created', account: { id: 1 },
-    conversation: { display_id: 200 }, inbox: { id: 9 },
-  });
+  // המבנה האמיתי של Chatwoot: שדות השיחה בראש ה-payload (id = display_id, inbox_id שטוח).
+  // תיבה לא תואמת → כלום.
+  await handleJourneyHook(ctx, { event: 'conversation_created', account: { id: 1 }, id: 200, inbox_id: 9 });
   assert.equal((await query(`SELECT count(*)::int AS n FROM drip.journey_runs`))[0].n, 0);
 
-  await handleJourneyHook(ctx, {
-    event: 'conversation_created', account: { id: 1 },
-    conversation: { display_id: 200 }, inbox: { id: 3 },
-  });
+  // תיבה תואמת אבל בלי אף הודעה נכנסת (שיחה שנציג פתח יזום) → לא מפעילים בוט.
+  await handleJourneyHook(ctx, { event: 'conversation_created', account: { id: 1 }, id: 200, inbox_id: 3 });
+  assert.equal((await query(`SELECT count(*)::int AS n FROM drip.journey_runs`))[0].n, 0);
+
+  // עם הודעת פתיחה נכנסת → הפלואו מתחיל, וה-watermark מאותחל להודעת הטריגר
+  // (שלא תיבלע מחדש ע"י סריקת הגיבוי כ"תשובה" לשאלה הראשונה).
+  await query(`INSERT INTO public.messages (id, conversation_id, account_id, message_type, content)
+    VALUES (9001, 200, 1, 0, 'היי')`);
+  await handleJourneyHook(ctx, { event: 'conversation_created', account: { id: 1 }, id: 200, inbox_id: 3, meta: { sender: { id: 77 } } });
+  const runs = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 200`);
+  assert.equal(runs.length, 1);
+  assert.equal(Number(runs[0].last_inbound_message_id), 9001);
+  assert.equal(Number(runs[0].contact_id), 77);
+
+  // אירוע כפול (retry של Chatwoot) → לא נפתחת ריצה שנייה.
+  await handleJourneyHook(ctx, { event: 'conversation_created', account: { id: 1 }, id: 200, inbox_id: 3 });
   assert.equal((await query(`SELECT count(*)::int AS n FROM drip.journey_runs`))[0].n, 1);
 });
 
@@ -438,4 +459,245 @@ test('store dispatch wraps jrn_ results as { data } for the wire format', async 
   const { handleAction } = await import('../src/store.js');
   const r = await handleAction(1, 'jrn_list', {});
   assert.ok(Array.isArray(r.data), 'jrn_list must come back under .data as an array');
+});
+
+// ── פיצ'רים חדשים: תבנית, branching פר-כפתור, watermark, שעות שקט, לולאה ──
+
+test('template node sends a WhatsApp template with rendered params', async () => {
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'tp', type: 'template', data: {
+        name: 'welcome_lead', language: 'he', category: 'MARKETING',
+        params: ['{{שם}}', 'קבוע'], mediaUrl: '',
+      } },
+      { id: 'h', type: 'handoff', data: {} },
+    ],
+    edges: [{ source: 't', target: 'tp' }, { source: 'tp', target: 'h' }],
+  };
+  const j = await makeJourney(g);
+  const client = fakeClient();
+  await startRun(ctxWith(client), j, { accountId: 1, displayId: 400 });
+  const call = client.calls.find((c) => c.name === 'sendTemplate');
+  assert.ok(call, 'sendTemplate was not called');
+  assert.equal(call.args[0], 400);
+  assert.deepEqual(call.args[1], {
+    name: 'welcome_lead', language: 'he', category: 'MARKETING', params: ['דנה', 'קבוע'],
+  });
+  const [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 400`);
+  assert.equal(run.status, 'done'); // המשיך ל-handoff
+});
+
+test('buttons: per-option branch routes via opt:<id>; option without an edge takes the default', async () => {
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'b', type: 'buttons', data: {
+        text: 'בחרו:',
+        options: [
+          { id: 'o1', title: 'בוט', value: 'bot' },
+          { id: 'o2', title: 'אתר', value: 'site' },
+        ],
+        saveTo: { scope: 'conversation', key: 'interest' },
+      } },
+      { id: 'm_bot', type: 'message', data: { text: 'ענף בוט' } },
+      { id: 'm_def', type: 'message', data: { text: 'ענף ברירת מחדל' } },
+    ],
+    edges: [
+      { source: 't', target: 'b' },
+      { source: 'b', target: 'm_bot', sourceHandle: 'opt:o1' },
+      { source: 'b', target: 'm_def' }, // ברירת המחדל (בלי handle)
+    ],
+  };
+  // אפשרות עם קשת ייעודית → הענף שלה
+  const j1 = await makeJourney(g);
+  const c1 = fakeClient();
+  await startRun(ctxWith(c1), j1, { accountId: 1, displayId: 401 });
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 401`);
+  await feedAnswer(ctxWith(c1), run, j1, { id: 4010, content: 'בוט' });
+  assert.ok(c1.calls.some((c) => c.name === 'sendText' && c.args[1] === 'ענף בוט'));
+  assert.ok(!c1.calls.some((c) => c.name === 'sendText' && c.args[1] === 'ענף ברירת מחדל'));
+
+  // אפשרות בלי קשת ייעודית → קשת ברירת המחדל
+  const j2 = await makeJourney(g);
+  const c2 = fakeClient();
+  await startRun(ctxWith(c2), j2, { accountId: 1, displayId: 402 });
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 402 AND journey_id = $1`, [j2.id]);
+  await feedAnswer(ctxWith(c2), run, j2, { id: 4020, content: 'אתר' });
+  assert.ok(c2.calls.some((c) => c.name === 'sendText' && c.args[1] === 'ענף ברירת מחדל'));
+});
+
+test('keyword trigger message is NOT re-consumed as the first answer (initial watermark)', async () => {
+  await makeJourney(GRAPH, { keywords: ['מבצע'] });
+  const client = fakeClient();
+  const ctx = ctxWith(client);
+  // השיחה וההודעה קיימות ב-DB לפני ה-hook — כמו בפרודקשן (webhook רץ אחרי הכתיבה).
+  await query(`INSERT INTO public.conversations (id, display_id, account_id, inbox_id) VALUES (410, 410, 1, 31)
+    ON CONFLICT (id) DO NOTHING`);
+  await query(`DELETE FROM public.messages WHERE conversation_id = 410`);
+  await query(`INSERT INTO public.messages (id, conversation_id, account_id, message_type, content)
+    VALUES (8100, 410, 1, 0, 'יש מבצע?')`);
+
+  await handleJourneyHook(ctx, {
+    event: 'message_created', message_type: 'incoming', id: 8100, content: 'יש מבצע?',
+    account: { id: 1 }, conversation: { display_id: 410 }, inbox: { id: 31 },
+  });
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 410`);
+  assert.equal(run.status, 'waiting_answer');
+  assert.equal(Number(run.last_inbound_message_id), 8100); // הודעת הטריגר כבר מסומנת כנצרכה
+
+  // סריקת הגיבוי של הטיק לא מזינה את הודעת הטריגר כתשובה
+  await reconcileJourneys(ctx, 1);
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 410`);
+  assert.equal(run.status, 'waiting_answer');
+  assert.equal(run.answers.business_field ?? null, null);
+});
+
+test('quiet: a due delay is NOT processed inside a no-send window (and IS with shabbat off)', async () => {
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'd', type: 'delay', data: { minutes: 1 } },
+      { id: 'm', type: 'message', data: { text: 'אחרי ההשהיה' } },
+    ],
+    edges: [{ source: 't', target: 'd' }, { source: 'd', target: 'm' }],
+  };
+  // ברירת מחדל: שבת נשמרת → חלון no-send פעיל עוצר את הטיק
+  const j = await makeJourney(g);
+  const client = fakeClient();
+  const windows = [{ starts_at: new Date(Date.now() - 3600e3).toISOString(), ends_at: new Date(Date.now() + 3600e3).toISOString() }];
+  await startRun(ctxWith(client), j, { accountId: 1, displayId: 420 });
+  await query(`UPDATE drip.journey_runs SET next_action_at = now() - interval '1 minute' WHERE display_id = 420`);
+  await reconcileJourneys({ ...ctxWith(client), windows }, 1);
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 420`);
+  assert.equal(run.status, 'waiting_delay'); // נשאר ממתין — שבת
+
+  // אותו פלואו עם skip_shabbat=false → מעובד
+  await query(`UPDATE drip.journeys SET trigger = '{"quiet":{"skip_shabbat":false}}'::jsonb WHERE id = $1`, [j.id]);
+  await reconcileJourneys({ ...ctxWith(client), windows }, 1);
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 420`);
+  assert.equal(run.status, 'done');
+});
+
+test('graph cycle without a waiting node fails the run instead of spamming', async () => {
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'a', type: 'message', data: { text: 'א' } },
+      { id: 'b', type: 'message', data: { text: 'ב' } },
+    ],
+    edges: [
+      { source: 't', target: 'a' },
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'a' }, // לולאה
+    ],
+  };
+  const j = await makeJourney(g);
+  const client = fakeClient();
+  await startRun(ctxWith(client), j, { accountId: 1, displayId: 430 });
+  const [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 430`);
+  assert.equal(run.status, 'failed');
+  assert.match(run.last_error, /לולאה/);
+  // כל הודעה נשלחה פעם אחת בלבד
+  assert.equal(client.calls.filter((c) => c.name === 'sendText').length, 2);
+});
+
+test('message_created path starts an on_new_conversation journey on a fresh inbound conversation', async () => {
+  await makeJourney(GRAPH, { on_new_conversation: true });
+  const client = fakeClient();
+  const ctx = ctxWith(client);
+  await query(`INSERT INTO public.conversations (id, display_id, account_id, inbox_id) VALUES (440, 440, 1, 31)
+    ON CONFLICT (id) DO NOTHING`);
+  await query(`DELETE FROM public.messages WHERE conversation_id = 440`);
+  await query(`INSERT INTO public.messages (id, conversation_id, account_id, message_type, content)
+    VALUES (8400, 440, 1, 0, 'שלום')`);
+
+  await handleJourneyHook(ctx, {
+    event: 'message_created', message_type: 'incoming', id: 8400, content: 'שלום',
+    account: { id: 1 }, conversation: { display_id: 440 }, inbox: { id: 31 },
+  });
+  assert.equal((await query(`SELECT count(*)::int AS n FROM drip.journey_runs WHERE display_id = 440`))[0].n, 1);
+});
+
+test('message_created does NOT start on_new_conversation when a human agent already wrote', async () => {
+  await makeJourney(GRAPH, { on_new_conversation: true });
+  const client = fakeClient();
+  const ctx = ctxWith(client);
+  await query(`INSERT INTO public.conversations (id, display_id, account_id, inbox_id) VALUES (441, 441, 1, 31)
+    ON CONFLICT (id) DO NOTHING`);
+  await query(`DELETE FROM public.messages WHERE conversation_id = 441`);
+  await query(`INSERT INTO public.messages (id, conversation_id, account_id, message_type, content, sender_type)
+    VALUES (8410, 441, 1, 1, 'הצעת מחיר מצורפת', 'User'),
+           (8411, 441, 1, 0, 'תודה!', NULL)`);
+
+  await handleJourneyHook(ctx, {
+    event: 'message_created', message_type: 'incoming', id: 8411, content: 'תודה!',
+    account: { id: 1 }, conversation: { display_id: 441 }, inbox: { id: 31 },
+  });
+  assert.equal((await query(`SELECT count(*)::int AS n FROM drip.journey_runs WHERE display_id = 441`))[0].n, 0);
+});
+
+test('jrn_launch refuses manual=false and a graph without a start node', async () => {
+  const client = fakeClient();
+  const ctx = ctxWith(client);
+  const noManual = await handleJourneysAction(ctx, 'jrn_save',
+    { name: 'לא ידני', graph: GRAPH, trigger: { manual: false }, status: 'active' }, 1);
+  await assert.rejects(
+    () => handleJourneysAction(ctx, 'jrn_launch', { id: noManual.id, display_id: 450 }, 1),
+    /ידנית/
+  );
+
+  const noStart = await handleJourneysAction(ctx, 'jrn_save',
+    { name: 'בלי התחלה', graph: { nodes: [{ id: 'trigger', type: 'trigger', data: {} }], edges: [] }, trigger: {} }, 1);
+  await assert.rejects(
+    () => handleJourneysAction(ctx, 'jrn_launch', { id: noStart.id, display_id: 451 }, 1),
+    /צומת ראשון/
+  );
+});
+
+test('jrn_set_status refuses to activate a graph without a start node', async () => {
+  const client = fakeClient();
+  const ctx = ctxWith(client);
+  const j = await handleJourneysAction(ctx, 'jrn_save',
+    { name: 'ריק', graph: { nodes: [{ id: 'trigger', type: 'trigger', data: {} }], edges: [] }, trigger: {} }, 1);
+  await assert.rejects(
+    () => handleJourneysAction(ctx, 'jrn_set_status', { id: j.id, status: 'active' }, 1),
+    /לא מחובר/
+  );
+  // paused/draft עוברים חופשי
+  await handleJourneysAction(ctx, 'jrn_set_status', { id: j.id, status: 'paused' }, 1);
+});
+
+test('renderText resolves contact custom attributes for {{key}}', () => {
+  const out = renderText('שלום {{שם}} מ-{{עיר}}', {
+    contact: { name: 'דנה', custom_attributes: { 'עיר': 'חיפה' } },
+    answers: {},
+  });
+  assert.equal(out, 'שלום דנה מ-חיפה');
+});
+
+test('rapid second customer message is captured as the answer (watermark = trigger message only)', async () => {
+  await makeJourney(GRAPH, { keywords: ['מבצע'] });
+  const client = fakeClient();
+  const ctx = ctxWith(client);
+  await query(`INSERT INTO public.conversations (id, display_id, account_id, inbox_id) VALUES (460, 460, 1, 31)
+    ON CONFLICT (id) DO NOTHING`);
+  await query(`DELETE FROM public.messages WHERE conversation_id = 460`);
+  // הלקוח שלח שתי הודעות מהירות; שתיהן כבר ב-DB כשה-hook של הראשונה מעובד.
+  await query(`INSERT INTO public.messages (id, conversation_id, account_id, message_type, content)
+    VALUES (8600, 460, 1, 0, 'מבצע'), (8601, 460, 1, 0, 'דיגיטל')`);
+
+  await handleJourneyHook(ctx, {
+    event: 'message_created', message_type: 'incoming', id: 8600, content: 'מבצע',
+    account: { id: 1 }, conversation: { display_id: 460 }, inbox: { id: 31 },
+  });
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 460`);
+  assert.equal(run.status, 'waiting_answer');
+  assert.equal(Number(run.last_inbound_message_id), 8600); // רק הודעת הטריגר סומנה
+
+  // סריקת הגיבוי קולטת את ההודעה השנייה (8601) כתשובה לשאלה הראשונה
+  await reconcileJourneys(ctx, 1);
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 460`);
+  assert.equal(run.answers.business_field, 'דיגיטל');
+  assert.equal(run.status, 'done');
 });

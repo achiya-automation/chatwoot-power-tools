@@ -74,7 +74,8 @@
     document.body.appendChild(pop);
 
     api(ctx.accountId, 'jrn_list').then(function (list) {
-      var active = (list || []).filter(function (j) { return j.status === 'active'; });
+      var active = launchable(list);
+      cache[ctx.accountId] = { ts: Date.now(), n: active.length }; // רענון אגבי של הקאש
       pop.innerHTML = '';
       if (!active.length) {
         pop.innerHTML = '<div class="text-sm text-n-slate-11" style="padding:8px 10px;">' + t('none') + '</div>';
@@ -124,6 +125,32 @@
     closePopover();
   }, true);
 
+  // פלואו שזמין להפעלה ידנית: פעיל, ולא סומן במפורש manual=false (המנוע אוכף את אותו כלל).
+  function launchable(list) {
+    return (list || []).filter(function (j) {
+      return j.status === 'active' && !(j.trigger && j.trigger.manual === false);
+    });
+  }
+
+  // הכפתור מוצג רק כשלחשבון יש לפחות פלואו אחד כזה — אחרת הוא רעש צף לכל נציג
+  // בכל חשבון על השרת. נבדק פעם ב-5 דקות לכל חשבון (וכל פתיחת-popover מרעננת אגבית).
+  var cache = {}; // accountId → { ts, n }
+  var CACHE_MS = 5 * 60 * 1000;
+  function hasLaunchable(accId, cb) {
+    var c = cache[accId];
+    if (c && Date.now() - c.ts < CACHE_MS) { cb(c.n > 0); return; }
+    if (c && c.pending) { cb(c.n > 0); return; }
+    cache[accId] = { ts: c ? c.ts : 0, n: c ? c.n : 0, pending: true };
+    api(accId, 'jrn_list').then(function (list) {
+      cache[accId] = { ts: Date.now(), n: launchable(list).length };
+      cb(cache[accId].n > 0);
+    }).catch(function () {
+      // שגיאה (למשל נציג בלי הרשאה) → לא מציגים; ננסה שוב בעוד 5 דקות.
+      cache[accId] = { ts: Date.now(), n: 0 };
+      cb(false);
+    });
+  }
+
   // show/hide by URL + keep the label in the current locale. 1s poll — same self-healing
   // idiom the other injectors use (SPA navigation has no reliable event).
   var lastKey = '';
@@ -135,7 +162,12 @@
       lastKey = '';
       return;
     }
-    btn.style.display = '';
+    hasLaunchable(ctx.accountId, function (show) {
+      var cur = convoCtx(); // ייתכן שניווטו בזמן הבדיקה
+      if (!cur || cur.accountId !== ctx.accountId) return;
+      btn.style.display = show ? '' : 'none';
+      if (!show) closePopover();
+    });
     btn.querySelector('span').textContent = t('launch');
     var key = ctx.accountId + '/' + ctx.displayId;
     if (key !== lastKey) { lastKey = key; closePopover(); }

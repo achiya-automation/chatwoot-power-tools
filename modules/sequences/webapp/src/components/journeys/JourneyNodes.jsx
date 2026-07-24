@@ -2,6 +2,7 @@ import { Handle, Position } from '@xyflow/react';
 import {
   Zap,
   MessageSquare,
+  LayoutTemplate,
   HelpCircle,
   MousePointerClick,
   GitFork,
@@ -29,6 +30,7 @@ const M = {
   he: {
     trigger: 'טריגר',
     message: 'הודעה',
+    template: 'תבנית וואטסאפ',
     question: 'שאלה',
     buttons: 'כפתורים',
     condition: 'תנאי',
@@ -40,7 +42,6 @@ const M = {
     empty: '(ריק)',
     yes: 'כן',
     no: 'לא',
-    optionsCount: '{n} אפשרויות',
     saveToChip: 'שמירה אל: {key}',
     exists: 'קיים',
     contains: 'מכיל',
@@ -53,10 +54,14 @@ const M = {
     statusChip: 'סטטוס: {status}',
     webhookChip: 'קריאת webhook',
     openConv: 'פתיחת השיחה לנציג',
+    defaultOut: 'ברירת מחדל',
+    tplParams: '{n} פרמטרים',
+    noTemplate: 'לא נבחרה תבנית',
   },
   en: {
     trigger: 'Trigger',
     message: 'Message',
+    template: 'WhatsApp template',
     question: 'Question',
     buttons: 'Buttons',
     condition: 'Condition',
@@ -68,7 +73,6 @@ const M = {
     empty: '(empty)',
     yes: 'Yes',
     no: 'No',
-    optionsCount: '{n} options',
     saveToChip: 'Save to: {key}',
     exists: 'exists',
     contains: 'contains',
@@ -81,6 +85,9 @@ const M = {
     statusChip: 'Status: {status}',
     webhookChip: 'Webhook call',
     openConv: 'Open conversation to agent',
+    defaultOut: 'Default',
+    tplParams: '{n} params',
+    noTemplate: 'No template selected',
   },
 };
 
@@ -88,6 +95,7 @@ const M = {
 export const NODE_META = {
   trigger: { icon: Zap, color: 'teal' },
   message: { icon: MessageSquare, color: 'blue' },
+  template: { icon: LayoutTemplate, color: 'blue' },
   question: { icon: HelpCircle, color: 'violet' },
   buttons: { icon: MousePointerClick, color: 'violet' },
   condition: { icon: GitFork, color: 'amber' },
@@ -208,14 +216,51 @@ function QuestionNode({ data, selected }) {
 
 function ButtonsNode({ data, selected }) {
   const t = useT(M);
-  const n = (data?.options || []).length;
+  const options = data?.options || [];
   return (
     <NodeShell type="buttons" selected={selected}>
       <Snippet text={data?.text} fallback={t('empty')} />
+      {/* כל אפשרות היא ענף: handle משלה בצד (opt:<id>), בסגנון ManyChat. אפשרות
+          בלי קשת משלה ממשיכה דרך היציאה התחתונה (ברירת המחדל). */}
+      <div className="-mx-2.5 flex flex-col">
+        {options.map((o, i) => (
+          <div key={o.id || i} className="relative flex items-center px-2.5 py-0.5">
+            <span className="w-full truncate rounded bg-n-alpha-2 px-1.5 py-0.5 text-[11px] text-n-slate-11">
+              {String(o.title || '').trim() || `${i + 1}`}
+            </span>
+            {o.id != null ? (
+              <Handle
+                type="source"
+                id={`opt:${o.id}`}
+                position={Position.Right}
+                className={HANDLE_CLS}
+                style={{ top: '50%' }}
+              />
+            ) : null}
+          </div>
+        ))}
+      </div>
       <div className="flex flex-wrap items-center gap-1">
-        <span className="text-[10px] text-n-slate-10">{t('optionsCount', { n })}</span>
+        <span className="text-[10px] text-n-slate-10">{t('defaultOut')} ↓</span>
         {data?.saveTo?.key ? <KeyChip>{data.saveTo.key}</KeyChip> : null}
       </div>
+    </NodeShell>
+  );
+}
+
+function TemplateNode({ data, selected }) {
+  const t = useT(M);
+  const nParams = (data?.params || []).length;
+  return (
+    <NodeShell type="template" selected={selected}>
+      {data?.name ? (
+        <p className="m-0 truncate font-mono text-xs text-n-slate-11" dir="ltr">{data.name}</p>
+      ) : (
+        <p className="m-0 text-xs italic text-n-slate-10">{t('noTemplate')}</p>
+      )}
+      {nParams ? (
+        <span className="text-[10px] text-n-slate-10">{t('tplParams', { n: nParams })}</span>
+      ) : null}
     </NodeShell>
   );
 }
@@ -297,6 +342,7 @@ function HandoffNode({ data, selected }) {
 export const nodeTypes = {
   trigger: TriggerNode,
   message: MessageNode,
+  template: TemplateNode,
   question: QuestionNode,
   buttons: ButtonsNode,
   condition: ConditionNode,

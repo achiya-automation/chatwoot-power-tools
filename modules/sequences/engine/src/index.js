@@ -213,7 +213,7 @@ async function tick() {
     // מריץ את הפלואו שלו — אלה שני פיצ'רים נפרדים שחולקים רק את הבוט.
     try {
       await reconcileJourneys(
-        { query, reads, makeClientFor: async () => client, config },
+        { query, reads, makeClientFor: async () => client, config, windows },
         a.account_id
       );
     } catch (e) {

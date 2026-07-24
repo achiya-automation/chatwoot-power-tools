@@ -27,13 +27,16 @@ _cwpt_module_parts() {
       echo "modules/smart-import/inject/import-button.js"
       ;;
     sequences)
-      # journey-launch.js (floating "run flow" pill) intentionally NOT assembled — it read
-      # as non-native and collided with the sidebar. Manual launch, if wanted, belongs in
-      # Chatwoot's native conversation action menu, not a fixed-position overlay.
+      # journey-launch.js was once excluded ("non-native noise" — it floated for every agent
+      # in every account, even with zero flows). It is back in now that it gates itself:
+      # the pill renders ONLY inside a conversation view AND only when the account actually
+      # has an active, manually-launchable journey (trigger.manual !== false), checked at
+      # most once per 5 minutes per account. Accounts without flows see nothing at all.
       printf '%s\n' \
         "modules/sequences/inject/sequences-nav.js" \
         "modules/sequences/inject/templates-nav.js" \
-        "modules/sequences/inject/journeys-nav.js"
+        "modules/sequences/inject/journeys-nav.js" \
+        "modules/sequences/inject/journey-launch.js"
       ;;
     enhancements)
       printf '%s\n' \

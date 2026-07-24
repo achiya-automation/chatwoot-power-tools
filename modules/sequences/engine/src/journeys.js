@@ -16,6 +16,7 @@ import { createHmac } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { isOptOut } from './compliance.js';
+import { isNoSendNow } from './schedule.js';
 
 const LIVE = ['active', 'waiting_answer', 'waiting_delay'];
 
@@ -53,6 +54,10 @@ export function nextNodeId(graph, nodeId, handle = null) {
   if (handle != null) {
     const m = edges.find((e) => String(e.sourceHandle ?? '') === String(handle));
     if (m) return m.target;
+    // handle מבוקש ולא מחווט: נופלים רק לקשת ברירת-המחדל (בלי handle). קשת של
+    // אפשרות/ענף אחר היא ניתוב שגוי — עדיף לסיים את הפלואו מאשר לנתב לא נכון.
+    const def = edges.find((e) => e.sourceHandle == null);
+    return def ? def.target : null;
   }
   // fallback: קשת בלי handle (צומת עם יציאה אחת)
   return (edges.find((e) => e.sourceHandle == null) || edges[0]).target;
@@ -61,6 +66,7 @@ export function nextNodeId(graph, nodeId, handle = null) {
 const nodeById = (graph, id) => (graph?.nodes || []).find((n) => n.id === id) || null;
 
 // ── תבניות טקסט: {{שם}}/{{name}}, {{טלפון}}/{{phone}}, {{answers.key}} או {{key}} ──
+// {{key}} נפתר לפי: תשובות שנאספו בפלואו → שדות מותאמים של איש הקשר → ריק.
 export function renderText(text, { contact = {}, answers = {} } = {}) {
   return String(text || '').replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_m, raw) => {
     const key = raw.trim();
@@ -68,7 +74,9 @@ export function renderText(text, { contact = {}, answers = {} } = {}) {
     if (['טלפון', 'phone'].includes(key)) return contact.phone || '';
     if (['מייל', 'email'].includes(key)) return contact.email || '';
     const k = key.replace(/^answers\./, '');
-    return answers[k] != null ? String(answers[k]) : '';
+    if (answers[k] != null) return String(answers[k]);
+    const ca = contact.custom_attributes || {};
+    return ca[k] != null ? String(ca[k]) : '';
   });
 }
 
@@ -79,6 +87,19 @@ export function validateAnswer(kind, text) {
 
 // כפתורים אמיתיים רק בערוץ ה-Cloud API הרשמי; בכל ערוץ אחר — נפילה לרשימה ממוספרת.
 const channelSupportsButtons = (channelType) => channelType === 'Channel::Whatsapp';
+
+// סוג הערוץ של השיחה עצמה (לא של תיבת הטריגר): פלואו יכול לחול על כמה תיבות מסוגים
+// שונים — ההחלטה "כפתורים אמיתיים או ממוספרים" חייבת להתקבל פר-שיחה. נשמר על הריצה
+// (run._channelType) כדי לשאול פעם אחת לכל ביצוע.
+async function channelTypeFor(query, accountId, displayId) {
+  const rows = await query(
+    `SELECT i.channel_type
+       FROM public.conversations c JOIN public.inboxes i ON i.id = c.inbox_id
+      WHERE c.account_id = $1 AND c.display_id = $2 LIMIT 1`,
+    [accountId, displayId]
+  );
+  return rows[0]?.channel_type || '';
+}
 
 export function numberedFallback(text, options) {
   const lines = options.map((o, i) => `${i + 1}) ${o.title}`);
@@ -150,9 +171,17 @@ export async function executeFrom(ctx, run, journey, nodeId) {
   let currentId = nodeId;
   let answers = run.answers || {};
   let guard = 0;
+  // צומת שחוזר על עצמו בתוך אותו מעבר = לולאה בלי צומת-המתנה (הודעה→הודעה→חוזר).
+  // בלי המעצור הזה הגרף היה שולח עד 50 הודעות ברצף ללקוח — סיכון WABA אמיתי.
+  const visited = new Set();
 
   while (currentId && guard < 50) {
     guard += 1;
+    if (visited.has(currentId)) {
+      await updateRun(query, run.id, { status: 'failed', last_error: 'לולאה בגרף בלי צומת המתנה — הפלואו נעצר', answers });
+      return;
+    }
+    visited.add(currentId);
     const node = nodeById(graph, currentId);
     if (!node) break;
     const d = node.data || {};
@@ -167,6 +196,20 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           currentId = nextNodeId(graph, currentId);
           break;
         }
+        case 'template': {
+          // הודעת תבנית WhatsApp — הדרך היחידה לפתוח שיחה מחוץ לחלון ה-24ש.
+          // הפרמטרים עוברים דרך renderText, כך ש-{{שם}} וכו' עובדים גם בתבניות.
+          const params = (Array.isArray(d.params) ? d.params : []).map((p) => renderText(p, rctx));
+          await client.sendTemplate(run.display_id, {
+            name: d.name,
+            language: d.language || 'he',
+            category: d.category || 'MARKETING',
+            params,
+            ...(d.mediaUrl ? { mediaUrl: d.mediaUrl } : {}),
+          });
+          currentId = nextNodeId(graph, currentId);
+          break;
+        }
         case 'question': {
           await client.sendText(run.display_id, renderText(d.text, rctx));
           await updateRun(query, run.id, {
@@ -178,7 +221,10 @@ export async function executeFrom(ctx, run, journey, nodeId) {
         }
         case 'buttons': {
           const options = d.options || [];
-          const channelType = journey._channelType || '';
+          if (run._channelType === undefined) {
+            run._channelType = await channelTypeFor(query, run.account_id, run.display_id).catch(() => '');
+          }
+          const channelType = run._channelType || '';
           const prompt = renderText(d.text, rctx);
           if (channelSupportsButtons(channelType) && options.length && options.length <= 10) {
             await client.sendInputSelect(run.display_id, prompt,
@@ -194,7 +240,7 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           return;
         }
         case 'condition': {
-          const val = answers[d.field] ?? contact[d.field] ?? '';
+          const val = answers[d.field] ?? contact[d.field] ?? (contact.custom_attributes || {})[d.field] ?? '';
           let pass = false;
           if (d.op === 'exists') pass = String(val) !== '';
           else if (d.op === 'contains') pass = String(val).includes(String(d.value ?? ''));
@@ -214,7 +260,15 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           if (Array.isArray(d.labels) && d.labels.length) await client.addLabels(run.display_id, d.labels);
           if (d.assigneeId || d.teamId) await client.assignConversation(run.display_id, { assigneeId: d.assigneeId, teamId: d.teamId });
           if (d.status) await client.toggleStatus(run.display_id, d.status);
-          if (d.webhookUrl) await postWebhook(d.webhookUrl, { journey, node, run, answers, contact });
+          // אותו payload מצומצם כמו צומת webhook — לא משדרים החוצה את הגרף המלא ואת פנימי הריצה.
+          if (d.webhookUrl) {
+            await postWebhook(d.webhookUrl, {
+              journey: { id: journey.id, name: journey.name },
+              account_id: run.account_id,
+              conversation: { display_id: run.display_id },
+              contact, answers,
+            });
+          }
           currentId = nextNodeId(graph, currentId);
           break;
         }
@@ -299,7 +353,8 @@ async function postWebhook(url, payload) {
       signal: ac.signal,
       redirect: 'error',                          // a 30x to an internal host would re-open SSRF
     });
-    const text = await r.text();
+    // קיצוץ: התשובה נשמרת ב-answers (jsonb) — שירות שמחזיר מגה-בייטים לא ינפח את שורת הריצה.
+    const text = (await r.text()).slice(0, 8192);
     try { return JSON.parse(text); } catch { return text || null; }
   } finally {
     clearTimeout(t);
@@ -307,17 +362,43 @@ async function postWebhook(url, payload) {
 }
 
 // ── התחלת ריצה ──
-export async function startRun(ctx, journey, { accountId, displayId, contactId }) {
+// sinceMessageId — מזהה הודעת הטריגר עצמה (נתיבי ה-hook מעבירים אותו). ה-watermark
+// מאותחל אליה בדיוק: הטריגר לא ייבלע מחדש כ"תשובה", אבל הודעה שנייה מהירה של הלקוח
+// ("היי" ואז "אני צריך X") — שמזהה שלה גבוה יותר — עדיין תיקלט כתשובה לשאלה הראשונה.
+// בלי sinceMessageId (הפעלה ידנית) לוקחים את מקסימום ההודעות הקיימות: כל ההיסטוריה
+// שקדמה להפעלה אינה תשובה.
+export async function startRun(ctx, journey, { accountId, displayId, contactId, sinceMessageId }) {
   const { query } = ctx;
   const client = ctx.client || await ctx.makeClientFor(accountId);
   const first = startNodeOf(journey.graph);
   if (!first) return null;
+
+  // contact_id חסר בחלק ממבני ה-webhook — משלימים מה-DB כדי שתשובות יישמרו על איש הקשר.
+  if (!contactId) {
+    const c = await query(
+      `SELECT contact_id FROM public.conversations WHERE account_id = $1 AND display_id = $2 LIMIT 1`,
+      [accountId, displayId]
+    ).catch(() => []);
+    contactId = c[0]?.contact_id ? Number(c[0].contact_id) : null;
+  }
+
+  let initialWatermark = Number(sinceMessageId) || 0;
+  if (!initialWatermark) {
+    const wm = await query(
+      `SELECT COALESCE(max(m.id), 0) AS mid
+         FROM public.messages m JOIN public.conversations c ON c.id = m.conversation_id
+        WHERE c.account_id = $1 AND c.display_id = $2 AND m.message_type = 0`,
+      [accountId, displayId]
+    ).catch(() => [{ mid: 0 }]);
+    initialWatermark = Number(wm[0]?.mid || 0);
+  }
+
   let run;
   try {
     const rows = await query(
-      `INSERT INTO drip.journey_runs (journey_id, account_id, display_id, contact_id, status, current_node)
-       VALUES ($1, $2, $3, $4, 'active', $5) RETURNING *`,
-      [journey.id, accountId, displayId, contactId || null, first]
+      `INSERT INTO drip.journey_runs (journey_id, account_id, display_id, contact_id, status, current_node, last_inbound_message_id)
+       VALUES ($1, $2, $3, $4, 'active', $5, $6) RETURNING *`,
+      [journey.id, accountId, displayId, contactId || null, first, initialWatermark]
     );
     run = rows[0];
   } catch (e) {
@@ -353,6 +434,7 @@ export async function feedAnswer(ctx, run, journey, message) {
   }
 
   let value = null;
+  let matchedOption = null;
   if (node.type === 'buttons') {
     const opt = matchOption(d.options || [], text);
     if (!opt) {
@@ -368,6 +450,7 @@ export async function feedAnswer(ctx, run, journey, message) {
       return;
     }
     value = String(opt.value ?? opt.title);
+    matchedOption = opt;
   } else { // question
     const kind = d.validation || 'text';
     if (!validateAnswer(kind, text)) {
@@ -404,7 +487,10 @@ export async function feedAnswer(ctx, run, journey, message) {
     status: 'active', answers, retry_count: 0,
     waiting_since: null, next_action_at: null, last_inbound_message_id: messageId,
   });
-  await executeFrom(ctx, { ...run, answers, last_inbound_message_id: messageId }, journey, nextNodeId(graph, run.current_node));
+  // כפתורים עם פיצול פר-אפשרות: אפשרות עם id מנתבת דרך ה-handle שלה (opt:<id>);
+  // בלי קשת ייעודית — nextNodeId נופל לקשת ברירת-המחדל (sourceHandle=null), כמו קודם.
+  const handle = node.type === 'buttons' && matchedOption?.id != null ? `opt:${matchedOption.id}` : null;
+  await executeFrom(ctx, { ...run, answers, last_inbound_message_id: messageId }, journey, nextNodeId(graph, run.current_node, handle));
 }
 
 const defaultRetryMessage = (kind) => ({
@@ -433,23 +519,70 @@ export async function handleJourneyHook(ctx, event) {
   const journeys = await activeJourneys(query, accountId);
   if (!journeys.length) return;
 
-  const conv = event.conversation || {};
+  // ⚠️ שני מבני payload שונים (אומת מול WebhookListener של Chatwoot):
+  //   message_created      — שדות השיחה מקוננים תחת event.conversation (וב-presenter id=display_id).
+  //   conversation_created — שדות השיחה בראש ה-payload עצמו: id=display_id, inbox_id, meta.sender.
+  const isConvEvent = event.event === 'conversation_created';
+  const conv = isConvEvent ? event : (event.conversation || {});
   const displayId = Number(conv.display_id ?? conv.id);
   if (!displayId) return;
   const inboxId = Number(event.inbox?.id ?? conv.inbox_id) || null;
-  const contactId = Number(event.conversation?.contact_inbox?.contact_id ?? event.sender?.id) || null;
+  const contactId = Number(conv.contact_inbox?.contact_id ?? conv.meta?.sender?.id ?? event.sender?.id) || null;
 
   const inboxAllowed = (j) => {
     const ids = j.trigger?.inbox_ids || [];
     return !ids.length || (inboxId && ids.map(Number).includes(inboxId));
   };
 
-  if (event.event === 'conversation_created') {
+  // ריצה קודמת (חיה או גמורה) של אותו פלואו על השיחה — טריגר שיחה-חדשה לא חוזר שנית.
+  const hasRunOf = async (journeyId) => (await query(
+    `SELECT 1 FROM drip.journey_runs
+      WHERE account_id = $1 AND display_id = $2 AND journey_id = $3 LIMIT 1`,
+    [accountId, displayId, journeyId]
+  )).length > 0;
+
+  // "שיחה נכנסת טרייה": עד 3 הודעות נכנסות, אפס הודעות של נציג אנושי — כך פלואו
+  // שיחה-חדשה לא קופץ על שיחה שנציג פתח יזום, ולא על שיחה ותיקה.
+  // first_inbound_id — הודעת הפתיחה: משמשת כ-watermark בנתיב conversation_created,
+  // כך שהודעה שנייה מהירה של הלקוח עדיין נקלטת כתשובה.
+  const convState = async () => {
+    const r = await query(
+      `SELECT count(*) FILTER (WHERE m.message_type = 0 AND m.private IS NOT TRUE) AS inbound,
+              count(*) FILTER (WHERE m.message_type = 1 AND m.sender_type = 'User') AS human_out,
+              COALESCE(min(m.id) FILTER (WHERE m.message_type = 0 AND m.private IS NOT TRUE), 0) AS first_inbound_id
+         FROM public.messages m JOIN public.conversations c ON c.id = m.conversation_id
+        WHERE c.account_id = $1 AND c.display_id = $2`,
+      [accountId, displayId]
+    );
+    return {
+      inbound: Number(r[0]?.inbound || 0),
+      humanOut: Number(r[0]?.human_out || 0),
+      firstInboundId: Number(r[0]?.first_inbound_id || 0),
+    };
+  };
+
+  // טריגר שיחה-חדשה. minInbound=1 בנתיב conversation_created (אחרת שיחה ריקה שנציג
+  // פתח הייתה מפעילה בוט); בנתיב message_created ההודעה הנכנסת כבר קיימת ממילא,
+  // והיא עצמה הודעת הטריגר (triggerMessageId).
+  const startNewConvJourney = async (minInbound, triggerMessageId = null) => {
     const j = journeys.find((x) => x.trigger?.on_new_conversation && inboxAllowed(x));
     if (!j) return;
+    if (await hasRunOf(j.id)) return;
+    const { inbound, humanOut, firstInboundId } = await convState();
+    if (inbound < minInbound || inbound > 3 || humanOut > 0) return;
     const client = await makeClientFor(accountId);
-    await prepJourney(query, j);
-    await startRun({ ...ctx, client }, j, { accountId, displayId, contactId });
+    await startRun({ ...ctx, client }, j, {
+      accountId, displayId, contactId,
+      sinceMessageId: triggerMessageId || firstInboundId,
+    });
+    log.info?.(`[journeys] new-conversation start '${j.name}' on conv ${displayId} (account ${accountId})`);
+  };
+
+  if (isConvEvent) {
+    // אירוע יצירת-שיחה עלול לרוץ לפני שהודעת הפתיחה נכתבה (מרוץ Sidekiq) — ואז נצא
+    // כאן בלי כלום, והנתיב של message_created שמגיע מיד אחריו יתפוס. שני הנתיבים
+    // אידמפוטנטיים (hasRunOf + אינדקס ריצה-חיה-יחידה + ה-watermark של startRun).
+    await startNewConvJourney(1);
     return;
   }
 
@@ -476,11 +609,13 @@ export async function handleJourneyHook(ctx, event) {
       }
       return;
     }
+    // fallback לריצה שהפלואו שלה כבר לא active (למשל הועבר לטיוטה באמצע) — תחום-חשבון,
+    // כמו כל שאילתה אחרת כאן: גם אם run.journey_id ישתבש אי-פעם, לא מריצים גרף של דייר זר.
     const journey = journeys.find((j) => j.id === run.journey_id)
-      || (await query(`SELECT * FROM drip.journeys WHERE id = $1`, [run.journey_id]))[0];
+      || (await query(`SELECT * FROM drip.journeys WHERE id = $1 AND account_id = $2`,
+        [run.journey_id, accountId]))[0];
     if (!journey) return;
     const client = await makeClientFor(accountId);
-    await prepJourney(query, journey);
     await feedAnswer({ ...ctx, client }, run, journey, { id: event.id, content: event.content });
     return;
   }
@@ -488,38 +623,48 @@ export async function handleJourneyHook(ctx, event) {
   // אין ריצה חיה — טריגר מילת מפתח פותח פלואו גם באמצע שיחה קיימת.
   const j = journeys.find((x) => (x.trigger?.keywords || []).length
     && inboxAllowed(x) && keywordMatch(x.trigger.keywords, event.content));
-  if (!j) return;
-  // 🔒 הגבלת-קצב: לקוח חיצוני יכול להקליד את מילת-המפתח שוב ושוב. uq_journey_runs_live מונע
-  // ריצה כפולה בו-זמנית, אבל אחרי סיום/עצירה מילה חוזרת הייתה מפעילה שוב ושוב — ספאם, עלות
-  // תבניות, וסיכון WABA. חוסמים הפעלה חוזרת בשיחה אם כבר הייתה ריצה ב-30 הדקות האחרונות.
-  const recent = await query(
-    `SELECT 1 FROM drip.journey_runs
-      WHERE account_id = $1 AND display_id = $2 AND created_at > now() - interval '30 minutes'
-      LIMIT 1`,
-    [accountId, displayId]
-  );
-  if (recent.length) { log.info?.(`[journeys] keyword rate-limited on conv ${displayId} (account ${accountId})`); return; }
-  const client = await makeClientFor(accountId);
-  await prepJourney(query, j);
-  await startRun({ ...ctx, client }, j, { accountId, displayId, contactId });
-  log.info?.(`[journeys] keyword-triggered '${j.name}' on conv ${displayId} (account ${accountId})`);
+  if (j) {
+    // 🔒 הגבלת-קצב: לקוח חיצוני יכול להקליד את מילת-המפתח שוב ושוב. uq_journey_runs_live מונע
+    // ריצה כפולה בו-זמנית, אבל אחרי סיום/עצירה מילה חוזרת הייתה מפעילה שוב ושוב — ספאם, עלות
+    // תבניות, וסיכון WABA. חוסמים הפעלה חוזרת של אותו פלואו בשיחה אם כבר הייתה לו ריצה
+    // ב-30 הדקות האחרונות (פר-פלואו: מילת מפתח של פלואו אחר עדיין עובדת מיד).
+    const recent = await query(
+      `SELECT 1 FROM drip.journey_runs
+        WHERE account_id = $1 AND display_id = $2 AND journey_id = $3
+          AND created_at > now() - interval '30 minutes'
+        LIMIT 1`,
+      [accountId, displayId, j.id]
+    );
+    if (recent.length) { log.info?.(`[journeys] keyword rate-limited on conv ${displayId} (account ${accountId})`); return; }
+    const client = await makeClientFor(accountId);
+    await startRun({ ...ctx, client }, j, {
+      accountId, displayId, contactId, sinceMessageId: Number(event.id) || 0,
+    });
+    log.info?.(`[journeys] keyword-triggered '${j.name}' on conv ${displayId} (account ${accountId})`);
+    return;
+  }
+
+  // הודעה נכנסת ראשונה בשיחה טרייה — הנתיב האמין של טריגר "שיחה חדשה" (ראו הערת המרוץ למעלה).
+  await startNewConvJourney(1, Number(event.id) || 0);
 }
 
-// טעינת סוג הערוץ של תיבת הטריגר — פעם אחת לכל ביצוע (כפתורים אמיתיים או נומריים).
-async function prepJourney(query, journey) {
-  if (journey._channelType !== undefined) return;
-  const ids = journey.trigger?.inbox_ids || [];
-  if (ids.length) {
-    const rows = await query(`SELECT channel_type FROM public.inboxes WHERE id = $1 LIMIT 1`, [Number(ids[0])]);
-    journey._channelType = rows[0]?.channel_type || '';
-  } else {
-    journey._channelType = '';
-  }
+// שעות פעילות לפעולות שהבוט יוזם (השהיות/פולואפים): שבת כברירת מחדל (fail-safe,
+// כמו הרצפים), שעות שקט אם הוגדרו בפלואו. תשובות ללקוח שכתב עכשיו לא נחסמות —
+// זה מענה, לא דיוור; רק ה-tick היוזם ממתין.
+function journeyQuietNow(journey, windows, now = new Date()) {
+  const q = journey.trigger?.quiet || {};
+  return isNoSendNow({
+    now,
+    windows: windows || [],
+    skipShabbat: q.skip_shabbat !== false,
+    quietStart: q.quiet_start || undefined,
+    quietEnd: q.quiet_end || undefined,
+  });
 }
 
 // ── ה-tick: השהיות, פולואפים, וסריקת-גיבוי ──
 export async function reconcileJourneys(ctx, accountId) {
-  const { query, makeClientFor, config, log = console } = ctx;
+  const { query, makeClientFor, config, windows = [], log = console } = ctx;
   const journeys = await activeJourneys(query, accountId);
   if (!journeys.length) return;
   const byId = Object.fromEntries(journeys.map((j) => [j.id, j]));
@@ -542,8 +687,10 @@ export async function reconcileJourneys(ctx, accountId) {
   for (const run of due) {
     const journey = byId[run.journey_id];
     if (!journey) continue;
+    // בשעות שקט/שבת הריצה נשארת due — תעובד בטיק הראשון אחרי סוף החלון.
+    // ponytail: אין פיזור-jitter ביציאה מהחלון; בנפחים שיחתיים זה זניח.
+    if (journeyQuietNow(journey, windows)) continue;
     const client = await makeClientFor(accountId);
-    await prepJourney(query, journey);
     const ctx2 = { ...ctx, client };
 
     if (run.status === 'waiting_delay') {
@@ -597,7 +744,6 @@ export async function reconcileJourneys(ctx, accountId) {
     const journey = byId[run.journey_id];
     if (!journey) continue;
     const client = await makeClientFor(accountId);
-    await prepJourney(query, journey);
     await feedAnswer({ ...ctx, client }, run, journey, rows[0]);
   }
 }
@@ -623,9 +769,20 @@ export async function handleJourneysAction(ctx, action, payload, accountId) {
     case 'jrn_delete':
       return { deleted: (await query(`SELECT drip.delete_journey($1, $2::uuid) AS ok`,
         [accountId, String(payload.id)]))[0].ok };
-    case 'jrn_set_status':
+    case 'jrn_set_status': {
+      // הגנת-שרת בנוסף לוולידציית העורך: פלואו בלי צומת ראשון מחובר לא יעבור ל-active —
+      // הוא היה "רץ" ומיד מסתיים על כל שיחה, בשקט.
+      if (String(payload.status) === 'active') {
+        const rows = await query(
+          `SELECT graph FROM drip.journeys WHERE id = $1::uuid AND account_id = $2`,
+          [String(payload.id), accountId]
+        );
+        if (!rows.length) throw new Error('הפלואו לא נמצא');
+        if (!startNodeOf(rows[0].graph)) throw new Error('אי אפשר להפעיל — הטריגר לא מחובר לצומת ראשון');
+      }
       return (await query(`SELECT drip.set_journey_status($1, $2::uuid, $3) AS j`,
         [accountId, String(payload.id), String(payload.status)]))[0].j;
+    }
     case 'jrn_meta': {
       // רשימת תיבות לעורך (agents/teams/labels נטענים בדפדפן עם ה-session — לבוט אין גישה)
       const inboxes = await query(
@@ -650,6 +807,8 @@ export async function handleJourneysAction(ctx, action, payload, accountId) {
       );
       const journey = rows[0];
       if (!journey) throw new Error('הפלואו לא נמצא');
+      if (journey.trigger?.manual === false) throw new Error('הפלואו לא זמין להפעלה ידנית');
+      if (!startNodeOf(journey.graph)) throw new Error('לפלואו אין צומת ראשון מחובר לטריגר');
       const displayId = Number(payload.display_id);
       // 🔒 כשהחשבון מגביל נציגים לשיחות שלהם, נציג לא-אדמין רשאי להזניק פלואו רק על שיחה
       // שמשויכת אליו — אחרת הוא יכול לנחש display_id ולהפעיל בוט על שיחה שהוא כלל לא רואה.
@@ -668,7 +827,6 @@ export async function handleJourneysAction(ctx, action, payload, accountId) {
       }
       if (!contactId) contactId = conv?.contact_id ? Number(conv.contact_id) : null;
       const client = await makeClientFor(accountId);
-      await prepJourney(query, journey);
       const run = await startRun({ ...ctx, client }, journey, { accountId, displayId, contactId });
       if (!run) throw new Error('פלואו אחר כבר פעיל בשיחה הזו');
       return { started: true, run_id: run.id };

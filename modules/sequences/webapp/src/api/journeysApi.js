@@ -96,15 +96,18 @@ async function cwFetch(path, { method = 'GET', body } = {}) {
 const asList = (r) => (Array.isArray(r) ? r : (Array.isArray(r?.payload) ? r.payload : []));
 
 /**
- * Agents / teams / labels for the editor's pickers. Best-effort by design:
- * any failure (no session, mobile WebView, permissions) yields empty lists —
- * the editor still works, the pickers just have nothing to suggest.
+ * Agents / teams / labels / custom-attribute definitions for the editor's pickers.
+ * Best-effort by design: any failure (no session, mobile WebView, permissions)
+ * yields empty lists — the editor still works, the pickers just have nothing to suggest.
+ * attrDefs feeds the variable picker ({{key}}) and the condition-field suggestions.
  */
 export async function fetchChatwootMeta(accountId) {
   const get = (p) =>
     cwFetch(`/api/v1/accounts/${encodeURIComponent(accountId)}/${p}`).then(asList).catch(() => []);
-  const [agents, teams, labels] = await Promise.all([get('agents'), get('teams'), get('labels')]);
-  return { agents, teams, labels };
+  const [agents, teams, labels, attrDefs] = await Promise.all([
+    get('agents'), get('teams'), get('labels'), get('custom_attribute_definitions'),
+  ]);
+  return { agents, teams, labels, attrDefs };
 }
 
 /**

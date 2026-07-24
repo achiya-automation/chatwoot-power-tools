@@ -1,12 +1,14 @@
-import { useId, useState } from 'react';
-import { Plus, Trash2, X } from 'lucide-react';
+import { useId, useRef, useState } from 'react';
+import { Plus, Trash2, Upload, X } from 'lucide-react';
 import Input, { Label } from '../ui/Input.jsx';
 import Select from '../ui/Select.jsx';
 import Switch from '../ui/Switch.jsx';
 import Badge from '../ui/Badge.jsx';
 import Button from '../ui/Button.jsx';
+import TemplatePicker from '../ui/TemplatePicker.jsx';
+import { uploadMedia } from '../../api/sequencesApi.js';
 import useT from '../../useT.js';
-import { MAX_BUTTON_OPTIONS } from './graphModel.js';
+import { MAX_BUTTON_OPTIONS, newOptionId } from './graphModel.js';
 
 /*
  * Inspector — the editor's side panel (start side; on the right in RTL).
@@ -109,6 +111,31 @@ const M = {
     hoHint: 'הפלואו מסתיים והשיחה נפתחת לנציג.',
 
     removeChip: 'הסרת {v}',
+
+    varInsert: '+ משתנה…',
+    varAria: 'הוספת משתנה לטקסט',
+    var_name: 'שם איש הקשר',
+    var_phone: 'טלפון',
+    var_email: 'מייל',
+
+    tplPick: 'תבנית וואטסאפ',
+    tplHint: 'תבנית מאושרת נשלחת גם מחוץ לחלון ה-24 שעות — זו הדרך לפתוח שיחה יזומה. עובד רק בתיבת וואטסאפ רשמית (Cloud API).',
+    tplNoOfficial: '⚠️ לחשבון אין תיבת וואטסאפ רשמית — צומת תבנית ייכשל בשליחה.',
+    tplParam: 'פרמטר {{{n}}}',
+    tplParamsTitle: 'פרמטרים לתבנית',
+    tplMedia: 'קישור מדיה לכותרת ({format})',
+    tplMediaHint: 'לתבנית עם כותרת מדיה חובה קישור ציבורי — אפשר להעלות קובץ למטה בצומת הודעה ולהעתיק את הקישור.',
+    tplPreview: 'תצוגה מקדימה',
+
+    upload: 'העלאת קובץ',
+    uploading: 'מעלה…',
+    uploadErr: 'ההעלאה נכשלה',
+
+    quietTitle: 'שעות פעילות',
+    quietShabbat: 'לא לשלוח בשבת ובחג',
+    quietStart: 'שקט מ-',
+    quietEnd: 'עד',
+    quietHint: 'חל על השהיות ותזכורות שהבוט יוזם. תשובה ללקוח שכתב עכשיו נשלחת תמיד, גם בלילה.',
   },
   en: {
     journeyTitle: 'Flow settings',
@@ -202,17 +229,89 @@ const M = {
     hoHint: 'The flow ends and the conversation opens for a human agent.',
 
     removeChip: 'Remove {v}',
+
+    varInsert: '+ Variable…',
+    varAria: 'Insert a variable into the text',
+    var_name: 'Contact name',
+    var_phone: 'Phone',
+    var_email: 'Email',
+
+    tplPick: 'WhatsApp template',
+    tplHint: 'An approved template is deliverable outside the 24h window — the way to open a conversation proactively. Official (Cloud API) WhatsApp inboxes only.',
+    tplNoOfficial: '⚠️ This account has no official WhatsApp inbox — a template node will fail to send.',
+    tplParam: 'Param {{{n}}}',
+    tplParamsTitle: 'Template parameters',
+    tplMedia: 'Header media URL ({format})',
+    tplMediaHint: 'A media-header template requires a public URL — upload a file in a message node and copy its link.',
+    tplPreview: 'Preview',
+
+    upload: 'Upload file',
+    uploading: 'Uploading…',
+    uploadErr: 'Upload failed',
+
+    quietTitle: 'Active hours',
+    quietShabbat: 'Do not send on Shabbat/holidays',
+    quietStart: 'Quiet from',
+    quietEnd: 'until',
+    quietHint: 'Applies to bot-initiated delays and reminders. Replies to a customer who just wrote are always sent, even at night.',
   },
 };
 
+/*
+ * VarPicker — בורר משתנים: <select> נטיבי שמתאפס אחרי כל בחירה, ולכן מתפקד כתפריט
+ * "הוסף משתנה" נגיש בלי קוד מיקום. vars: [{ key, label }] — הבחירה קוראת onPick(key).
+ */
+function VarPicker({ vars = [], onPick }) {
+  const t = useT(M);
+  if (!vars.length) return null;
+  return (
+    <select
+      value=""
+      aria-label={t('varAria')}
+      onChange={(e) => {
+        if (e.target.value) onPick(e.target.value);
+        e.target.value = '';
+      }}
+      className="h-6 max-w-36 cursor-pointer rounded-md border border-n-weak bg-n-alpha-2 px-1.5 text-xs text-n-slate-11 outline-none hover:text-n-slate-12 focus:border-n-brand"
+    >
+      <option value="">{t('varInsert')}</option>
+      {vars.map((v) => (
+        <option key={v.key} value={v.key}>
+          {v.label ? `${v.label} — {{${v.key}}}` : `{{${v.key}}}`}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 // The ui kit has no Textarea — same look as Input, three rows.
-function Textarea({ label, hint, className = '', ...props }) {
+// `vars` adds an inline variable picker that inserts {{key}} at the cursor.
+function Textarea({ label, hint, vars, className = '', ...props }) {
   const id = useId();
+  const ref = useRef(null);
+  const insertVar = (key) => {
+    const token = `{{${key}}}`;
+    const el = ref.current;
+    const v = String(props.value ?? '');
+    const start = el?.selectionStart ?? v.length;
+    const end = el?.selectionEnd ?? v.length;
+    props.onChange?.({ target: { value: v.slice(0, start) + token + v.slice(end) } });
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(start + token.length, start + token.length);
+    });
+  };
   return (
     <div>
-      {label ? <Label htmlFor={id}>{label}</Label> : null}
+      {label || (vars || []).length ? (
+        <div className="flex items-center justify-between gap-2">
+          {label ? <Label htmlFor={id}>{label}</Label> : <span />}
+          {(vars || []).length ? <VarPicker vars={vars} onPick={insertVar} /> : null}
+        </div>
+      ) : null}
       <textarea
         id={id}
+        ref={ref}
         rows={3}
         className={[
           'w-full bg-n-alpha-2 border border-n-weak rounded-lg px-3 py-2',
@@ -233,6 +332,65 @@ function Section({ title, children }) {
     <div className="border-t border-n-weak pt-3 mt-3 flex flex-col gap-3">
       {title ? <h4 className="m-0 text-xs font-semibold text-n-slate-11 uppercase tracking-wide">{title}</h4> : null}
       {children}
+    </div>
+  );
+}
+
+/*
+ * MediaField — שדה קישור מדיה + כפתור העלאה שמשתמש בספריית המדיה הקיימת של המנוע
+ * (/drip-api/media). הפורמט נגזר מה-MIME; הקישור שחוזר הוא היחיד שהמנוע באמת יודע
+ * לצרף (הוא קורא את הקובץ מהדיסק) — קישור חיצוני שרירותי יישלח כטקסט בלבד.
+ */
+function MediaField({ label, value, onChange, accountId }) {
+  const t = useT(M);
+  const fileRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const pick = async (file) => {
+    if (!file) return;
+    setErr('');
+    setBusy(true);
+    try {
+      const format = file.type.startsWith('image/') ? 'IMAGE'
+        : file.type.startsWith('video/') ? 'VIDEO' : 'DOCUMENT';
+      const res = await uploadMedia(file, format, accountId);
+      onChange(res.url);
+    } catch (e) {
+      setErr(e.message || t('uploadErr'));
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+  return (
+    <div>
+      <Input
+        label={label}
+        value={value || ''}
+        placeholder="https://…"
+        dir="ltr"
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <div className="mt-1.5 flex items-center gap-2">
+        <Button
+          variant="faded"
+          color="slate"
+          size="sm"
+          icon={Upload}
+          loading={busy}
+          onClick={() => fileRef.current?.click()}
+        >
+          {busy ? t('uploading') : t('upload')}
+        </Button>
+        {err ? <span className="text-xs text-n-ruby-11">{err}</span> : null}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*,video/*,application/pdf"
+          className="hidden"
+          onChange={(e) => pick(e.target.files?.[0])}
+        />
+      </div>
     </div>
   );
 }
@@ -298,6 +456,83 @@ function ChipsInput({ label, value = [], onChange, placeholder, hint, suggestion
   );
 }
 
+/*
+ * TemplateSection — בחירת תבנית וואטסאפ מאושרת (מ-meta.templates, אותו מקור כמו
+ * הרצפים), מילוי פרמטרים {{N}} עם משתני פלואו, ומדיה לכותרת כשנדרשת.
+ */
+function TemplateSection({ data, patch, meta, vars }) {
+  const t = useT(M);
+  const templates = meta.templates || [];
+  const tpl = templates.find((x) => x.name === data.name) || null;
+  const hasOfficial = (meta.inboxes || []).some((ib) => ib.channel_type === 'Channel::Whatsapp');
+  const mediaHeader = tpl && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(tpl.header_format || '');
+  const params = Array.isArray(data.params) ? data.params : [];
+
+  const choose = (name) => {
+    const next = templates.find((x) => x.name === name);
+    patch({
+      name,
+      language: next?.language || '',
+      category: next?.category || '',
+      // מספר הפרמטרים נגזר מהתבנית; ערכים קיימים נשמרים עד כמה שאפשר.
+      params: Array.from({ length: next?.params_count || 0 }, (_, i) => params[i] || ''),
+      // זיכרון מדיה: קישור שכבר שימש את התבנית ברצפים מולא אוטומטית.
+      mediaUrl: next?.media_url || '',
+    });
+  };
+
+  const setParam = (i, v) => {
+    const next = params.map((p, j) => (j === i ? v : p));
+    patch({ params: next });
+  };
+
+  return (
+    <>
+      <div>
+        <Label>{t('tplPick')}</Label>
+        <TemplatePicker templates={templates} value={data.name || ''} onChange={choose} />
+        <p className="mt-1 text-xs text-n-slate-11">{t('tplHint')}</p>
+        {!hasOfficial ? <p className="mt-1 text-xs text-n-amber-11">{t('tplNoOfficial')}</p> : null}
+      </div>
+      {tpl?.body ? (
+        <div>
+          <Label>{t('tplPreview')}</Label>
+          <p className="m-0 whitespace-pre-wrap rounded-lg bg-n-alpha-2 px-3 py-2 text-xs leading-relaxed text-n-slate-11">
+            {tpl.body}
+          </p>
+        </div>
+      ) : null}
+      {params.length ? (
+        <Section title={t('tplParamsTitle')}>
+          {params.map((p, i) => (
+            <div key={i}>
+              <div className="flex items-center justify-between gap-2">
+                <Label>{t('tplParam', { n: i + 1 })}</Label>
+                <VarPicker vars={vars} onPick={(key) => setParam(i, `${p}{{${key}}}`)} />
+              </div>
+              <Input
+                value={p}
+                aria-label={t('tplParam', { n: i + 1 })}
+                onChange={(e) => setParam(i, e.target.value)}
+              />
+            </div>
+          ))}
+        </Section>
+      ) : null}
+      {mediaHeader ? (
+        <Input
+          label={t('tplMedia', { format: tpl.header_format })}
+          value={data.mediaUrl || ''}
+          placeholder="https://…"
+          dir="ltr"
+          hint={t('tplMediaHint')}
+          onChange={(e) => patch({ mediaUrl: e.target.value })}
+        />
+      ) : null}
+    </>
+  );
+}
+
 function SaveToEditor({ data, patch }) {
   const t = useT(M);
   const saveTo = data.saveTo || { scope: 'contact', key: '' };
@@ -325,7 +560,7 @@ function SaveToEditor({ data, patch }) {
   );
 }
 
-function FollowUpEditor({ data, patch }) {
+function FollowUpEditor({ data, patch, vars }) {
   const t = useT(M);
   const fu = data.followUp || null;
   return (
@@ -352,6 +587,7 @@ function FollowUpEditor({ data, patch }) {
           <Textarea
             label={t('fuMessage')}
             value={fu.message || ''}
+            vars={vars}
             onChange={(e) => patch({ followUp: { ...fu, message: e.target.value } })}
           />
           <Input
@@ -423,7 +659,7 @@ function OptionsEditor({ data, patch }) {
         size="sm"
         icon={Plus}
         disabled={options.length >= MAX_BUTTON_OPTIONS}
-        onClick={() => patch({ options: [...options, { title: '' }] })}
+        onClick={() => patch({ options: [...options, { title: '', id: newOptionId(options) }] })}
       >
         {t('addOption')}
       </Button>
@@ -517,11 +753,38 @@ function TriggerPanel({ name, onName, trigger, onTrigger, inboxes }) {
         <div className="flex items-center justify-between">
           <span className="text-sm text-n-slate-12">{t('manual')}</span>
           <Switch
-            checked={!!trigger.manual}
+            checked={trigger.manual !== false}
             aria-label={t('manual')}
             onChange={(v) => onTrigger({ ...trigger, manual: v })}
           />
         </div>
+      </Section>
+      <Section title={t('quietTitle')}>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-n-slate-12">{t('quietShabbat')}</span>
+          <Switch
+            checked={(trigger.quiet?.skip_shabbat ?? true) !== false}
+            aria-label={t('quietShabbat')}
+            onChange={(v) => onTrigger({ ...trigger, quiet: { ...(trigger.quiet || {}), skip_shabbat: v } })}
+          />
+        </div>
+        <div className="flex items-end gap-2">
+          <Input
+            type="time"
+            label={t('quietStart')}
+            value={trigger.quiet?.quiet_start || ''}
+            containerClassName="grow"
+            onChange={(e) => onTrigger({ ...trigger, quiet: { ...(trigger.quiet || {}), quiet_start: e.target.value } })}
+          />
+          <Input
+            type="time"
+            label={t('quietEnd')}
+            value={trigger.quiet?.quiet_end || ''}
+            containerClassName="grow"
+            onChange={(e) => onTrigger({ ...trigger, quiet: { ...(trigger.quiet || {}), quiet_end: e.target.value } })}
+          />
+        </div>
+        <p className="m-0 text-xs text-n-slate-11">{t('quietHint')}</p>
       </Section>
     </div>
   );
@@ -537,6 +800,8 @@ export default function Inspector({
   removeNode,
   meta,
   fieldSuggestions = [],
+  vars = [],
+  accountId,
 }) {
   const t = useT(M);
 
@@ -560,21 +825,25 @@ export default function Inspector({
             label={t('msgText')}
             value={d.text || ''}
             placeholder={t('msgTextPh')}
+            vars={vars}
             onChange={(e) => patch({ text: e.target.value })}
           />
-          <Input
+          <MediaField
             label={t('mediaUrl')}
             value={d.mediaUrl || ''}
-            placeholder={t('mediaUrlPh')}
-            dir="ltr"
-            onChange={(e) => patch({ mediaUrl: e.target.value })}
+            accountId={accountId}
+            onChange={(v) => patch({ mediaUrl: v })}
           />
         </>
       ) : null}
 
+      {node.type === 'template' ? (
+        <TemplateSection data={d} patch={patch} meta={meta} vars={vars} />
+      ) : null}
+
       {node.type === 'question' ? (
         <>
-          <Textarea label={t('qText')} value={d.text || ''} onChange={(e) => patch({ text: e.target.value })} />
+          <Textarea label={t('qText')} value={d.text || ''} vars={vars} onChange={(e) => patch({ text: e.target.value })} />
           <Select
             label={t('validation')}
             value={d.validation || 'text'}
@@ -593,13 +862,13 @@ export default function Inspector({
             onChange={(e) => patch({ retryMessage: e.target.value })}
           />
           <SaveToEditor data={d} patch={patch} />
-          <FollowUpEditor data={d} patch={patch} />
+          <FollowUpEditor data={d} patch={patch} vars={vars} />
         </>
       ) : null}
 
       {node.type === 'buttons' ? (
         <>
-          <Textarea label={t('qText')} value={d.text || ''} onChange={(e) => patch({ text: e.target.value })} />
+          <Textarea label={t('qText')} value={d.text || ''} vars={vars} onChange={(e) => patch({ text: e.target.value })} />
           <OptionsEditor data={d} patch={patch} />
           <Input
             label={t('retryMessage')}
@@ -608,7 +877,7 @@ export default function Inspector({
             onChange={(e) => patch({ retryMessage: e.target.value })}
           />
           <SaveToEditor data={d} patch={patch} />
-          <FollowUpEditor data={d} patch={patch} />
+          <FollowUpEditor data={d} patch={patch} vars={vars} />
         </>
       ) : null}
 
@@ -717,6 +986,7 @@ export default function Inspector({
             value={d.message || ''}
             placeholder={t('hoMessagePh')}
             hint={t('hoHint')}
+            vars={vars}
             onChange={(e) => patch({ message: e.target.value })}
           />
           <AssignPickers data={d} patch={patch} meta={meta} />
