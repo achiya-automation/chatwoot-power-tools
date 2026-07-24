@@ -20,10 +20,10 @@ setup() { source lib/assemble-dashboard-script.sh; }
   [[ "$output" == *"__dripCampaignStats"* ]]  # the new injector's IIFE guard — confirms its body is inlined
 }
 
-@test "assemble sequences bundles journeys nav + launch injectors" {
+@test "assemble sequences bundles journeys nav (not the floating launch pill)" {
   run assemble_dashboard_script "/chatwoot-addons" sequences
   [[ "$output" == *"// part: modules/sequences/inject/journeys-nav.js"* ]]
-  [[ "$output" == *"// part: modules/sequences/inject/journey-launch.js"* ]]
   [[ "$output" == *"__jrnNav"* ]]
-  [[ "$output" == *"__jrnLaunch"* ]]
+  # journey-launch (floating pill) is intentionally excluded — see assemble-dashboard-script.sh
+  [[ "$output" != *"__jrnLaunch"* ]]
 }

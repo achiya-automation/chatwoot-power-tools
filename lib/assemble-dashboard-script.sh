@@ -27,11 +27,13 @@ _cwpt_module_parts() {
       echo "modules/smart-import/inject/import-button.js"
       ;;
     sequences)
+      # journey-launch.js (floating "run flow" pill) intentionally NOT assembled — it read
+      # as non-native and collided with the sidebar. Manual launch, if wanted, belongs in
+      # Chatwoot's native conversation action menu, not a fixed-position overlay.
       printf '%s\n' \
         "modules/sequences/inject/sequences-nav.js" \
         "modules/sequences/inject/templates-nav.js" \
-        "modules/sequences/inject/journeys-nav.js" \
-        "modules/sequences/inject/journey-launch.js"
+        "modules/sequences/inject/journeys-nav.js"
       ;;
     enhancements)
       printf '%s\n' \
