@@ -18,6 +18,21 @@ export class ImportLog {
     return s;
   }
 
+  // Most frequent failure reason — lets the UI explain a mass failure instead of
+  // showing a bare count. Returns { reason, count } or null when nothing failed.
+  topError() {
+    const counts = new Map();
+    for (const r of this.rows) {
+      if (r.status !== 'failed' || !r.reason) continue;
+      counts.set(r.reason, (counts.get(r.reason) || 0) + 1);
+    }
+    let top = null;
+    for (const [reason, count] of counts) {
+      if (!top || count > top.count) top = { reason, count };
+    }
+    return top;
+  }
+
   toCsv() {
     const head = 'row,name,status,contact_id,reason';
     const body = this.rows.map((r) =>

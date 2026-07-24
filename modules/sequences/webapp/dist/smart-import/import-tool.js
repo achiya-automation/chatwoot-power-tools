@@ -106,6 +106,7 @@ var __cwImport = (() => {
       return d.length === 9 || d.length === 8 ? "+972" + d : null;
     }
     if (d.length === 9) return "+972" + d;
+    if (d.length >= 10 && d.length <= 15) return "+" + d;
     return null;
   }
 
