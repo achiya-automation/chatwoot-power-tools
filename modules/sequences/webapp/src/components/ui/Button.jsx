@@ -96,6 +96,8 @@ export default function Button({
   disabled = false,
   loading = false,
   type = 'button',
+  href = null,
+  download = null,
   className = '',
   ...props
 }) {
@@ -120,12 +122,18 @@ export default function Button({
   // בזמן טעינה: ספינר מחליף את האייקון המוביל, הכפתור מושבת (aria-busy לנגישות)
   const LeadingIcon = loading ? Loader2 : Icon;
 
+  // href → מרונדר כעוגן במקום כפתור. הורדת קובץ חייבת עוגן אמיתי שהמשתמש לוחץ עליו:
+  // a.click() סינתטי מתוך onClick נחסם בשקט בחלק מהדפדפנים (Safari), ולחיצה ישירה על
+  // <a download> היא המסלול היחיד שעובד בכולם. המראה נשאר זהה לכפתור.
+  const Tag = href ? 'a' : 'button';
+  const tagProps = href
+    ? { href, download: download || undefined }
+    : { type, disabled: disabled || loading, 'aria-busy': loading || undefined };
+
   return (
-    <button
-      type={type}
-      disabled={disabled || loading}
-      aria-busy={loading || undefined}
+    <Tag
       className={classes}
+      {...tagProps}
       {...props}
     >
       {LeadingIcon ? (
@@ -141,6 +149,6 @@ export default function Button({
       {TrailingIcon && !loading ? (
         <TrailingIcon size={iconSize} strokeWidth={2} aria-hidden="true" />
       ) : null}
-    </button>
+    </Tag>
   );
 }
