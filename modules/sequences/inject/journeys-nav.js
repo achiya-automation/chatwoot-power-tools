@@ -19,15 +19,13 @@
   };
   function jrnLabel() { return (I18N[dripLocale()] || I18N.en).label; }
 
-  var LI_CLASS = 'py-0.5 ltr:pl-2 rtl:pr-2 rtl:mr-3 ltr:ml-3 relative text-n-slate-11 child-item before:bg-n-slate-4 after:bg-transparent after:border-n-slate-4 before:left-0 rtl:before:right-0 min-w-0';
-  var A_CLASS  = 'flex h-8 items-center gap-2 px-2 py-1 rounded-lg hover:bg-gradient-to-r from-transparent via-n-slate-3/70 to-n-slate-3/70 group min-w-0';
-  var LBL_CLASS = 'flex-1 truncate min-w-0 text-sm';
-  // lucide "workflow" — two nodes joined by a connector, matches the flow-canvas idea.
-  var ICON =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1rem;height:1rem;display:inline-block;">' +
-    '<rect width="8" height="8" x="3" y="3" rx="2"/>' +
-    '<path d="M7 11v4a2 2 0 0 0 2 2h4"/>' +
-    '<rect width="8" height="8" x="13" y="13" rx="2"/></svg>';
+  // Top-level item — native childless-group styling (see templates-nav.js for the 4.16.1
+  // provenance of these class strings; the old child-item/unprefixed-hover classes rendered
+  // an orphan tree line and no hover highlight at all).
+  var LI_CLASS = 'grid gap-1 text-sm cursor-pointer select-none min-w-0';
+  var A_CLASS = 'flex items-center gap-2 px-1.5 py-1 rounded-lg h-8 min-w-0';
+  var A_IDLE = ['text-n-slate-11', 'hover:bg-n-alpha-2'];
+  var A_ACTIVE = ['text-n-slate-12', 'bg-n-alpha-2', 'font-medium'];
 
   function accountId() {
     var m = location.pathname.match(/\/accounts\/(\d+)/);
@@ -93,18 +91,21 @@
     li.className = LI_CLASS;
 
     var a = document.createElement('a');
-    a.className = A_CLASS;
+    a.className = A_CLASS + ' ' + A_IDLE.join(' ');
     a.style.cursor = 'pointer';
 
+    // i-lucide-workflow is bundled in Chatwoot's compiled icon CSS (verified) — render it
+    // exactly like a native sidebar icon (mask span), no inline SVG needed.
     var icon = document.createElement('span');
-    icon.className = 'size-4';
-    icon.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;';
-    icon.innerHTML = ICON;
+    icon.className = 'i-lucide-workflow size-4';
     a.appendChild(icon);
 
-    var lbl = document.createElement('div');
-    lbl.className = LBL_CLASS;
-    a.appendChild(lbl);
+    var wrap = document.createElement('div');
+    wrap.className = 'flex items-center gap-1.5 flex-grow justify-between min-w-0 flex-1';
+    var lbl = document.createElement('span');
+    lbl.className = 'truncate text-body-main';
+    wrap.appendChild(lbl);
+    a.appendChild(wrap);
     li.appendChild(a);
 
     li.__jrnLocale = dripLocale();
@@ -123,7 +124,7 @@
     if (li.__jrnLocale === loc) return;
     li.__jrnLocale = loc;
     var text = jrnLabel();
-    var lbl = li.querySelector('a > div');
+    var lbl = li.querySelector('span.truncate');
     if (lbl) lbl.textContent = text;
     var a = li.querySelector('a');
     if (a) a.setAttribute('title', text);
@@ -134,10 +135,18 @@
     if (!li) return;
     var a = li.querySelector('a');
     if (!a) return;
+    var span = li.querySelector('span.truncate');
     var t;
     try { t = new URL(location.href).searchParams.get('drip'); } catch (e) { t = null; }
-    if (t === 'journeys') a.classList.add('bg-n-alpha-2', 'text-n-slate-12', 'font-medium');
-    else a.classList.remove('bg-n-alpha-2', 'text-n-slate-12', 'font-medium');
+    if (t === 'journeys') {
+      a.classList.add.apply(a.classList, A_ACTIVE);
+      a.classList.remove('text-n-slate-11');
+      if (span) { span.classList.remove('text-body-main'); span.classList.add('font-medium', 'text-sm'); }
+    } else {
+      a.classList.remove.apply(a.classList, A_ACTIVE);
+      a.classList.add('text-n-slate-11');
+      if (span) { span.classList.add('text-body-main'); span.classList.remove('font-medium', 'text-sm'); }
+    }
   }
 
   function tick() {
