@@ -411,15 +411,19 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   // Engagement uses all attempt conversations, including recovered outgoing-echo rows without
   // campaign_id. Restrict incoming messages to after the campaign was created.
   const conversationIds = [...new Set(rawRecipients.map((r) => asPositiveInt(r.conversation_id)).filter(Boolean))];
-  const replied = conversationIds.length ? Number((await query(
-    `SELECT count(DISTINCT m_in.conversation_id)::int AS c
+  // The ids themselves, not just the count: the per-recipient "replied" flag (report filter +
+  // CSV column) must stay exact even when the reply-content list below is capped or fails.
+  const repliedRows = conversationIds.length ? await query(
+    `SELECT DISTINCT m_in.conversation_id AS conversation_id
        FROM public.messages m_in
       WHERE m_in.account_id = $1
         AND m_in.message_type = 0
         AND m_in.conversation_id = ANY($3::bigint[])
         AND m_in.created_at > (SELECT created_at FROM public.campaigns WHERE account_id = $1 AND id = $2)`,
     [accountId, id, conversationIds]
-  ))[0]?.c || 0) : 0;
+  ) : [];
+  const repliedConversationIds = new Set(repliedRows.map((r) => asPositiveInt(r.conversation_id)).filter(Boolean));
+  const replied = repliedConversationIds.size;
 
   // The replies themselves (first incoming message per conversation, capped): who replied,
   // what they opened with, and the conversation display_id for a click-through into Chatwoot.
@@ -428,7 +432,9 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   try {
     if (!conversationIds.length) throw new Error('no campaign conversations');
     // הפנימי: התגובה הראשונה לכל שיחה (DISTINCT ON מחייב מיון לפי conversation_id);
-    // החיצוני: טריות קודם — לידים חדשים למעלה, וב-overflow נשמרים ה-200 העדכניים.
+    // החיצוני: טריות קודם — לידים חדשים למעלה, וב-overflow נשמרים ה-1000 העדכניים.
+    // התקרה קיימת כדי שקמפיין ענק לא ינפח את ה-payload; היא חלה על *תוכן* התגובה בלבד —
+    // דגל "הגיב" לכל נמען מגיע מ-repliedConversationIds ולכן נשאר מדויק גם מעליה.
     replies = await query(
       `SELECT conversation_id, conversation_display_id, contact_id, contact_name, contact_phone,
               source_id, content, replied_at FROM (
@@ -453,10 +459,19 @@ export async function getCampaignDetail(query, accountId, campaignId) {
           ORDER BY m_in.conversation_id, m_in.created_at
        ) r
        ORDER BY r.first_reply_at DESC
-       LIMIT 200`,
+       LIMIT 1000`,
       [accountId, id, conversationIds]
     );
   } catch { replies = []; }
+  // תוכן התגובה לכל שיחה, לפני ההמרה לתצוגה (שם) — מזין את עמודות התגובה בטבלה ובייצוא.
+  const replyByConversation = new Map(replies.map((r) => [asPositiveInt(r.conversation_id), r]));
+  for (const r of recipients) {
+    const cid = asPositiveInt(r.conversation_id);
+    const reply = cid ? replyByConversation.get(cid) : null;
+    r.replied = !!(cid && repliedConversationIds.has(cid));
+    r.reply_content = reply?.content || '';
+    r.replied_at = reply?.replied_at || '';
+  }
   const replyResolver = audienceResolver(audienceContacts);
   const recipientByConversation = new Map(recipients.map((r) => [asPositiveInt(r.conversation_id), r]));
   replies = replies.map((reply) => {

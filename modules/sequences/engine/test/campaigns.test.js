@@ -392,6 +392,28 @@ test('getCampaignDetail: replies list carries name, first message, and display_i
   assert.equal(d.recipients[0].conversation_display_id, 9504);
 });
 
+// הדגל וגוף התגובה יושבים גם על שורת הנמען עצמה — מזין את סינון "הגיבו/לא הגיבו"
+// ואת עמודות התגובה ב-CSV, בלי הצלבה נוספת בצד הלקוח.
+test('getCampaignDetail: recipients carry replied flag + first reply content', async () => {
+  await seedCampaign({ id: 48, title: 'דגל תגובה' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (9,1,'מגיבה','+972500000009'),(10,1,'שותקת','+972500000010')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (508,9508,1,9),(509,9509,1,10)`);
+  await seedCampaignMessage({ id: 10, conv: 508, campaignId: 48, status: 2 });
+  await seedCampaignMessage({ id: 11, conv: 509, campaignId: 48, status: 1 });
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, content, status, created_at)
+               VALUES (93, 508, 1, 0, 'שלחי לי הצעה', 0, now() + interval '1 minute')`);
+
+  const d = await getCampaignDetail(query, 1, 48);
+  const replier = d.recipients.find((r) => r.conversation_display_id === 9508);
+  const silent = d.recipients.find((r) => r.conversation_display_id === 9509);
+  assert.equal(replier.replied, true);
+  assert.equal(replier.reply_content, 'שלחי לי הצעה');
+  assert.ok(replier.replied_at, 'replied_at populated');
+  assert.equal(silent.replied, false);
+  assert.equal(silent.reply_content, '');
+  assert.equal(silent.replied_at, '');
+});
+
 // ── campaignsTierInfo: 24h budget preflight ──
 
 test('campaignsTierInfo: counts distinct 24h campaign conversations, failed excluded', async () => {
