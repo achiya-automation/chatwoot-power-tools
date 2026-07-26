@@ -20,10 +20,13 @@
 //   rtl:hover:bg-gradient-to-l` — the direction-prefixed variants are the ONLY ones present
 //   in Chatwoot's compiled CSS (an unprefixed hover:bg-gradient-to-r has no rule at all and
 //   silently renders no hover). Active = `text-n-slate-12 bg-n-alpha-2 active`.
-// - The old 4.15-era classes (`sidebar-group-children`, `child-item before:bg-n-slate-4
-//   after:border-n-slate-4 …`, unprefixed hover) no longer exist in 4.16 CSS — that is why
-//   the injected items had no hover highlight and no tree line. Class strings below are
-//   copied verbatim from the 4.16.1 sources.
+// - COLLAPSED sidebar (provider.js isCollapsed, width<160): the menu <ul> gains
+//   `items-center` and every group renders as an icon-only `size-10` button; a group's
+//   children move into a hover POPOVER next to the rail (SidebarCollapsedPopover.vue).
+//   We render the same: icon-only trigger + hover popover with the 4 tabs. The mode is
+//   re-detected on every observer tick, so dragging the sidebar narrower/wider rebuilds the
+//   item in the right shape (before this, a collapsed rail showed our expanded markup as a
+//   truncated text fragment).
 (function () {
   if (window.__dripNav) return;
   window.__dripNav = true;
@@ -74,6 +77,10 @@
   var A_CLASS = 'flex h-8 items-center gap-2 px-2 py-1 rounded-lg ltr:hover:bg-gradient-to-r rtl:hover:bg-gradient-to-l from-transparent via-n-slate-3/70 to-n-slate-3/70 group min-w-0';
   var A_ACTIVE = ['text-n-slate-12', 'bg-n-alpha-2', 'active']; // native leaf active classes
   var LBL_CLASS = 'flex-1 truncate min-w-0 text-sm';
+  // SidebarGroup.vue collapsed trigger + SidebarCollapsedPopover.vue:
+  var COL_LI_CLASS = 'grid gap-1 text-sm cursor-pointer select-none min-w-0';
+  var COL_BTN_CLASS = 'flex items-center justify-center size-10 rounded-lg';
+  var COL_POP_ITEM = 'flex items-center gap-2 px-2 py-1.5 w-full rounded-lg text-sm text-left rtl:text-right transition-colors duration-150 ease-out';
 
   function accountId() {
     var m = location.pathname.match(/\/accounts\/(\d+)/);
@@ -87,6 +94,28 @@
       if (r.width > 500 && r.height > 300 && a > ba) { ba = a; best = mains[i]; }
     }
     return best || document.querySelector('div.overflow-auto.bg-n-surface-1') || document.body;
+  }
+
+  // ── anchor + sidebar mode detection ─────────────────────────────────────────
+  // Expanded: the Campaigns group header carries name="Campaigns". Collapsed: that header is
+  // replaced by an icon-only size-10 button — the ONLY stable, locale-independent signal left
+  // is its i-lucide-megaphone icon (titles are translated). The parent <ul> also gains
+  // `items-center` in collapsed mode (Sidebar.vue), which we use as a sanity check.
+  function findAnchor() {
+    var byName = document.querySelector('div[name="Campaigns"]');
+    if (byName) {
+      var li = byName.closest('li');
+      if (li && li.parentElement) return { li: li, collapsed: false };
+    }
+    var icons = document.querySelectorAll('span.i-lucide-megaphone');
+    for (var i = 0; i < icons.length; i++) {
+      var btn = icons[i].closest('.size-10');
+      var li2 = icons[i].closest('li');
+      if (btn && li2 && li2.parentElement && li2.parentElement.tagName === 'UL') {
+        return { li: li2, collapsed: true };
+      }
+    }
+    return null;
   }
 
   // ── URL sync ("built-in" deep-link) ─────────────────────────────────────────
@@ -170,6 +199,22 @@
     var item = document.getElementById('drip-nav-item'); if (!item) return;
     var active = activeSub();
 
+    if (item.getAttribute('data-drip-mode') === 'collapsed') {
+      // icon-only trigger: active → text-n-slate-12 bg-n-alpha-2 (SidebarGroup.vue collapsed)
+      var trg = item.querySelector('[data-drip-hdr]');
+      if (trg) {
+        if (active) {
+          trg.classList.add('text-n-slate-12', 'bg-n-alpha-2');
+          trg.classList.remove('text-n-slate-11', 'hover:bg-n-alpha-2');
+        } else {
+          trg.classList.remove('text-n-slate-12', 'bg-n-alpha-2');
+          trg.classList.add('text-n-slate-11', 'hover:bg-n-alpha-2');
+        }
+      }
+      renderPopoverActive();
+      return;
+    }
+
     // children: all visible while expanded; only the active leaf while collapsed-with-active;
     // none otherwise (v-show="isExpanded || hasActiveChild" + per-leaf v-show, SidebarGroup.vue)
     var ul = item.querySelector('[data-drip-ul]');
@@ -246,6 +291,7 @@
     document.body.classList.remove('drip-active'); // restores Chatwoot's native highlight
     if (holder) holder.style.display = 'none';
     groupExpanded = false; // native: leaving the feature collapses its group (no active child)
+    closePopover();
     renderNav();
     try { sessionStorage.removeItem('drip_open'); } catch (e) {}
     // Clear the drip param from the URL (if present), without a new history entry.
@@ -267,18 +313,95 @@
     renderNav();
   }
 
-  // nav group with sub-items — header cloned (exact styling), <ul> built from scratch.
-  // Note: Chatwoot only renders the sub-items <ul> while the group is expanded (v-if), so we
-  // *build* the <ul> from scratch with the exact classes (not cloned — at inject time
-  // "Campaigns" may be collapsed, so there's no <ul> to clone).
-  function inject() {
-    if (document.getElementById('drip-nav-item')) return;
-    var camp = document.querySelector('div[name="Campaigns"]');
-    if (!camp) return;
-    var grp = camp.closest('li');
-    if (!grp || !grp.parentElement) return;
-    var clone = grp.cloneNode(true);
+  // ── collapsed-rail hover popover (native SidebarCollapsedPopover.vue) ──────
+  var popCloseTimer = null;
+  function closePopover() {
+    var p = document.getElementById('drip-collapsed-pop');
+    if (p) p.remove();
+    clearTimeout(popCloseTimer);
+  }
+  function scheduleClosePopover(ms) {
+    clearTimeout(popCloseTimer);
+    popCloseTimer = setTimeout(closePopover, ms);
+  }
+  function renderPopoverActive() {
+    var p = document.getElementById('drip-collapsed-pop'); if (!p) return;
+    var active = activeSub();
+    var btns = p.querySelectorAll('[data-drip-pop-tab]');
+    for (var i = 0; i < btns.length; i++) {
+      var key = btns[i].getAttribute('data-drip-pop-tab');
+      if (active && key === active) {
+        btns[i].classList.add('text-n-slate-12', 'bg-n-alpha-2');
+        btns[i].classList.remove('text-n-slate-11', 'hover:bg-n-alpha-2');
+      } else {
+        btns[i].classList.remove('text-n-slate-12', 'bg-n-alpha-2');
+        btns[i].classList.add('text-n-slate-11', 'hover:bg-n-alpha-2');
+      }
+    }
+  }
+  function openPopover(trigger) {
+    if (document.getElementById('drip-collapsed-pop')) { clearTimeout(popCloseTimer); return; }
+    var labels = navLabels();
+    var pop = document.createElement('div');
+    pop.id = 'drip-collapsed-pop';
+    pop.className = 'fixed z-[100] min-w-[200px] max-w-[280px]';
+    var card = document.createElement('div');
+    card.className = 'bg-n-alpha-3 backdrop-blur-[100px] outline outline-1 -outline-offset-1 w-56 outline-n-weak rounded-xl shadow-lg py-2 px-2';
+    var title = document.createElement('div');
+    title.className = 'px-2 py-1.5 text-xs font-medium text-n-slate-11 uppercase tracking-wider border-b border-n-weak mb-1';
+    title.textContent = labels.title;
+    card.appendChild(title);
+    var ul = document.createElement('ul');
+    ul.className = 'm-0 p-0 list-none max-h-[400px] overflow-y-auto no-scrollbar';
+    TAB_KEYS.forEach(function (key) {
+      var li = document.createElement('li');
+      li.className = 'py-0.5';
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = COL_POP_ITEM + ' text-n-slate-11 hover:bg-n-alpha-2';
+      b.setAttribute('data-drip-pop-tab', key);
+      var lbl = document.createElement('span');
+      lbl.className = 'flex-1 truncate';
+      lbl.textContent = labels[key];
+      b.appendChild(lbl);
+      b.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        show(key);
+        closePopover();
+      });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+    card.appendChild(ul);
+    pop.appendChild(card);
+    pop.addEventListener('mouseenter', function () { clearTimeout(popCloseTimer); });
+    pop.addEventListener('mouseleave', function () { scheduleClosePopover(100); });
+    document.body.appendChild(pop);
+
+    // position: next to the rail (LTR: right of it, RTL: left of it), at the trigger's top,
+    // clamped to the viewport — same math as the native popover.
+    var rail = trigger.closest('nav') || trigger.closest('ul') || trigger;
+    var railRect = rail.getBoundingClientRect();
+    var trgRect = trigger.getBoundingClientRect();
+    if (dripLocale() === 'he') {
+      pop.style.right = Math.round(window.innerWidth - railRect.left + 8) + 'px';
+    } else {
+      pop.style.left = Math.round(railRect.right + 8) + 'px';
+    }
+    var popH = pop.offsetHeight || 200;
+    var top = trgRect.top + popH > window.innerHeight - 20
+      ? Math.max(20, window.innerHeight - popH - 20)
+      : trgRect.top;
+    pop.style.top = Math.round(top) + 'px';
+    renderPopoverActive();
+  }
+  window.addEventListener('blur', closePopover);
+
+  // ── build the nav item — expanded group OR collapsed icon-only trigger ─────
+  function buildExpanded(anchorLi) {
+    var clone = anchorLi.cloneNode(true);
     clone.id = 'drip-nav-item';
+    clone.setAttribute('data-drip-mode', 'expanded');
     var oldUl = clone.querySelector('ul'); if (oldUl) oldUl.remove(); // in case it was cloned expanded
 
     // header — label + icon + chevron; no navigation. Strip the cloned state classes and
@@ -326,7 +449,9 @@
       chev.setAttribute('data-drip-chev', '');
     }
 
-    // build the <ul> + sub-items from scratch (Chatwoot's exact 4.16.1 structure)
+    // build the <ul> + sub-items from scratch (Chatwoot's exact 4.16.1 structure).
+    // Note: Chatwoot only renders the sub-items <ul> while the group is expanded (v-if), so
+    // we *build* it rather than clone it — at inject time "Campaigns" may be collapsed.
     var ul = document.createElement('ul');
     ul.className = UL_CLASS;
     ul.setAttribute('data-drip-ul', '');
@@ -348,8 +473,42 @@
       ul.appendChild(li);
     });
     clone.appendChild(ul);
+    return clone;
+  }
 
-    grp.parentElement.insertBefore(clone, grp.nextSibling);
+  function buildCollapsed() {
+    var li = document.createElement('li');
+    li.id = 'drip-nav-item';
+    li.setAttribute('data-drip-mode', 'collapsed');
+    li.className = COL_LI_CLASS;
+    var wrap = document.createElement('div');
+    wrap.className = 'relative';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = COL_BTN_CLASS + ' text-n-slate-11 hover:bg-n-alpha-2';
+    btn.setAttribute('title', navLabels().title);
+    btn.setAttribute('data-drip-hdr', '');
+    var icon = document.createElement('span');
+    icon.className = 'i-lucide-layers size-4';
+    btn.appendChild(icon);
+    wrap.appendChild(btn);
+    li.appendChild(wrap);
+    // native collapsed groups open their children in a popover on hover
+    wrap.addEventListener('mouseenter', function () { clearTimeout(popCloseTimer); openPopover(btn); });
+    wrap.addEventListener('mouseleave', function () { scheduleClosePopover(200); });
+    return li;
+  }
+
+  function inject() {
+    var anchor = findAnchor();
+    if (!anchor) return;
+    var mode = anchor.collapsed ? 'collapsed' : 'expanded';
+    var existing = document.getElementById('drip-nav-item');
+    if (existing && existing.getAttribute('data-drip-mode') === mode) return;
+    if (existing) { existing.remove(); closePopover(); }
+
+    var item = anchor.collapsed ? buildCollapsed() : buildExpanded(anchor.li);
+    anchor.li.parentElement.insertBefore(item, anchor.li.nextSibling);
     renderNav();
 
     // state restore: if we refreshed while on the sequences panel, return to the same tab.
@@ -382,8 +541,21 @@
       e.preventDefault(); e.stopPropagation(); show(sub.getAttribute('data-drip-tab')); return;
     }
     if (e.target.closest('[data-drip-hdr]')) {
-      e.preventDefault(); e.stopPropagation(); toggle(); return;
+      e.preventDefault(); e.stopPropagation();
+      var item = document.getElementById('drip-nav-item');
+      if (item && item.getAttribute('data-drip-mode') === 'collapsed') {
+        // native collapsed click → first accessible child (handleCollapsedClick); the
+        // popover (hover) is the way to reach a specific tab
+        closePopover();
+        show(activeSub() || 'overview');
+      } else {
+        toggle();
+      }
+      return;
     }
+    // click-outside closes the collapsed popover (parity with onClickOutside)
+    var pop = document.getElementById('drip-collapsed-pop');
+    if (pop && !pop.contains(e.target)) closePopover();
     var link = e.target.closest('a[href*="/accounts/"]');
     if (link && !(nav && nav.contains(link))) hide();
   }, true);
@@ -413,9 +585,14 @@
     }
   }).observe(document.querySelector('#app') || document.documentElement, { attributes: true, attributeFilter: ['dir'] });
 
-  // bootstrap: (re-)inject the nav item as Chatwoot's own Vue app re-renders the sidebar
+  // bootstrap: (re-)inject the nav item as Chatwoot's own Vue app re-renders the sidebar.
+  // Also re-detects the sidebar mode (expanded↔collapsed rebuilds the item) and keeps the
+  // open panel aligned with the content area while the sidebar is being dragged (no window
+  // resize event fires for that).
   var navTimer;
-  new MutationObserver(function () { clearTimeout(navTimer); navTimer = setTimeout(inject, 150); })
-    .observe(document.documentElement, { childList: true, subtree: true });
+  new MutationObserver(function () {
+    clearTimeout(navTimer);
+    navTimer = setTimeout(function () { inject(); if (shown) position(); }, 150);
+  }).observe(document.documentElement, { childList: true, subtree: true });
   setTimeout(inject, 500);
 })();

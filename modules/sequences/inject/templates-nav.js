@@ -116,41 +116,69 @@
     if (li && li.parentElement) li.parentElement.removeChild(li);
   }
 
-  // idempotent — builds a fresh <li> once, right after #drip-nav-item. Live updates (label on
-  // dir flip, active class on ?drip=) are separate functions below, not re-runs of this one.
+  // The sidebar mode (expanded rail vs icon-only collapsed rail) is already detected by
+  // sequences-nav.js and stamped on #drip-nav-item — follow it, so all injected items flip
+  // together. In collapsed mode a childless item is just an icon-only size-10 button
+  // (SidebarGroup.vue collapsed template), no label, tooltip = title.
+  function sidebarMode() {
+    var seq = document.getElementById('drip-nav-item');
+    return seq ? (seq.getAttribute('data-drip-mode') || 'expanded') : null;
+  }
+
+  // idempotent — builds a fresh <li> right after #drip-nav-item, rebuilt when the sidebar
+  // mode flips. Live updates (label on dir flip, active class on ?drip=) are separate
+  // functions below, not re-runs of this one.
   function inject() {
-    if (document.getElementById('tpl-nav-item')) return;
+    var mode = sidebarMode();
+    if (!mode) return;
+    var existing = document.getElementById('tpl-nav-item');
+    if (existing && existing.getAttribute('data-tpl-mode') === mode) return;
+    if (existing) existing.remove();
     var seq = document.getElementById('drip-nav-item');
     if (!seq || !seq.parentElement) return;
 
     var li = document.createElement('li');
     li.id = 'tpl-nav-item';
-    li.className = LI_CLASS;
-
-    // native SidebarGroupHeader structure: icon span (size-4) + label wrapper (flex-grow) +
-    // span.truncate carrying the weight class (text-body-main idle / font-medium text-sm active)
-    var a = document.createElement('a');
-    a.className = A_CLASS + ' ' + A_IDLE.join(' ');
-    a.style.cursor = 'pointer';
-
-    var icon = document.createElement('span');
-    icon.className = 'size-4';
-    icon.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;';
-    icon.innerHTML = ICON;
-    a.appendChild(icon);
-
-    var wrap = document.createElement('div');
-    wrap.className = 'flex items-center gap-1.5 flex-grow justify-between min-w-0 flex-1';
-    var lbl = document.createElement('span');
-    lbl.className = 'truncate text-body-main';
-    wrap.appendChild(lbl);
-    a.appendChild(wrap);
-    li.appendChild(a);
-
-    li.__tplLocale = dripLocale();
+    li.setAttribute('data-tpl-mode', mode);
     var text = tplLabel();
-    lbl.textContent = text;
-    a.setAttribute('title', text);
+    li.__tplLocale = dripLocale();
+
+    if (mode === 'collapsed') {
+      li.className = 'grid gap-1 text-sm cursor-pointer select-none min-w-0';
+      var btn = document.createElement('a');
+      btn.className = 'flex items-center justify-center size-10 rounded-lg text-n-slate-11 hover:bg-n-alpha-2';
+      btn.style.cursor = 'pointer';
+      btn.setAttribute('title', text);
+      var cicon = document.createElement('span');
+      cicon.className = 'size-4';
+      cicon.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;';
+      cicon.innerHTML = ICON;
+      btn.appendChild(cicon);
+      li.appendChild(btn);
+    } else {
+      li.className = LI_CLASS;
+      // native SidebarGroupHeader structure: icon span (size-4) + label wrapper (flex-grow) +
+      // span.truncate carrying the weight class (text-body-main idle / font-medium text-sm active)
+      var a = document.createElement('a');
+      a.className = A_CLASS + ' ' + A_IDLE.join(' ');
+      a.style.cursor = 'pointer';
+
+      var icon = document.createElement('span');
+      icon.className = 'size-4';
+      icon.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;';
+      icon.innerHTML = ICON;
+      a.appendChild(icon);
+
+      var wrap = document.createElement('div');
+      wrap.className = 'flex items-center gap-1.5 flex-grow justify-between min-w-0 flex-1';
+      var lbl = document.createElement('span');
+      lbl.className = 'truncate text-body-main';
+      lbl.textContent = text;
+      wrap.appendChild(lbl);
+      a.appendChild(wrap);
+      a.setAttribute('title', text);
+      li.appendChild(a);
+    }
 
     seq.parentElement.insertBefore(li, seq.nextSibling);
     markActive();
@@ -177,10 +205,22 @@
     if (!li) return;
     var a = li.querySelector('a');
     if (!a) return;
-    var span = li.querySelector('span.truncate');
     var t;
     try { t = new URL(location.href).searchParams.get('drip'); } catch (e) { t = null; }
-    if (t === 'templates') {
+    var on = t === 'templates';
+    if (li.getAttribute('data-tpl-mode') === 'collapsed') {
+      // icon-only trigger: active = text-n-slate-12 bg-n-alpha-2 (SidebarGroup.vue collapsed)
+      if (on) {
+        a.classList.add('text-n-slate-12', 'bg-n-alpha-2');
+        a.classList.remove('text-n-slate-11', 'hover:bg-n-alpha-2');
+      } else {
+        a.classList.remove('text-n-slate-12', 'bg-n-alpha-2');
+        a.classList.add('text-n-slate-11', 'hover:bg-n-alpha-2');
+      }
+      return;
+    }
+    var span = li.querySelector('span.truncate');
+    if (on) {
       a.classList.add.apply(a.classList, A_ACTIVE);
       a.classList.remove('text-n-slate-11');
       if (span) { span.classList.remove('text-body-main'); span.classList.add('font-medium', 'text-sm'); }
