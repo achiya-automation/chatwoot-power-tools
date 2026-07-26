@@ -81,37 +81,59 @@
     if (li && li.parentElement) li.parentElement.removeChild(li);
   }
 
+  // sidebar mode follows #drip-nav-item (detected by sequences-nav.js) — see templates-nav.js
+  function sidebarMode() {
+    var seq = document.getElementById('drip-nav-item');
+    return seq ? (seq.getAttribute('data-drip-mode') || 'expanded') : null;
+  }
+
   function inject() {
-    if (document.getElementById('jrn-nav-item')) return;
+    var mode = sidebarMode();
+    if (!mode) return;
+    var existing = document.getElementById('jrn-nav-item');
+    if (existing && existing.getAttribute('data-jrn-mode') === mode) return;
+    if (existing) existing.remove();
     var anchor = document.getElementById('tpl-nav-item') || document.getElementById('drip-nav-item');
     if (!anchor || !anchor.parentElement) return;
 
     var li = document.createElement('li');
     li.id = 'jrn-nav-item';
-    li.className = LI_CLASS;
-
-    var a = document.createElement('a');
-    a.className = A_CLASS + ' ' + A_IDLE.join(' ');
-    a.style.cursor = 'pointer';
-
-    // i-lucide-workflow is bundled in Chatwoot's compiled icon CSS (verified) — render it
-    // exactly like a native sidebar icon (mask span), no inline SVG needed.
-    var icon = document.createElement('span');
-    icon.className = 'i-lucide-workflow size-4';
-    a.appendChild(icon);
-
-    var wrap = document.createElement('div');
-    wrap.className = 'flex items-center gap-1.5 flex-grow justify-between min-w-0 flex-1';
-    var lbl = document.createElement('span');
-    lbl.className = 'truncate text-body-main';
-    wrap.appendChild(lbl);
-    a.appendChild(wrap);
-    li.appendChild(a);
-
-    li.__jrnLocale = dripLocale();
+    li.setAttribute('data-jrn-mode', mode);
     var text = jrnLabel();
-    lbl.textContent = text;
-    a.setAttribute('title', text);
+    li.__jrnLocale = dripLocale();
+
+    if (mode === 'collapsed') {
+      li.className = 'grid gap-1 text-sm cursor-pointer select-none min-w-0';
+      var btn = document.createElement('a');
+      btn.className = 'flex items-center justify-center size-10 rounded-lg text-n-slate-11 hover:bg-n-alpha-2';
+      btn.style.cursor = 'pointer';
+      btn.setAttribute('title', text);
+      var cicon = document.createElement('span');
+      cicon.className = 'i-lucide-workflow size-4';
+      btn.appendChild(cicon);
+      li.appendChild(btn);
+    } else {
+      li.className = LI_CLASS;
+      var a = document.createElement('a');
+      a.className = A_CLASS + ' ' + A_IDLE.join(' ');
+      a.style.cursor = 'pointer';
+
+      // i-lucide-workflow is bundled in Chatwoot's compiled icon CSS (verified) — render it
+      // exactly like a native sidebar icon (mask span), no inline SVG needed.
+      var icon = document.createElement('span');
+      icon.className = 'i-lucide-workflow size-4';
+      a.appendChild(icon);
+
+      var wrap = document.createElement('div');
+      wrap.className = 'flex items-center gap-1.5 flex-grow justify-between min-w-0 flex-1';
+      var lbl = document.createElement('span');
+      lbl.className = 'truncate text-body-main';
+      lbl.textContent = text;
+      wrap.appendChild(lbl);
+      a.appendChild(wrap);
+      a.setAttribute('title', text);
+      li.appendChild(a);
+    }
 
     anchor.parentElement.insertBefore(li, anchor.nextSibling);
     markActive();
@@ -135,10 +157,21 @@
     if (!li) return;
     var a = li.querySelector('a');
     if (!a) return;
-    var span = li.querySelector('span.truncate');
     var t;
     try { t = new URL(location.href).searchParams.get('drip'); } catch (e) { t = null; }
-    if (t === 'journeys') {
+    var on = t === 'journeys';
+    if (li.getAttribute('data-jrn-mode') === 'collapsed') {
+      if (on) {
+        a.classList.add('text-n-slate-12', 'bg-n-alpha-2');
+        a.classList.remove('text-n-slate-11', 'hover:bg-n-alpha-2');
+      } else {
+        a.classList.remove('text-n-slate-12', 'bg-n-alpha-2');
+        a.classList.add('text-n-slate-11', 'hover:bg-n-alpha-2');
+      }
+      return;
+    }
+    var span = li.querySelector('span.truncate');
+    if (on) {
       a.classList.add.apply(a.classList, A_ACTIVE);
       a.classList.remove('text-n-slate-11');
       if (span) { span.classList.remove('text-body-main'); span.classList.add('font-medium', 'text-sm'); }
