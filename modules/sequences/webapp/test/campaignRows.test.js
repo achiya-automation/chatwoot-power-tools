@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRows, countRows, filterRows, rowsToCsv, statusKeyOf, STATUS_KEYS } from '../src/lib/campaignRows.js';
+import { buildRows, countRows, filterRows, statusKeyOf, STATUS_KEYS } from '../src/lib/campaignRows.js';
 
 const DETAIL = {
   recipients: [
@@ -12,15 +12,6 @@ const DETAIL = {
     { contact_name: 'ללא סטטוס', phone: '+972500000006', status: null, replied: false },
   ],
   not_sent: [{ contact_name: 'לא נוסה', phone: '+972500000007' }],
-};
-
-const LABELS = {
-  name: 'שם', phone: 'טלפון', status: 'סטטוס', reason: 'סיבה', attempts: 'ניסיונות', when: 'זמן',
-  replied: 'הגיב', replyText: 'תוכן', replyWhen: 'זמן תגובה', conversation: 'שיחה',
-  yes: 'כן', no: 'לא', noAttempt: 'לא נוצר ניסיון שליחה',
-  statusLabel: (key) => `st:${key}`,
-  errorLabel: (raw) => `err:${raw}`,
-  conversationUrl: (id) => `https://cw.example/app/accounts/1/conversations/${id}`,
 };
 
 test('statusKeyOf: כל ערך סטטוס ממופה למצב סופי אחד; לא-מספר נופל ל-pending', () => {
@@ -84,28 +75,3 @@ test('filterRows: בחירה ריקה = הכל; שני הצירים מצטלבי
   assert.equal(filterRows(rows, { statuses: new Set(['notsent']), reply: 'yes' }).length, 0);
 });
 
-test('rowsToCsv: כותרות + BOM + כל העמודות, כולל תגובה וקישור לשיחה', () => {
-  const rows = filterRows(buildRows(DETAIL), { statuses: new Set(['read']) });
-  const csv = rowsToCsv(rows, LABELS);
-  assert.ok(csv.startsWith('﻿'), 'BOM כדי ש-Excel יפתח עברית');
-  const lines = csv.split('\r\n');
-  assert.equal(lines.length, 3); // כותרת + 2 שורות
-  assert.equal(lines[0], '"שם","טלפון","סטטוס","סיבה","ניסיונות","זמן","הגיב","תוכן","זמן תגובה","שיחה"'.replace(/^/, '﻿'));
-  assert.match(lines[1], /"כן"/);
-  assert.match(lines[1], /"שלח לי"/);
-  assert.match(lines[1], /conversations\/11/);
-  assert.match(lines[2], /"לא"/);
-});
-
-test('rowsToCsv: לא-נוסה מקבל סיבה מפורשת, ושורת כשל מקבלת הסבר מתורגם', () => {
-  const rows = buildRows(DETAIL);
-  const csv = rowsToCsv(rows, LABELS);
-  assert.match(csv, /"st:notsent","לא נוצר ניסיון שליחה"/);
-  assert.match(csv, /"st:failed","err:131049: blocked"/);
-});
-
-test('rowsToCsv: מגן הזרקת-נוסחאות עדיין חל על שם מהוואטסאפ', () => {
-  const rows = buildRows({ recipients: [{ contact_name: '=HYPERLINK("http://evil")', phone: '+972500000001', status: 2 }] });
-  const csv = rowsToCsv(rows, LABELS);
-  assert.match(csv, /"'=HYPERLINK/);
-});

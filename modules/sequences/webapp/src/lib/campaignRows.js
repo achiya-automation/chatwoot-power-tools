@@ -1,15 +1,15 @@
 /*
- * campaignRows — השכבה הטהורה שבין תשובת campaign_detail לבין טבלת הנמענים והייצוא.
+ * campaignRows — השכבה הטהורה שבין תשובת campaign_detail לבין טבלת הנמענים.
  *
  * מאחדת את שתי הרשימות שהדוח מחזיר (recipients = מי שנוסה, not_sent = קהל היעד שלא נוסה)
- * לשורות בעלות אותו מבנה, מסננת לפי בחירת המשתמש, ומרנדרת CSV. בלי React/DOM — נבדקת
- * ב-node --test (test/campaignRows.test.js).
+ * לשורות בעלות אותו מבנה ומסננת לפי בחירת המשתמש. בלי React/DOM — נבדקת ב-node --test
+ * (test/campaignRows.test.js). רינדור ה-CSV עצמו יושב בשרת (engine/src/campaignCsv.js,
+ * לוגיקת שורות/סינון זהה) — ההורדה היא ניווט אל נקודת קצה, לא blob בדפדפן.
  *
  * ⚠️ סטטוס בשורה הוא המצב *הסופי* של אותו נמען, ולכן הקטגוריות זרות זו לזו (סכומן = הקהל).
  * זה שונה מהמשפך למעלה, שבו "נמסרו" מכיל גם את מי שכבר קרא. משום כך התוויות כאן מפורשות:
  * "נמסרו · טרם נקראו", ולא "נמסרו" סתם — אחרת המספר בצ'יפ סותר לכאורה את המשפך.
  */
-import { csvRow } from './csv.js';
 
 // messages.status: 0=נשלח 1=נמסר 2=נקרא 3=נכשל (ראו engine/src/campaigns.js).
 // כל ערך אחר (null/NaN — שורה שטרם קיבלה סטטוס) נופל ל-pending, כמו בטבלה.
@@ -78,29 +78,3 @@ export function filterRows(rows, { statuses, reply = 'all' } = {}) {
   });
 }
 
-/**
- * CSV מלא של השורות שנבחרו.
- * labels: כותרות העמודות + statusLabel(key) + yes/no + errorLabel(raw) — מוזרקים מהרכיב
- * כדי שהמודול יישאר טהור (וכדי שהתרגום יישאר במקום אחד).
- * conversationUrl(displayId) → קישור מלא לשיחה, או '' כשאין.
- */
-export function rowsToCsv(rows, labels) {
-  const head = [
-    labels.name, labels.phone, labels.status, labels.reason, labels.attempts,
-    labels.when, labels.replied, labels.replyText, labels.replyWhen, labels.conversation,
-  ];
-  const body = rows.map((row) => [
-    row.contact_name,
-    row.phone,
-    labels.statusLabel(row.statusKey),
-    row.statusKey === 'notsent' ? labels.noAttempt : (row.error_title ? labels.errorLabel(row.error_title) : ''),
-    row.attempts,
-    row.sent_at,
-    row.replied ? labels.yes : labels.no,
-    row.reply_content,
-    row.replied_at,
-    row.conversation_display_id ? labels.conversationUrl(row.conversation_display_id) : '',
-  ]);
-  // BOM — בלעדיו Excel פותח עברית UTF-8 כג'יבריש.
-  return '﻿' + [head, ...body].map(csvRow).join('\r\n');
-}

@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowRight, ArrowLeft, AlertCircle, Download, MessageSquare, Coins, Printer, ExternalLink, Filter } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRight, ArrowLeft, AlertCircle, ChevronDown, Download, MessageSquare, Coins, Printer, ExternalLink, Filter } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
 import Skeleton from './ui/Skeleton.jsx';
 import { Table, THead, TBody, TR, TH, TD } from './ui/Table.jsx';
 import { getCampaignDetail } from '../api/sequencesApi.js';
+import { API_BASE } from '../config.js';
 import { estimateCost } from '../lib/campaignCost.js';
-import { buildRows, countRows, filterRows, rowsToCsv, STATUS_KEYS } from '../lib/campaignRows.js';
+import { buildRows, countRows, filterRows, STATUS_KEYS } from '../lib/campaignRows.js';
 import { deliveryErrorLabel } from '../lib/deliveryError.js';
 import useT, { useLocale } from '../useT.js';
 import { translate } from '../i18n.js';
@@ -25,6 +26,7 @@ const M = {
         s_sent: 'נשלח — ממתין למסירה', s_delivered: 'נמסר', s_read: 'נקרא', s_failed: 'נכשל', s_pending: 'ממתין', s_notsent: 'לא נוסה לשליחה',
         // ── סינון + עמודות תגובה ──
         filter: 'סינון', clearFilter: 'ניקוי סינון', outOf: 'מתוך', noMatch: 'אין נמענים שתואמים לסינון',
+        exportAll: 'הכל', exportCurrent: 'לפי הסינון הנוכחי', exportWhat: 'מה להוריד?',
         reply: 'תגובה', col_replied: 'הגיב', yes: 'כן', no: 'לא', replyText: 'תוכן התגובה', replyWhen: 'זמן התגובה',
         f_read: 'נקראו', f_delivered: 'נמסרו · טרם נקראו', f_sent: 'נשלחו · טרם נמסרו', f_pending: 'ממתינים', f_failed: 'נכשלו', f_notsent: 'לא נוסו',
         f_replied: 'הגיבו', f_noreply: 'לא הגיבו',
@@ -40,6 +42,7 @@ const M = {
         noReplyText: '(media or empty message)', errLoad: 'Failed to load campaign', notFound: 'Campaign not found', retry: 'Retry',
         s_sent: 'Sent — awaiting delivery', s_delivered: 'Delivered', s_read: 'Read', s_failed: 'Failed', s_pending: 'Pending', s_notsent: 'Not attempted',
         filter: 'Filter', clearFilter: 'Clear filter', outOf: 'of', noMatch: 'No recipients match the filter',
+        exportAll: 'All', exportCurrent: 'Current filter', exportWhat: 'What to download?',
         reply: 'Reply', col_replied: 'Replied', yes: 'Yes', no: 'No', replyText: 'Reply text', replyWhen: 'Reply time',
         f_read: 'Read', f_delivered: 'Delivered · not read yet', f_sent: 'Sent · not delivered yet', f_pending: 'Pending', f_failed: 'Failed', f_notsent: 'Not attempted',
         f_replied: 'Replied', f_noreply: 'No reply',
@@ -56,6 +59,52 @@ const errorLabel = (raw) => {
   const code = (/^(\d+)/.exec(String(raw)) || [])[1] || null;
   return deliveryErrorLabel(code, raw);
 };
+
+/*
+ * ExportMenu — כפתור "ייצוא CSV" שנפתח לתפריט חתכים. כל פריט הוא <a href> רגיל אל
+ * נקודת הקצה בשרת — בלי blob, בלי download attribute, בלי JS בזמן הלחיצה: הניווט
+ * עצמו מוריד את הקובץ (attachment), ולכן עובד גם ב-Safari בתוך iframe.
+ */
+function ExportMenu({ options, label, heading }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  return (
+    <div ref={rootRef} className="relative">
+      <Button
+        variant="faded" color="slate" size="sm" icon={Download} trailingIcon={ChevronDown}
+        aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label}
+      </Button>
+      {open ? (
+        <div role="menu" className="absolute end-0 top-full z-20 mt-1 w-56 rounded-xl border border-n-weak bg-n-surface-1 p-1 shadow-lg">
+          <p className="px-2.5 pb-1 pt-1.5 text-xs text-n-slate-10">{heading}</p>
+          {options.map((o) => (
+            <a
+              key={o.key}
+              role="menuitem"
+              href={o.href}
+              onClick={() => setOpen(false)}
+              className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm text-n-slate-12 no-underline hover:bg-n-alpha-2"
+            >
+              <span>{o.label}</span>
+              <span className="text-xs text-n-slate-10">{o.count}</span>
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /* צ'יפ סינון דו-מצבי — אותו דפוס טבעות של כרטיסי הסינון ב-EnrollmentsView. */
 function FilterChip({ active, onClick, label, count }) {
@@ -87,7 +136,6 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   // סינון הטבלה והייצוא — שני צירים בלתי-תלויים, כל אחד קבוצת מפתחות. ריקה = בלי סינון.
   const [statusSel, setStatusSel] = useState(() => new Set());
   const [replySel, setReplySel] = useState(() => new Set());
-  const [csvUrl, setCsvUrl] = useState('');
 
   const load = useCallback(() => {
     if (accountId == null || campaignId == null) return;
@@ -108,28 +156,6 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
     () => filterRows(rows, { statuses: statusSel, reply: replyMode }),
     [rows, statusSel, replyMode]
   );
-
-  // ה-CSV של מה שמסונן כרגע, כ-blob חי שהעוגן מצביע עליו.
-  // ⚠️ לא לשחרר את ה-blob מיד: `URL.revokeObjectURL` סמוך ללחיצה מבטל את ההורדה בשקט
-  // ב-Safari — זו הסיבה שהכפתור הישן (a.click() סינתטי + revoke בטיימאאוט 0) לא הוריד כלום.
-  const csvText = useMemo(() => {
-    if (!d) return '';
-    return rowsToCsv(visible, {
-      name: t('name'), phone: t('phone'), status: t('status'), reason: t('reason'),
-      attempts: t('attempts'), when: t('when'), replied: t('col_replied'), replyText: t('replyText'),
-      replyWhen: t('replyWhen'), conversation: t('conversation'),
-      yes: t('yes'), no: t('no'), noAttempt: t('noAttempt'),
-      statusLabel: (key) => t(`s_${key}`),
-      errorLabel,
-      conversationUrl: (displayId) => `${window.location.origin}/app/accounts/${accountId}/conversations/${displayId}`,
-    });
-  }, [d, visible, locale, accountId]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (!csvText) { setCsvUrl(''); return undefined; }
-    const url = URL.createObjectURL(new Blob([csvText], { type: 'text/csv;charset=utf-8' }));
-    setCsvUrl(url);
-    return () => { setTimeout(() => URL.revokeObjectURL(url), 60_000); };
-  }, [csvText]);
 
   // חץ "חזרה" — כיוון ויזואלי לפי שפה (עברית RTL: חזרה = ימינה).
   const BackIcon = locale === 'he' ? ArrowRight : ArrowLeft;
@@ -165,10 +191,26 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   // Meta charges for delivered template messages; failed/pending attempts must not inflate cost.
   const cost = estimateCost({ category: campaign.category, sent: funnel.delivered });
 
-  // שם הקובץ: כותרת הקמפיין + תאריך, ובסינון פעיל גם "-מסונן" כדי שקובץ חלקי לא ייקרא
-  // כמו הדוח המלא אצל מי שיפתח אותו מאוחר יותר.
-  const safeTitle = String(campaign.title || `campaign-${campaign.id}`).replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 70);
-  const csvName = `${locale === 'en' ? 'report' : 'דוח'}-${safeTitle}-${String(campaign.created_at || '').slice(0, 10) || campaign.id}${filtered ? (locale === 'en' ? '-filtered' : '-מסונן') : ''}.csv`;
+  // כתובת הורדת CSV בשרת (Content-Disposition: attachment) — הורדה בניווט רגיל, עובדת
+  // גם מתוך ה-iframe של ה-overlay ב-Chatwoot שבו Safari חוסם הורדות blob בשקט.
+  // extra: { statuses?: [..], reply?: 'yes'|'no' } — אותו סינון כמו הטבלה, בצד השרת.
+  const csvHref = (extra = {}) => {
+    const p = new URLSearchParams({ account_id: accountId, campaign_id: campaign.id, locale });
+    if (extra.statuses?.length) p.set('statuses', extra.statuses.join(','));
+    if (extra.reply) p.set('reply', extra.reply);
+    return `${API_BASE}/campaign-csv?${p}`;
+  };
+  // אפשרויות ההורדה: הסינון הנוכחי (כשפעיל), הכל, ואז החתכים העסקיים שביקש הלקוח —
+  // הגיבו / לא הגיבו / נכשלו / לא נוסו. חתך ריק לא מוצג (אין מה להוריד).
+  const exportOptions = [
+    filtered && { key: 'current', label: t('exportCurrent'), count: visible.length,
+      href: csvHref({ statuses: [...statusSel], reply: replyMode === 'all' ? undefined : replyMode }) },
+    { key: 'all', label: t('exportAll'), count: rows.length, href: csvHref() },
+    { key: 'replied', label: t('f_replied'), count: counts.replied, href: csvHref({ reply: 'yes' }) },
+    { key: 'noreply', label: t('f_noreply'), count: counts.noreply, href: csvHref({ reply: 'no' }) },
+    { key: 'failed', label: t('f_failed'), count: counts.failed, href: csvHref({ statuses: ['failed'] }) },
+    { key: 'notsent', label: t('f_notsent'), count: counts.notsent, href: csvHref({ statuses: ['notsent'] }) },
+  ].filter((o) => o && (o.key === 'all' || o.key === 'current' || o.count > 0));
 
   const FUNNEL = [
     { label: t('audience'), value: funnel.audience, text: 'text-n-slate-12' },
@@ -187,15 +229,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         </button>
         <div className="flex items-center gap-2">
           <Button variant="faded" color="slate" size="sm" icon={Printer} onClick={() => window.print()}>{t('print')}</Button>
-          {/* עוגן אמיתי, לא כפתור עם a.click() — ראו ההערה ליד יצירת ה-blob */}
-          {/* hover/active של Button מותנים ב-:enabled, שלא חל על עוגן — מוסיפים אותם ידנית */}
-          <Button
-            variant="faded" color="slate" size="sm" icon={Download}
-            href={csvUrl || undefined} download={csvName}
-            className="hover:bg-n-alpha-3 active:scale-[0.98]"
-          >
-            {t('export')} ({visible.length})
-          </Button>
+          <ExportMenu options={exportOptions} label={t('export')} heading={t('exportWhat')} />
         </div>
       </div>
 

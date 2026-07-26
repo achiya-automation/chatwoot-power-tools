@@ -5,6 +5,8 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { handleAction, initStore } from './store.js';
 import { authGate } from './auth.js';
 import { query, getPool } from './db.js';
+import { getCampaignDetail } from './campaigns.js';
+import { buildRows, filterRows, parseFilter, toCsv, csvFileName } from './campaignCsv.js';
 import { validateWhatsAppMedia, extForMime } from './media.js';
 import { uploadExampleMedia, hasTemplateAccess } from './templates.js';
 import { handleJourneyHook, makeJourneysCtx, perAccountHookToken } from './journeys.js';
@@ -261,6 +263,42 @@ export function createApp(config) {
       }
     }
   );
+
+  // ── campaign CSV download (AUTHED — registered after the gate) ─────────────
+  // ניווט רגיל של הדפדפן אל קובץ עם Content-Disposition: attachment. קיים כי הורדת
+  // blob בצד הלקוח נכשלת בשקט ב-Safari בתוך ה-iframe של ה-overlay ב-Chatwoot —
+  // בעוד שהורדת-שרת עובדת מכל הקשר. authGate כבר אימת session + הרשאה ל-account_id.
+  // סינון: ?statuses=read,failed,notsent&reply=yes|no (ריק = הכל) — ראו campaignCsv.js.
+  app.get('/drip-api/campaign-csv', async (req, res) => {
+    const locale = req.query.locale === 'en' ? 'en' : 'he';
+    try {
+      const accountId = parseInt(req.query.account_id || '0', 10);
+      const campaignId = parseInt(req.query.campaign_id || '0', 10);
+      if (!accountId || !campaignId) {
+        return res.status(400).json({ ok: false, error: 'account_id and campaign_id required' });
+      }
+      const detail = await getCampaignDetail(query, accountId, campaignId);
+      if (!detail) return res.status(404).json({ ok: false, error: 'campaign not found' });
+
+      const filter = parseFilter(req.query);
+      const filtered = filter.statuses.size > 0 || filter.reply !== 'all';
+      // origin לקישורי השיחות בקובץ — מה-publicBase (https://host/drip → https://host)
+      let origin = '';
+      try { origin = new URL(config.publicBase).origin; } catch { /* בלי קישורים */ }
+      const csv = toCsv(filterRows(buildRows(detail), filter), { locale, origin, accountId });
+
+      const name = csvFileName(detail.campaign, { locale, filtered });
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      // filename* (RFC 5987) — שם עברי; filename פשוט כ-fallback לדפדפנים עתיקים
+      res.set('Content-Disposition',
+        `attachment; filename="campaign-${campaignId}.csv"; filename*=UTF-8''${encodeURIComponent(name)}`);
+      res.set('Cache-Control', 'no-store');
+      return res.send(csv);
+    } catch (err) {
+      console.error('[drip-api] campaign-csv error:', err.message);
+      return res.status(500).json({ ok: false, error: locale === 'en' ? 'Export failed' : 'הייצוא נכשל' });
+    }
+  });
 
   // ── main API endpoint ─────────────────────────────────────────────────────
   app.post('/drip-api', async (req, res) => {
