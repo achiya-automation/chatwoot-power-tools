@@ -502,14 +502,23 @@
   function inject() {
     var anchor = findAnchor();
     if (!anchor) return;
+    watchRail(anchor.li.parentElement);
     var mode = anchor.collapsed ? 'collapsed' : 'expanded';
     var existing = document.getElementById('drip-nav-item');
     if (existing && existing.getAttribute('data-drip-mode') === mode) return;
+    var flipped = !!existing;
     if (existing) { existing.remove(); closePopover(); }
 
     var item = anchor.collapsed ? buildCollapsed() : buildExpanded(anchor.li);
     anchor.li.parentElement.insertBefore(item, anchor.li.nextSibling);
     renderNav();
+    // mode flip: rebuild the sibling top-level items (templates / flow-builder)
+    // SYNCHRONOUSLY, in the same task — they follow #drip-nav-item's mode, and waiting for
+    // their own observers would leave them in the stale shape for a beat.
+    if (flipped) {
+      var pings = window.__cwptNavPing || [];
+      for (var p = 0; p < pings.length; p++) { try { pings[p](); } catch (e) {} }
+    }
 
     // state restore: if we refreshed while on the sequences panel, return to the same tab.
     // Guard the restore against Chatwoot's own pushState/replaceState calls that happen
@@ -585,14 +594,36 @@
     }
   }).observe(document.querySelector('#app') || document.documentElement, { attributes: true, attributeFilter: ['dir'] });
 
+  // ── immediate mode-flip: watch the menu <ul>'s class directly ──────────────
+  // Collapsing the sidebar toggles `items-center` on the menu <ul> (Sidebar.vue) in the very
+  // frame the threshold is crossed. A generic trailing debounce misses that moment: dragging
+  // the sidebar floods the page with unrelated mutations (lists reflowing), and a debounce
+  // that resets on every mutation only fires seconds later, once everything settles — the
+  // user sees the stale shape squeezed into the rail. This dedicated attribute observer
+  // rebuilds the items in the SAME task as the native flip. Re-attached whenever the <ul>
+  // itself is replaced by a Vue re-render.
+  var railObs = new MutationObserver(function () { inject(); if (shown) position(); });
+  var railWatched = null;
+  function watchRail(ul) {
+    if (!ul || railWatched === ul) return;
+    railObs.disconnect();
+    railObs.observe(ul, { attributes: true, attributeFilter: ['class'] });
+    railWatched = ul;
+  }
+
   // bootstrap: (re-)inject the nav item as Chatwoot's own Vue app re-renders the sidebar.
-  // Also re-detects the sidebar mode (expanded↔collapsed rebuilds the item) and keeps the
-  // open panel aligned with the content area while the sidebar is being dragged (no window
-  // resize event fires for that).
-  var navTimer;
+  // THROTTLE with a guaranteed run (not a trailing debounce): fire ~120ms after the FIRST
+  // mutation of a burst, so a mutation storm (sidebar drag, live list updates) can never
+  // starve re-injection. inject() is cheap when nothing changed. Also keeps the open panel
+  // aligned with the content area while the sidebar is resized (no window resize event).
+  var navTimer = null;
   new MutationObserver(function () {
-    clearTimeout(navTimer);
-    navTimer = setTimeout(function () { inject(); if (shown) position(); }, 150);
+    if (navTimer) return;
+    navTimer = setTimeout(function () {
+      navTimer = null;
+      inject();
+      if (shown) position();
+    }, 120);
   }).observe(document.documentElement, { childList: true, subtree: true });
   setTimeout(inject, 500);
 })();

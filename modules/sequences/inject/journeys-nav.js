@@ -208,8 +208,18 @@
   new MutationObserver(function () { relabel(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['dir'], subtree: true });
 
-  var navTimer;
-  new MutationObserver(function () { clearTimeout(navTimer); navTimer = setTimeout(tick, 150); })
-    .observe(document.documentElement, { childList: true, subtree: true });
+  // register for the synchronous mode-flip ping from sequences-nav.js (the mode authority) —
+  // when the rail collapses/expands, all injected items must flip in the same task, not each
+  // on its own observer delay.
+  window.__cwptNavPing = window.__cwptNavPing || [];
+  window.__cwptNavPing.push(tick);
+
+  // throttle with a guaranteed run (not a trailing debounce) — a mutation storm during a
+  // sidebar drag must not starve the rebuild (see sequences-nav.js bootstrap note).
+  var navTimer = null;
+  new MutationObserver(function () {
+    if (navTimer) return;
+    navTimer = setTimeout(function () { navTimer = null; tick(); }, 120);
+  }).observe(document.documentElement, { childList: true, subtree: true });
   setTimeout(tick, 500);
 })();
