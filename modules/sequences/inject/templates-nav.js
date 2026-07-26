@@ -22,14 +22,17 @@
   };
   function tplLabel() { return (I18N[dripLocale()] || I18N.en).label; }
 
-  // exact classes lifted from sequences-nav.js's own sub-item structure (LI/A/LBL) — this item
-  // is top-level (sibling of #drip-nav-item), not a sequences sub-tab, but reuses the same
-  // small/single-line styling rather than cloning the heavier expandable-group markup.
-  var LI_CLASS = 'py-0.5 ltr:pl-2 rtl:pr-2 rtl:mr-3 ltr:ml-3 relative text-n-slate-11 child-item before:bg-n-slate-4 after:bg-transparent after:border-n-slate-4 before:left-0 rtl:before:right-0 min-w-0';
-  var A_CLASS  = 'flex h-8 items-center gap-2 px-2 py-1 rounded-lg hover:bg-gradient-to-r from-transparent via-n-slate-3/70 to-n-slate-3/70 group min-w-0';
-  var LBL_CLASS = 'flex-1 truncate min-w-0 text-sm';
-  // lucide "layout-template" — header bar + two columns, same viewBox/stroke style as
-  // sequences-nav.js's LAYERS icon.
+  // This item is TOP-LEVEL (sibling of the #drip-nav-item group), so it must look like a
+  // native childless sidebar group — NOT like a sub-item (the old child-item/tree-line
+  // classes drew an orphan tree connector and their unprefixed hover class doesn't even
+  // exist in Chatwoot 4.16 compiled CSS → no hover at all). Class strings below are copied
+  // from SidebarGroup.vue / SidebarGroupHeader.vue (4.16.1):
+  var LI_CLASS = 'grid gap-1 text-sm cursor-pointer select-none min-w-0';
+  var A_CLASS = 'flex items-center gap-2 px-1.5 py-1 rounded-lg h-8 min-w-0';
+  var A_IDLE = ['text-n-slate-11', 'hover:bg-n-alpha-2'];
+  var A_ACTIVE = ['text-n-slate-12', 'bg-n-alpha-2', 'font-medium'];
+  // lucide "layout-template" — NOT bundled in Chatwoot's compiled icon CSS (verified), so an
+  // inline SVG with the exact native size (size-4 = 16px) stands in for the mask icon.
   var ICON =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1rem;height:1rem;display:inline-block;">' +
     '<rect width="18" height="7" x="3" y="3" rx="1"/>' +
@@ -124,8 +127,10 @@
     li.id = 'tpl-nav-item';
     li.className = LI_CLASS;
 
+    // native SidebarGroupHeader structure: icon span (size-4) + label wrapper (flex-grow) +
+    // span.truncate carrying the weight class (text-body-main idle / font-medium text-sm active)
     var a = document.createElement('a');
-    a.className = A_CLASS;
+    a.className = A_CLASS + ' ' + A_IDLE.join(' ');
     a.style.cursor = 'pointer';
 
     var icon = document.createElement('span');
@@ -134,9 +139,12 @@
     icon.innerHTML = ICON;
     a.appendChild(icon);
 
-    var lbl = document.createElement('div');
-    lbl.className = LBL_CLASS;
-    a.appendChild(lbl);
+    var wrap = document.createElement('div');
+    wrap.className = 'flex items-center gap-1.5 flex-grow justify-between min-w-0 flex-1';
+    var lbl = document.createElement('span');
+    lbl.className = 'truncate text-body-main';
+    wrap.appendChild(lbl);
+    a.appendChild(wrap);
     li.appendChild(a);
 
     li.__tplLocale = dripLocale();
@@ -158,7 +166,7 @@
     if (li.__tplLocale === loc) return;
     li.__tplLocale = loc;
     var text = tplLabel();
-    var lbl = li.querySelector('a > div');
+    var lbl = li.querySelector('span.truncate');
     if (lbl) lbl.textContent = text;
     var a = li.querySelector('a');
     if (a) a.setAttribute('title', text);
@@ -169,10 +177,18 @@
     if (!li) return;
     var a = li.querySelector('a');
     if (!a) return;
+    var span = li.querySelector('span.truncate');
     var t;
     try { t = new URL(location.href).searchParams.get('drip'); } catch (e) { t = null; }
-    if (t === 'templates') a.classList.add('bg-n-alpha-2', 'text-n-slate-12', 'font-medium');
-    else a.classList.remove('bg-n-alpha-2', 'text-n-slate-12', 'font-medium');
+    if (t === 'templates') {
+      a.classList.add.apply(a.classList, A_ACTIVE);
+      a.classList.remove('text-n-slate-11');
+      if (span) { span.classList.remove('text-body-main'); span.classList.add('font-medium', 'text-sm'); }
+    } else {
+      a.classList.remove.apply(a.classList, A_ACTIVE);
+      a.classList.add('text-n-slate-11');
+      if (span) { span.classList.add('text-body-main'); span.classList.remove('font-medium', 'text-sm'); }
+    }
   }
 
   // one tick = re-check access (cached per accountId) → inject/remove + refresh label/active state.

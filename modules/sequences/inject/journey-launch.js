@@ -51,7 +51,7 @@
     btn.type = 'button';
     btn.className = 'text-sm font-medium rounded-full shadow-lg border border-n-weak bg-n-background text-n-blue-11 hover:bg-n-alpha-2';
     btn.style.cssText = 'position:fixed;bottom:92px;inset-inline-end:18px;z-index:9998;padding:6px 14px;display:none;cursor:pointer;';
-    btn.innerHTML = '⚡ <span></span>';
+    btn.innerHTML = '<span class="i-lucide-zap size-3.5" style="display:inline-block;vertical-align:-2px;"></span> <span></span>';
     btn.addEventListener('click', togglePopover);
     document.body.appendChild(btn);
     return btn;

@@ -22,13 +22,13 @@
           remove: 'הסר', addField: 'הוסף שדה:',
           lang_he: 'עברית', lang_en: 'אנגלית', lang_ar: 'ערבית',
           cat_MARKETING: 'שיווקי', cat_UTILITY: 'שירותי', cat_AUTHENTICATION: 'אימות',
-          uploadBtn: '📎 העלה קובץ', uploading: 'מעלה…', uploaded: '✓ הועלה', uploadFailed: '✗ נכשל',
+          uploadBtn: 'העלאת קובץ', uploading: 'מעלה…', uploaded: '✓ הועלה', uploadFailed: '✗ נכשל',
           mediaSaved: 'המדיה הועלתה ונזכרה ✓', replace: 'החלפה' },
     en: { firstName: 'First name', fullName: 'Full name', phone: 'Phone', email: 'Email',
           remove: 'Remove', addField: 'Add field:',
           lang_he: 'Hebrew', lang_en: 'English', lang_ar: 'Arabic',
           cat_MARKETING: 'Marketing', cat_UTILITY: 'Utility', cat_AUTHENTICATION: 'Authentication',
-          uploadBtn: '📎 Upload', uploading: 'Uploading…', uploaded: '✓ Uploaded', uploadFailed: '✗ Failed',
+          uploadBtn: 'Upload', uploading: 'Uploading…', uploaded: '✓ Uploaded', uploadFailed: '✗ Failed',
           mediaSaved: 'Media uploaded & remembered ✓', replace: 'Replace' },
   };
   function t(k) { return (I18N[dripLocale()] || I18N.en)[k] || I18N.en[k] || k; }
@@ -36,40 +36,45 @@
   (function () {
     var st = document.createElement('style');
     st.id = 'drip-campaign-style';
+    // ⚠️ שמות המשתנים האמיתיים ב-CSS המקומפל של Chatwoot 4.16 הם בלי קידומת n- —
+    // ‎--slate-11, --alpha-2, --blue-3 וכו' (המחלקה .bg-n-alpha-2 עצמה ממומשת כ-
+    // rgba(var(--alpha-2))). הגרסה הקודמת השתמשה ב---n-* שלא קיימים, וכל הצבעים נפלו
+    // ל-fallback קשיח של מצב בהיר → הצ'יפים/תגיות נראו שבורים במצב כהה. המשתנים הנכונים
+    // מתחלפים אוטומטית עם ה-theme, בדיוק כמו רכיב נייטיבי.
     st.textContent = [
       '.drip-var-chips{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-bottom:7px}',
-      '.drip-chip{font-size:12px;line-height:1.45;padding:2px 11px;border-radius:9999px;cursor:pointer;border:1px solid transparent;background:var(--n-alpha-2,rgba(0,0,0,.06));color:var(--n-slate-11,#64748b);transition:background .12s,color .12s,border-color .12s}',
-      '.drip-chip:hover{background:var(--n-alpha-3,rgba(0,0,0,.1));color:var(--n-slate-12,#1e293b)}',
-      '.drip-chip-custom{border-color:var(--n-blue-6,#bfdbfe);color:var(--n-blue-11,#1d4ed8)}',
-      '.drip-chip-custom:hover{background:var(--n-blue-3,#dbeafe)}',
+      '.drip-chip{font-size:12px;line-height:1.45;padding:2px 11px;border-radius:9999px;cursor:pointer;border:1px solid transparent;background:rgba(var(--alpha-2));color:rgb(var(--slate-11));transition:background .12s,color .12s,border-color .12s}',
+      '.drip-chip:hover{background:rgba(var(--alpha-3));color:rgb(var(--slate-12))}',
+      '.drip-chip-custom{border-color:rgb(var(--blue-6));color:rgb(var(--blue-11))}',
+      '.drip-chip-custom:hover{background:rgb(var(--blue-3))}',
       '.drip-chip:disabled{cursor:default;opacity:.6}',
       // token overlay — shows a friendly label, hides the raw Liquid
       '.drip-token-wrap{position:relative;width:100%;display:block}',
       '.drip-token-wrap.has-token > input{color:transparent!important;caret-color:transparent}',
       '.drip-token{position:absolute;top:0;bottom:0;inset-inline-start:9px;inset-inline-end:9px;display:flex;align-items:center;pointer-events:none}',
-      '.drip-token-pill{display:inline-flex;align-items:center;gap:7px;pointer-events:auto;font-size:13px;font-weight:500;line-height:1;padding:5px 7px 5px 12px;border-radius:7px;background:var(--n-blue-3,#dbeafe);color:var(--n-blue-11,#1d4ed8);max-width:100%}',
+      '.drip-token-pill{display:inline-flex;align-items:center;gap:7px;pointer-events:auto;font-size:13px;font-weight:500;line-height:1;padding:5px 7px 5px 12px;border-radius:7px;background:rgb(var(--blue-3));color:rgb(var(--blue-11));max-width:100%}',
       '.drip-token-pill .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px}',
       '.drip-token-pill .lbl::before{content:"";width:6px;height:6px;border-radius:9999px;background:currentColor;opacity:.55;flex-shrink:0}',
-      '.drip-token-pill .x{pointer-events:auto;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:9999px;font-size:10px;opacity:.65;background:var(--n-blue-5,#bfdbfe);flex-shrink:0}',
+      '.drip-token-pill .x{pointer-events:auto;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:9999px;font-size:10px;opacity:.65;background:rgb(var(--blue-5));flex-shrink:0}',
       '.drip-token-pill .x:hover{opacity:1}',
       // preview card prettification
       '.drip-tpl-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}',
       '.drip-tpl-name{font-size:13.5px;font-weight:600;line-height:1.4;flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
       '.drip-tpl-badges{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap}',
-      '.drip-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:2px 9px;border-radius:9999px;background:var(--n-alpha-2,rgba(0,0,0,.06));color:var(--n-slate-11,#64748b);white-space:nowrap}',
+      '.drip-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:2px 9px;border-radius:9999px;background:rgba(var(--alpha-2));color:rgb(var(--slate-11));white-space:nowrap}',
       // media upload button (sits below the campaign form's media_url field)
       '.drip-media-upload{margin:2px 0 10px;display:flex}',
       // media "uploaded" badge overlay — hides the raw URL, shows ✓ + replace/remove (like the sequences UI)
       '.drip-media-wrap{position:relative;width:100%;display:block}',
       '.drip-media-wrap.has-media > input{color:transparent!important;caret-color:transparent;pointer-events:none;user-select:none}',
-      '.drip-media-badge{position:absolute;inset:0;display:none;align-items:center;justify-content:space-between;gap:8px;padding:0 10px;border-radius:8px;background:var(--n-teal-3,#d3f1e8);border:1px solid var(--n-teal-7,#7dd0b6)}',
+      '.drip-media-badge{position:absolute;inset:0;display:none;align-items:center;justify-content:space-between;gap:8px;padding:0 10px;border-radius:8px;background:rgb(var(--teal-3));border:1px solid rgb(var(--teal-7))}',
       '.drip-media-wrap.has-media > .drip-media-badge{display:flex}',
-      '.drip-media-badge .lbl{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;color:var(--n-teal-11,#0d9488);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}',
+      '.drip-media-badge .lbl{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;color:rgb(var(--teal-11));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}',
       '.drip-media-badge .acts{display:flex;align-items:center;gap:12px;flex-shrink:0}',
-      '.drip-media-badge .rep{font-size:12px;font-weight:500;color:var(--n-blue-11,#1d4ed8);cursor:pointer;background:none;border:none;padding:0}',
+      '.drip-media-badge .rep{font-size:12px;font-weight:500;color:rgb(var(--blue-11));cursor:pointer;background:none;border:none;padding:0}',
       '.drip-media-badge .rep:hover{text-decoration:underline}',
-      '.drip-media-badge .rm{cursor:pointer;color:var(--n-slate-10,#94a3b8);font-size:14px;line-height:1;background:none;border:none;padding:0;display:flex}',
-      '.drip-media-badge .rm:hover{color:var(--n-ruby-11,#e5484d)}',
+      '.drip-media-badge .rm{cursor:pointer;color:rgb(var(--slate-10));font-size:14px;line-height:1;background:none;border:none;padding:0;display:flex}',
+      '.drip-media-badge .rm:hover{color:rgb(var(--ruby-11))}',
     ].join('');
     (document.head || document.documentElement).appendChild(st);
   })();
@@ -287,7 +292,7 @@
         if (cat) {
           var cb = document.createElement('span');
           cb.className = 'drip-badge';
-          cb.textContent = '🏷️ ' + (catNames()[cat.toUpperCase()] || cat);
+          cb.textContent = (catNames()[cat.toUpperCase()] || cat);
           d.badges.appendChild(cb);
         }
       }

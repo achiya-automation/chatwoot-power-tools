@@ -10,12 +10,7 @@ import {
   User,
   AlertCircle,
   Search,
-  BarChart3,
   Tag,
-  Megaphone,
-  ShieldCheck,
-  LayoutTemplate,
-  Workflow,
 } from 'lucide-react';
 import Button from './components/ui/Button.jsx';
 import Switch from './components/ui/Switch.jsx';
@@ -476,26 +471,26 @@ export default function App() {
           {sideNav ? (
             <h1 className="m-0 text-base font-medium text-n-slate-12">{viewTitle}</h1>
           ) : (
-            <div className="flex items-center gap-1">
-              <TabButton active={view === 'overview'} onClick={() => setView('overview')} icon={BarChart3}>
+            <div className="relative flex items-center h-8 rounded-lg bg-n-alpha-1 dark:bg-n-solid-1 w-fit">
+              <TabButton active={view === 'overview'} onClick={() => setView('overview')}>
                 {t('tab_overview')}
               </TabButton>
-              <TabButton active={view === 'sequences'} onClick={() => setView('sequences')} icon={Layers}>
+              <TabButton active={view === 'sequences'} onClick={() => setView('sequences')}>
                 {t('tab_sequences')}
               </TabButton>
-              <TabButton active={view === 'contacts'} onClick={() => setView('contacts')} icon={Users}>
+              <TabButton active={view === 'contacts'} onClick={() => setView('contacts')}>
                 {t('tab_contacts')}
               </TabButton>
-              <TabButton active={view === 'campaigns'} onClick={() => { setView('campaigns'); setCampaignId(null); }} icon={Megaphone}>
+              <TabButton active={view === 'campaigns'} onClick={() => { setView('campaigns'); setCampaignId(null); }}>
                 {t('tab_campaigns')}
               </TabButton>
-              <TabButton active={view === 'compliance'} onClick={() => setView('compliance')} icon={ShieldCheck}>
+              <TabButton active={view === 'compliance'} onClick={() => setView('compliance')}>
                 {t('tab_compliance')}
               </TabButton>
-              <TabButton active={view === 'templates'} onClick={() => setView('templates')} icon={LayoutTemplate}>
+              <TabButton active={view === 'templates'} onClick={() => setView('templates')}>
                 {t('tab_templates')}
               </TabButton>
-              <TabButton active={view === 'journeys'} onClick={() => setView('journeys')} icon={Workflow}>
+              <TabButton active={view === 'journeys'} onClick={() => setView('journeys')}>
                 {t('tab_journeys')}
               </TabButton>
             </div>
@@ -733,20 +728,21 @@ export default function App() {
   );
 }
 
-function TabButton({ active, onClick, icon: Icon, children }) {
+// טאב בסגנון ה-TabBar הנייטיבי של Chatwoot (components-next/tabbar/TabBar.vue):
+// כפתור בתוך מכולת-גלולה, hover צובע את הטקסט ב-brand, והטאב הפעיל מקבל כרטיס מוגבה
+// (bg-n-solid-active + shadow + outline) — בדיוק כמו טאבי "שלי/לא הוקצתה/הכל" המקוריים.
+function TabButton({ active, onClick, children }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`relative flex items-center gap-1.5 px-3.5 py-2.5 text-sm font-medium transition-colors ${
-        active ? 'text-n-blue-11' : 'text-n-slate-11 hover:text-n-slate-12'
+      className={`relative z-10 px-4 truncate py-1.5 text-sm border-0 rounded-lg transition-all duration-200 ease-out hover:text-n-brand active:scale-[1.02] ${
+        active
+          ? 'text-n-blue-11 bg-n-solid-active shadow-sm outline outline-1 outline-n-container'
+          : 'text-n-slate-10 scale-[0.98]'
       }`}
     >
-      {Icon ? <Icon size={15} aria-hidden="true" /> : null}
       {children}
-      {active ? (
-        <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-n-brand" aria-hidden="true" />
-      ) : null}
     </button>
   );
 }
