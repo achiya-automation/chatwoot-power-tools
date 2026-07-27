@@ -348,6 +348,110 @@ const JRN_RUNS = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Compliance (compliance / suppressed).
+// Shaped like drip.compliance_overview: health + settings + templates + alerts +
+// contact counters. Deliberately NOT an all-green account — one paused template,
+// a YELLOW quality rating and an open alert, so the states that actually matter
+// are visible instead of an empty happy path.
+// ---------------------------------------------------------------------------
+
+const COMPLIANCE = {
+  health: {
+    tier: 'TIER_2K', cap: 2000, quality: 'YELLOW',
+    halted: false, halt_reason: null, halted_at: null, checked_at: '2026-06-22 08:15',
+  },
+  settings: {
+    require_consent: true, max_marketing_per_day: 1, max_unengaged: 3, max_cap_failures: 2,
+    consent_max_age_days: 30, block_us_marketing: true, halt_on_red: true,
+    opt_out_keywords: ['להסיר', 'די'], max_template_failures: 40,
+    min_delivery_rate: 70, min_delivery_sample: 20, fresh_opener_hours: 48,
+  },
+  templates: [
+    { template_name: 'welcome_intro', language: 'he', status: 'APPROVED', quality: 'GREEN', category: 'MARKETING', checked_at: '2026-06-22 08:15' },
+    { template_name: 'followup_value', language: 'he', status: 'APPROVED', quality: 'YELLOW', category: 'MARKETING', checked_at: '2026-06-22 08:15' },
+    { template_name: 'offer_discount', language: 'he', status: 'PAUSED', quality: 'RED', category: 'MARKETING', checked_at: '2026-06-22 08:15' },
+    { template_name: 'appointment_reminder', language: 'he', status: 'APPROVED', quality: 'GREEN', category: 'UTILITY', checked_at: '2026-06-22 08:15' },
+  ],
+  alerts: [
+    // code+params — ה-UI מרכיב את המשפט בשפת הנציג. message הוא ה-fallback בלבד.
+    { id: 1, level: 'warn', code: 'template_paused', params: { template: 'offer_discount' }, message: 'התבנית offer_discount מושהית ע"י מטא.', created_at: '2026-06-22 07:40', acked_at: null },
+  ],
+  contacts: { known: 412, with_consent: 386, suppressed: 19, stale: 7 },
+  // הכיסוי נמדד על מי שנמצא ברצף בלבד (386 + 26), לא על כל 412 אנשי הקשר — מכנה
+  // שכולל אנשי קשר שמחוץ לרצף היה מדלל את האחוז ומסתיר את הפער האמיתי.
+  blanket_consent: null,
+  without_consent_record: 26,
+  missing_consent: 26,
+  suppressed_by_reason: { opted_out: 9, saturated: 5, unengaged: 3, invalid: 2 },
+};
+
+const SUPPRESSED = [
+  { contact_id: 301, contact_name: 'רון לוי',  phone: '+972541112222', suppressed_at: '2026-06-21 14:20', suppressed_reason: 'opted_out', suppressed_detail: 'להסיר',     suppressed_scope: 'marketing', unengaged_streak: 0, cap_failures: 0, consent_source: 'label', consent_at: '2026-05-02 10:00' },
+  { contact_id: 302, contact_name: 'מיכל ברק', phone: '+972523334444', suppressed_at: '2026-06-20 09:05', suppressed_reason: 'saturated', suppressed_detail: '131049',    suppressed_scope: 'marketing', unengaged_streak: 1, cap_failures: 2, consent_source: 'form',  consent_at: '2026-05-18 12:30' },
+  { contact_id: 303, contact_name: 'עדי שמש',  phone: '+972505556666', suppressed_at: '2026-06-19 16:45', suppressed_reason: 'unengaged', suppressed_detail: '',          suppressed_scope: 'marketing', unengaged_streak: 3, cap_failures: 0, consent_source: 'label', consent_at: '2026-04-11 08:00' },
+  { contact_id: 304, contact_name: '',         phone: '+15551234567',  suppressed_at: '2026-06-18 11:10', suppressed_reason: 'invalid',   suppressed_detail: 'US number', suppressed_scope: 'all',       unengaged_streak: 0, cap_failures: 0, consent_source: null,    consent_at: null },
+];
+
+// ---------------------------------------------------------------------------
+// Campaigns (campaigns / campaign_detail / campaigns_trend / campaigns_tier).
+// The funnel narrows audience → attempted → sent → delivered → read, and the
+// detailed campaign carries failures + a not_sent tail so the "what didn't go
+// out, and why" half of the screen has something to render.
+// ---------------------------------------------------------------------------
+
+const CAMPAIGNS = [
+  { id: 9001, display_id: 12, title: 'השקת מסלול קיץ', campaign_type: 'one_off', campaign_status: 'completed', template_name: 'offer_discount',       language: 'he', category: 'MARKETING', audience: 'תווית: לידים',  scheduled_at: '2026-06-18 10:00', created_at: '2026-06-17 15:20', attempted: 240, sent: 232, delivered: 221, read: 148, failed: 8 },
+  { id: 9002, display_id: 11, title: 'תזכורת פגישות',  campaign_type: 'one_off', campaign_status: 'completed', template_name: 'appointment_reminder', language: 'he', category: 'UTILITY',   audience: 'תווית: מכירות', scheduled_at: '2026-06-14 09:00', created_at: '2026-06-13 18:05', attempted: 89,  sent: 89,  delivered: 87,  read: 71,  failed: 0 },
+  { id: 9003, display_id: 10, title: 'ברוכים הבאים',   campaign_type: 'one_off', campaign_status: 'completed', template_name: 'welcome_intro',        language: 'he', category: 'MARKETING', audience: 'תווית: דחוף',   scheduled_at: '2026-06-09 12:00', created_at: '2026-06-09 09:40', attempted: 41,  sent: 39,  delivered: 38,  read: 21,  failed: 2 },
+];
+
+const CAMPAIGN_DETAIL = {
+  campaign: {
+    id: 9001, title: 'השקת מסלול קיץ',
+    message: 'מתנה בשבילך {{1}} 🎁 — 15% הנחה על הקמת אוטומציה ראשונה. הקוד בתוקף השבוע.',
+    campaign_type: 'one_off', campaign_status: 'completed', audience: 'תווית: לידים',
+    template_name: 'offer_discount', language: 'he', category: 'MARKETING', created_at: '2026-06-17 15:20',
+  },
+  funnel: { audience: 248, attempted: 240, sent: 232, delivered: 221, read: 148, failed: 8 },
+  engagement: {
+    replied: 34, reply_rate: 15,
+    replies: [
+      { contact_name: 'דנה כהן',   phone: '+972541234567', content: 'מעניין! אפשר פרטים?', replied_at: '2026-06-18 10:22' },
+      { contact_name: 'יואב אלון', phone: '+972529876543', content: 'כן, נשמח לשיחה',      replied_at: '2026-06-18 11:05' },
+    ],
+  },
+  recipients: [
+    { contact_name: 'דנה כהן',   phone: '+972541234567', status: 'read',      sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 101, replied_at: '2026-06-18 10:22', content: 'מעניין! אפשר פרטים?', error_title: null },
+    { contact_name: 'יואב אלון', phone: '+972529876543', status: 'delivered', sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 102, replied_at: null, content: null, error_title: null },
+    { contact_name: 'שירה פרץ',  phone: '+972501112233', status: 'sent',      sent_at: '2026-06-18 10:01', attempt_count: 1, conversation_display_id: 103, replied_at: null, content: null, error_title: null },
+    { contact_name: 'אורי נחום', phone: '+972536667788', status: 'failed',    sent_at: '2026-06-18 10:01', attempt_count: 2, conversation_display_id: 104, replied_at: null, content: null, error_title: 'הנמען חרג מהמכסה האישית (131049)' },
+  ],
+  not_sent: [
+    { contact_id: 305, contact_name: 'נועה גל', phone: '+972544445555', reason: 'no_attempt_record' },
+  ],
+  audience_source: 'snapshot',
+};
+
+const CAMPAIGNS_TREND = [
+  { day: '09/06', attempted: 41,  sent: 39,  delivered: 38,  failed: 2 },
+  { day: '10/06', attempted: 0,   sent: 0,   delivered: 0,   failed: 0 },
+  { day: '11/06', attempted: 0,   sent: 0,   delivered: 0,   failed: 0 },
+  { day: '12/06', attempted: 12,  sent: 12,  delivered: 12,  failed: 0 },
+  { day: '13/06', attempted: 0,   sent: 0,   delivered: 0,   failed: 0 },
+  { day: '14/06', attempted: 89,  sent: 89,  delivered: 87,  failed: 0 },
+  { day: '15/06', attempted: 0,   sent: 0,   delivered: 0,   failed: 0 },
+  { day: '16/06', attempted: 6,   sent: 6,   delivered: 6,   failed: 0 },
+  { day: '17/06', attempted: 0,   sent: 0,   delivered: 0,   failed: 0 },
+  { day: '18/06', attempted: 240, sent: 232, delivered: 221, failed: 8 },
+  { day: '19/06', attempted: 18,  sent: 18,  delivered: 17,  failed: 0 },
+  { day: '20/06', attempted: 0,   sent: 0,   delivered: 0,   failed: 0 },
+  { day: '21/06', attempted: 24,  sent: 24,  delivered: 23,  failed: 0 },
+  { day: '22/06', attempted: 9,   sent: 9,   delivered: 9,   failed: 0 },
+];
+
+const CAMPAIGNS_TIER = { cap: 2000, unlimited: false, used_24h: 312, remaining: 1688 };
+
 function dataFor(action, payload = {}) {
   switch (action) {
     case 'list': return SEQUENCES;
@@ -384,6 +488,18 @@ function dataFor(action, payload = {}) {
     case 'jrn_runs': return JRN_RUNS;
     case 'jrn_launch': return { started: true, run_id: 'run_new' };
     case 'jrn_stop_run': return { stopped: true };
+    case 'compliance': return COMPLIANCE;
+    case 'suppressed': return SUPPRESSED;
+    case 'save_compliance': return { ok: true };
+    case 'record_consent': return { ok: true };
+    case 'consent_by_label': return { count: 41, label: 'לידים' };
+    case 'set_suppression': return { ok: true };
+    case 'ack_alert': return { ok: true };
+    case 'resume_account': return { ok: true };
+    case 'campaigns': return CAMPAIGNS;
+    case 'campaign_detail': return CAMPAIGN_DETAIL;
+    case 'campaigns_trend': return CAMPAIGNS_TREND;
+    case 'campaigns_tier': return CAMPAIGNS_TIER;
     default: return null;
   }
 }

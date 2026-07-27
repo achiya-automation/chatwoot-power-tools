@@ -97,7 +97,8 @@ async function tick() {
       try {
         await compliance.raiseAlert(
           pool, u.account_id, 'error', 'auto_onboard_failed',
-          `החשבון לא חובר למנוע אוטומטית (${e.message}). הרצפים בו לא ישלחו כלום עד שזה ייפתר.`
+          `החשבון לא חובר למנוע אוטומטית (${e.message}). הרצפים בו לא ישלחו כלום עד שזה ייפתר.`,
+          { error: e.message }
         );
       } catch { /* alert is best-effort */ }
     }
@@ -149,7 +150,8 @@ async function tick() {
           await compliance.raiseAlert(
             pool, a.account_id, 'error', 'whatsapp_inbox_not_chosen',
             `לחשבון יש ${inbox.count} מספרי וואטסאפ ולא נבחר מספר לרצפים. ` +
-            `שום הודעה לא תישלח עד שתבחר — בהגדרות ← מספר הוואטסאפ.`
+            `שום הודעה לא תישלח עד שתבחר — בהגדרות ← מספר הוואטסאפ.`,
+            { count: inbox.count }
           );
           console.error(`[drip] acct ${a.account_id}: ${inbox.count} WhatsApp inboxes, none chosen — skipping`);
         }

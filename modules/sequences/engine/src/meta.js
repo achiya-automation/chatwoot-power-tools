@@ -200,7 +200,8 @@ export async function refreshHealth(pool, reads, accountId, now = new Date(), de
         if (!h.halted) {
           await compliance.haltAccount(
             pool, accountId,
-            'דירוג האיכות של המספר ירד ל-RED. המשך שליחה עלול להוביל להשעיית המספר.'
+            'דירוג האיכות של המספר ירד ל-RED. המשך שליחה עלול להוביל להשעיית המספר.',
+            'quality_red'
           );
         }
       } else if (quality === 'YELLOW') {
@@ -236,7 +237,8 @@ export async function refreshHealth(pool, reads, accountId, now = new Date(), de
           if (compliance && t.status === 'PAUSED') {
             await compliance.raiseAlert(
               pool, accountId, 'warn', 'template_paused',
-              `התבנית "${t.name}" מושהית ע"י מטא. רצפים שמשתמשים בה ממתינים ויימשכו כשתחזור.`
+              `התבנית "${t.name}" מושהית ע"י מטא. רצפים שמשתמשים בה ממתינים ויימשכו כשתחזור.`,
+              { template: t.name }
             );
           }
         }
