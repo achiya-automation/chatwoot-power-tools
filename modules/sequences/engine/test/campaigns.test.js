@@ -388,6 +388,22 @@ test('getCampaignDetail: sent_at renders in Asia/Jerusalem, not raw UTC', async 
   assert.equal(d.recipients[0].sent_at, '2026-01-02 00:00');
 });
 
+// messages.created_at is timestamp-without-zone holding UTC; the ledger's attempted_at is
+// timestamptz. They need DIFFERENT conversions — running the naive-column form on the
+// zoned one silently shifts the send three hours back.
+test('getCampaignDetail: ledger attempted_at renders in Asia/Jerusalem, not shifted twice', async () => {
+  await seedCampaign({ id: 45, title: 'שעון ledger' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (6,1,'איתי','+972500000006')`);
+  await query(`INSERT INTO drip.campaign_audience_snapshots(account_id,campaign_id,contact_id,contact_name,phone) VALUES
+    (1,45,6,'איתי','+972500000006')`);
+  await query(`INSERT INTO drip.campaign_send_snapshots
+    (account_id,campaign_id,contact_id,contact_name,phone,source_id,status,attempted_at) VALUES
+    (1,45,6,'איתי','+972500000006','wamid-45',0,'2026-01-01 22:00:00+00')`);
+
+  const d = await getCampaignDetail(query, 1, 45);
+  assert.equal(d.recipients[0].sent_at, '2026-01-02 00:00');
+});
+
 // Base cross-account ownership: account 2 must not read account 1's campaign via a tampered id.
 test('getCampaignDetail: campaign of another account → null (IDOR)', async () => {
   await seedCampaign({ id: 45, account: 1, title: 'פרטי' });
