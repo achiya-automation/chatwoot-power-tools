@@ -241,7 +241,10 @@ for server in "${SERVERS[@]}"; do
   rebuild_engine "$server" "$layout"
   wait_healthy "$server" "$(engine_container "$layout")"
   restart_rails "$server"
+  # Both, and rails last: sidekiq goes healthy well before rails finishes booting, so
+  # waiting only on sidekiq hands back a server that still answers 503 to the panel.
   wait_healthy "$server" chatwoot-sidekiq-1
+  wait_healthy "$server" chatwoot-rails-1
   verify "$server" "$layout"
 done
 
