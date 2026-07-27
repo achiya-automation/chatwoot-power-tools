@@ -827,9 +827,12 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       box.appendChild(detail);
     }
 
-    const hint = el('div', 'mt-1 text-xs text-n-slate-11');
-    hint.textContent = t('noPhoneHint');
-    box.appendChild(hint);
+    // The fallback tip only helps when no fallback column is mapped yet.
+    if (!state.mapping.some((m) => m.field === 'phone_number_alt')) {
+      const hint = el('div', 'mt-1 text-xs text-n-slate-11');
+      hint.textContent = t('noPhoneHint');
+      box.appendChild(hint);
+    }
     return box;
   }
 

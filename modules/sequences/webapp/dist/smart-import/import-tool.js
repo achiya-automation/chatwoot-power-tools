@@ -1464,9 +1464,11 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         detail.textContent = parts.join(" \xB7 ");
         box.appendChild(detail);
       }
-      const hint = el("div", "mt-1 text-xs text-n-slate-11");
-      hint.textContent = t("noPhoneHint");
-      box.appendChild(hint);
+      if (!state.mapping.some((m) => m.field === "phone_number_alt")) {
+        const hint = el("div", "mt-1 text-xs text-n-slate-11");
+        hint.textContent = t("noPhoneHint");
+        box.appendChild(hint);
+      }
       return box;
     }
     async function ensureCustomAttributes() {
