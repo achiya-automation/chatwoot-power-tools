@@ -165,6 +165,11 @@ Rails.application.config.after_initialize do
           # A skip or a rejection has no wamid, but source_id is part of the primary key —
           # a per-contact synthetic key keeps one row per recipient and lets a re-run update it.
           key = whatsapp_message_id.presence || "skip:#{campaign.id}:#{contact.id}"
+          # ⚠️ No `--` comments inside the heredoc: .squish collapses it to a single line and
+          # a SQL line comment would swallow everything after it.
+          # ON CONFLICT rules: a terminal outcome (3/4) always wins, because a re-run can turn
+          # a skip into a real send or the reverse. An accepted send (0) must NOT overwrite a
+          # status a delivery webhook has already advanced.
           connection.execute(<<~SQL.squish)
             INSERT INTO drip.campaign_send_snapshots
               (account_id, campaign_id, contact_id, contact_name, phone, source_id, status,
@@ -178,9 +183,6 @@ Rails.application.config.after_initialize do
               SET contact_id = EXCLUDED.contact_id,
                   contact_name = EXCLUDED.contact_name,
                   phone = EXCLUDED.phone,
-                  -- A re-run may turn a skip into a real send or vice versa, so a terminal
-                  -- outcome (3/4) always wins. An accepted send (0) must NOT overwrite a
-                  -- status a delivery webhook has already advanced.
                   status = CASE WHEN EXCLUDED.status >= 3 THEN EXCLUDED.status
                                 ELSE drip.campaign_send_snapshots.status END,
                   error_title = COALESCE(EXCLUDED.error_title, drip.campaign_send_snapshots.error_title),
