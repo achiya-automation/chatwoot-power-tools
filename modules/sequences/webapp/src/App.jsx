@@ -579,7 +579,7 @@ export default function App() {
             ) : (
               <Table>
                 <THead>
-                  <TR className="hover:bg-transparent">
+                  <TR>
                     <TH>{t('colName')}</TH>
                     <TH>{t('colStatus')}</TH>
                     <TH>{t('colSteps')}</TH>

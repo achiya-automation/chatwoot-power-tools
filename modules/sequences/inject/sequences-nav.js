@@ -176,7 +176,7 @@
     spinner.className = 'flex items-center justify-center text-n-brand';
     spinner.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
     spinner.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
     holder.appendChild(frame);
     holder.appendChild(spinner);
     frame.addEventListener('load', function () { spinner.style.display = 'none'; });
@@ -232,7 +232,7 @@
 
     // chevron: native shows it ONLY while expanded (v-show="isExpanded", i-lucide-chevron-up)
     var chev = item.querySelector('[data-drip-chev]');
-    if (chev) chev.style.display = groupExpanded ? 'inline-flex' : 'none';
+    if (chev) chev.style.display = groupExpanded ? '' : 'none';
 
     // header: has-active-child → text-n-slate-12 font-medium (no bg), else idle slate-11.
     // The label <span class="truncate"> carries its own weight class (text-body-main idle /
@@ -242,12 +242,14 @@
     if (hdr) {
       var span = hdr.querySelector('span.truncate');
       if (active) {
+        // native has-active-child: text-n-slate-12 font-medium בלבד — בלי hover-bg
         hdr.classList.add('text-n-slate-12', 'font-medium');
-        hdr.classList.remove('text-n-slate-11');
-        if (span) { span.classList.remove('text-body-main'); span.classList.add('font-medium', 'text-sm'); }
+        hdr.classList.remove('text-n-slate-11', 'hover:bg-n-alpha-2');
+        // ה-span שומר text-body-main גם בפעיל (isActive=false לקבוצה עם ילדים במקור)
+        if (span) { span.classList.add('text-body-main', 'font-medium', 'text-sm'); }
       } else {
         hdr.classList.remove('text-n-slate-12', 'font-medium');
-        hdr.classList.add('text-n-slate-11');
+        hdr.classList.add('text-n-slate-11', 'hover:bg-n-alpha-2');
         if (span) { span.classList.add('text-body-main'); span.classList.remove('font-medium', 'text-sm'); }
       }
     }
@@ -388,7 +390,7 @@
     } else {
       pop.style.left = Math.round(railRect.right + 8) + 'px';
     }
-    var popH = pop.offsetHeight || 200;
+    var popH = pop.offsetHeight || 300;
     var top = trgRect.top + popH > window.innerHeight - 20
       ? Math.max(20, window.innerHeight - popH - 20)
       : trgRect.top;
@@ -409,7 +411,7 @@
     var hdr = clone.querySelector('[role="button"]') || clone.firstElementChild;
     if (hdr) {
       hdr.setAttribute('title', navLabels().title);
-      hdr.removeAttribute('name'); hdr.removeAttribute('href');
+      hdr.setAttribute('name', 'WhatsAppSequences'); hdr.removeAttribute('href');
       hdr.style.cursor = 'pointer';
       hdr.setAttribute('data-drip-hdr', '');
       hdr.classList.remove('text-n-slate-12', 'bg-n-alpha-2', 'font-medium');
@@ -465,6 +467,9 @@
       a.className = A_CLASS;
       a.style.cursor = 'pointer';
       a.setAttribute('title', label);
+      a.setAttribute('role', 'button');
+      a.setAttribute('tabindex', '0');
+      a.setAttribute('draggable', 'false');
       var d = document.createElement('div');
       d.className = LBL_CLASS;
       d.textContent = label;
@@ -494,7 +499,7 @@
     wrap.appendChild(btn);
     li.appendChild(wrap);
     // native collapsed groups open their children in a popover on hover
-    wrap.addEventListener('mouseenter', function () { clearTimeout(popCloseTimer); openPopover(btn); });
+    wrap.addEventListener('mouseenter', function () { if (resizeDrag) return; clearTimeout(popCloseTimer); openPopover(btn); });
     wrap.addEventListener('mouseleave', function () { scheduleClosePopover(200); });
     return li;
   }
@@ -576,6 +581,15 @@
   document.addEventListener('touchend', endResizeDrag, true);
   window.addEventListener('blur', endResizeDrag);
 
+  // keyboard: Enter/Space על פריטים שלנו מתנהגים כקליק (הצאצאים tabbable — role=button)
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!e.target.closest) return;
+    var nav = document.getElementById('drip-nav-item');
+    var el = e.target.closest('[data-drip-tab], [data-drip-hdr]');
+    if (el && nav && nav.contains(el)) { e.preventDefault(); el.click(); }
+  }, true);
+
   // event delegation — immune to Vue re-renders
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
@@ -591,7 +605,7 @@
         // native collapsed click → first accessible child (handleCollapsedClick); the
         // popover (hover) is the way to reach a specific tab
         closePopover();
-        show(activeSub() || 'overview');
+        show('overview');
       } else {
         toggle();
       }
@@ -602,6 +616,12 @@
     if (pop && !pop.contains(e.target)) closePopover();
     var link = e.target.closest('a[href*="/accounts/"]');
     if (link && !(nav && nav.contains(link))) hide();
+    // native expandedItem approximation: פתיחת קבוצה נייטיבית סוגרת קבוצה שנפתחה ידנית
+    var natHdr = e.target.closest('div[role="button"][name]');
+    if (natHdr && nav && !nav.contains(natHdr) && groupExpanded && !activeSub()) {
+      groupExpanded = false;
+      renderNav();
+    }
   }, true);
   ['pushState', 'replaceState'].forEach(function (k) {
     var o = history[k]; history[k] = function () { if (!restoreGuard) hide(); return o.apply(this, arguments); };

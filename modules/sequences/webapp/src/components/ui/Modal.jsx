@@ -62,12 +62,18 @@ export default function Modal({
 
   if (!open) return null;
 
+  // רוחבי ה-Dialog של המקור. המידות הישנות (md=xl, lg=3xl, xl=5xl) נשמרות כאן כערכי
+  // wide-* כי העורך ותצוגות רחבות אחרות באמת צריכים אותן — קריאה עם size רגיל מקבלת
+  // את המידה הנייטיבית המדויקת.
   const widthMap = {
-    sm: 'max-w-md',
-    md: 'max-w-xl',
+    sm: 'max-w-sm',
+    md: 'max-w-md',
+    lg: 'max-w-lg',
+    xl: 'max-w-xl',
     '2xl': 'max-w-2xl',
-    lg: 'max-w-3xl',
-    xl: 'max-w-5xl',
+    '3xl': 'max-w-3xl',
+    'wide-lg': 'max-w-3xl',
+    'wide-xl': 'max-w-5xl',
   };
 
   const isDrawer = variant === 'drawer';
@@ -84,8 +90,9 @@ export default function Modal({
         'animate-[slideIn_.2s_ease-out]',
       ].join(' ')
     : [
-        'relative w-full bg-n-solid-1 rounded-xl shadow-2xl flex flex-col',
-        'border border-n-weak max-h-[90vh]',
+        // Dialog.vue: משטח מטושטש bg-n-alpha-3 + blur, בלי border, p-6 עם gap-6
+        'relative w-full bg-n-alpha-3 backdrop-blur-[100px] rounded-xl shadow-xl flex flex-col gap-6 p-6',
+        'max-h-[90vh]',
         widthMap[size] || widthMap.md,
         'animate-[modalIn_.2s_ease-out]', // כניסת fade+zoom (זהה לתחושת Dialog ב-Chatwoot)
       ].join(' ');
@@ -94,7 +101,7 @@ export default function Modal({
     <div className={overlayClasses} role="presentation">
       {/* overlay */}
       <div
-        className="absolute inset-0 bg-n-overlay-default backdrop-blur-[1px] animate-[overlayIn_.15s_ease-out]"
+        className="absolute inset-0 bg-n-alpha-black1 backdrop-blur-[4px] animate-[overlayIn_.15s_ease-out]"
         onClick={closeOnOverlay ? onClose : undefined}
         aria-hidden="true"
       />
@@ -109,8 +116,8 @@ export default function Modal({
       >
         {/* כותרת */}
         {title ? (
-          <div className="flex items-center justify-between px-5 py-4 border-b border-n-weak shrink-0">
-            <h2 className="text-base font-semibold text-n-slate-12">{title}</h2>
+          <div className="flex items-center justify-between shrink-0">
+            <h2 className="text-base font-medium leading-6 text-n-slate-12 m-0">{title}</h2>
             <Button
               variant="ghost"
               color="slate"
@@ -124,11 +131,11 @@ export default function Modal({
         ) : null}
 
         {/* תוכן */}
-        <div className="px-5 py-4 overflow-y-auto grow">{children}</div>
+        <div className="overflow-y-auto grow min-h-0">{children}</div>
 
         {/* פעולות */}
         {footer ? (
-          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-n-weak shrink-0">
+          <div className="flex items-center justify-between w-full gap-3 shrink-0 [&>*]:w-full">
             {footer}
           </div>
         ) : null}

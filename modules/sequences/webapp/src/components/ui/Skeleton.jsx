@@ -12,7 +12,7 @@
 export default function Skeleton({ className = '', rounded = 'rounded-md' }) {
   return (
     <div
-      className={`animate-pulse bg-n-alpha-2 ${rounded} ${className}`}
+      className={`animate-pulse bg-n-slate-3 ${rounded} ${className}`}
       aria-hidden="true"
     />
   );
@@ -36,7 +36,7 @@ export function SkeletonText({ lines = 3, className = '' }) {
 export function SkeletonCard({ className = '' }) {
   return (
     <div
-      className={`flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak ${className}`}
+      className={`flex flex-col items-start rounded-xl bg-n-solid-2 outline-1 outline outline-n-container -outline-offset-1 px-4 py-3 ${className}`}
       aria-hidden="true"
     >
       <Skeleton className="h-7 w-10" />
@@ -49,7 +49,7 @@ export function SkeletonCard({ className = '' }) {
 export function SkeletonRows({ rows = 4, cols = 5, className = '' }) {
   return (
     <div
-      className={`overflow-hidden rounded-xl border border-n-weak ${className}`}
+      className={`overflow-hidden rounded-xl outline-1 outline outline-n-container -outline-offset-1 ${className}`}
       aria-hidden="true"
     >
       {Array.from({ length: rows }, (_, r) => (

@@ -89,7 +89,7 @@ export default function TemplatePicker({
         onClick={toggle}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-n-weak bg-n-alpha-1 px-3 text-start text-sm text-n-slate-12 outline-none transition-colors duration-150 focus:border-n-brand focus:ring-1 focus:ring-n-brand/40"
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border-none bg-n-alpha-black2 px-3 text-start text-sm text-n-slate-12 outline outline-1 outline-offset-[-1px] outline-n-weak hover:outline-n-slate-6 focus:outline-n-brand transition-all duration-200"
       >
         <span className={value ? 'truncate text-n-slate-12' : 'truncate text-n-slate-10'}>
           {value || _placeholder}
@@ -103,9 +103,9 @@ export default function TemplatePicker({
 
       {/* פאנל אקורדיון בזרימה רגילה — דוחף את התוכן שמתחתיו */}
       {open ? (
-        <div className="mt-1 max-h-72 overflow-auto rounded-lg border border-n-weak bg-n-surface-1">
+        <div className="mt-1 max-h-72 overflow-auto rounded-xl bg-n-alpha-3 backdrop-blur-[100px] outline outline-1 outline-n-container">
           {/* חיפוש */}
-          <div className="sticky top-0 border-b border-n-weak bg-n-surface-1 p-2">
+          <div className="sticky top-0 border-b border-n-weak bg-n-solid-1 p-2">
             <div className="relative">
               <Search
                 size={15}
@@ -119,7 +119,7 @@ export default function TemplatePicker({
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={t('searchTemplate')}
                 aria-label={t('searchTemplateAria')}
-                className="h-9 w-full rounded-lg border border-n-weak bg-n-alpha-2 ps-8 pe-3 text-sm text-n-slate-12 placeholder:text-n-slate-10 outline-none focus:border-n-brand focus:ring-1 focus:ring-n-brand/40"
+                className="h-8 w-full rounded-lg border-none bg-n-alpha-black2 dark:bg-n-solid-1 ps-8 pe-3 text-sm text-n-slate-12 placeholder:text-n-slate-10 focus:outline-none"
               />
             </div>
           </div>
@@ -138,8 +138,8 @@ export default function TemplatePicker({
                     <button
                       type="button"
                       onClick={() => select(t.name)}
-                      className={`block w-full px-3 py-2 text-start transition-colors hover:bg-n-alpha-1 ${
-                        selected ? 'bg-n-alpha-2' : ''
+                      className={`block w-full rounded-lg px-2 py-1.5 text-start transition-colors hover:bg-n-alpha-1 dark:hover:bg-n-alpha-2 ${
+                        selected ? 'bg-n-alpha-1 dark:bg-n-solid-active' : ''
                       }`}
                     >
                       <span className="block truncate text-sm font-medium text-n-slate-12">

@@ -14,7 +14,8 @@ export default function Card({
   return (
     <Tag
       className={[
-        'bg-n-solid-2 border border-n-weak rounded-xl shadow-sm',
+        // CardLayout.vue: outline שקוף בדארק (border-container) — בלי border ובלי צל
+        'bg-n-solid-2 outline-1 outline outline-n-container -outline-offset-1 rounded-xl',
         className,
       ]
         .filter(Boolean)
@@ -29,7 +30,7 @@ export default function Card({
 export function CardHeader({ children, className = '' }) {
   return (
     <div
-      className={['px-5 py-4 border-b border-n-weak', className]
+      className={['px-6 py-5', className]
         .filter(Boolean)
         .join(' ')}
     >
@@ -40,6 +41,6 @@ export function CardHeader({ children, className = '' }) {
 
 export function CardBody({ children, className = '' }) {
   return (
-    <div className={['p-5', className].filter(Boolean).join(' ')}>{children}</div>
+    <div className={['px-6 py-5', className].filter(Boolean).join(' ')}>{children}</div>
   );
 }

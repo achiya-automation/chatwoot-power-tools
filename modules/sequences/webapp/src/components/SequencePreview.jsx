@@ -70,7 +70,7 @@ export default function SequencePreview({
                 <div key={step.id} className="flex flex-col gap-1.5">
                   {/* מפריד-זמן ממורכז — מתי ההודעה תישלח מרגע ההרשמה */}
                   <div className="flex items-center justify-center">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-n-alpha-3 px-2.5 py-0.5 text-[11px] font-medium text-n-slate-11">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-n-alpha-3 px-2.5 py-0.5 text-xs font-medium text-n-slate-11">
                       {translate(M, 'stepN', { n: i + 1 })} · {formatOffset(offset)}
                     </span>
                   </div>

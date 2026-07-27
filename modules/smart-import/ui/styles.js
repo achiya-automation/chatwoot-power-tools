@@ -12,7 +12,9 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
    transform can't affect the panel. */
 .cwi-modal{max-height:90vh;overflow:auto;animation:cwiIn .2s ease-out}
 @keyframes cwiIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
-.cwi-prog-fill{height:100%;background:var(--color-n-brand, #6366f1);transition:width .2s}
+/* הרקע מגיע ממחלקת bg-n-brand של Chatwoot (הכחול הרשמי) — לא ממשתנה:
+   --color-n-brand לא קיים ב-CSS המקומפל וה-fallback צבע את הפס באינדיגו זר. */
+.cwi-prog-fill{height:100%;transition:width .2s}
 .cwi-tbl-cell{border-bottom:1px solid}
 .cwi-cs-panel{transition:opacity .2s ease-out}
 /* Background-import pill — fixed to the bottom start corner (dir-aware via

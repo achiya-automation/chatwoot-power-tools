@@ -53,6 +53,16 @@ REQUIRED_CLASSES=(
   'i-lucide-zap'
   'i-lucide-megaphone'
   'i-lucide-upload'
+  # מתכוני Button.vue שהוזרקו כלשונם (כפתורי סטטיסטיקה/ייבוא/סגירה)
+  'hover:enabled:bg-n-alpha-2'
+  'hover:enabled:brightness-110'
+  'hover:enabled:text-n-slate-12'
+  'hover:enabled:underline'
+  'focus-visible:bg-n-alpha-2'
+  'focus-visible:brightness-110'
+  'active:enabled:scale-[0.97]'
+  'underline-offset-2'
+  'border-s'
 )
 # משתני CSS שהסטיילים המוזרקים (campaign-modal.js) קוראים ישירות
 REQUIRED_VARS=(
@@ -79,7 +89,7 @@ fi
 
 escape_class() {
   # שם מחלקה כפי שהוא מופיע כסלקטור ב-CSS מקומפל
-  printf '%s' "$1" | sed -e 's/:/\\:/g' -e 's#/#\\/#g' -e 's/\[/\\[/g' -e 's/\]/\\]/g'
+  printf '%s' "$1" | sed -e 's/:/\\:/g' -e 's#/#\\/#g' -e 's/\[/\\[/g' -e 's/\]/\\]/g' -e 's/\./\\./g'
 }
 
 missing=0

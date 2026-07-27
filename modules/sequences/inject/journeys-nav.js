@@ -104,25 +104,37 @@
 
     if (mode === 'collapsed') {
       li.className = 'grid gap-1 text-sm cursor-pointer select-none min-w-0';
+      var colWrap = document.createElement('div');
+      colWrap.className = 'relative';
       var btn = document.createElement('a');
       btn.className = 'flex items-center justify-center size-10 rounded-lg text-n-slate-11 hover:bg-n-alpha-2';
       btn.style.cursor = 'pointer';
       btn.setAttribute('title', text);
+      btn.setAttribute('role', 'button');
+      btn.setAttribute('tabindex', '0');
+      btn.setAttribute('draggable', 'false');
       var cicon = document.createElement('span');
       cicon.className = 'i-lucide-workflow size-4';
       btn.appendChild(cicon);
-      li.appendChild(btn);
+      colWrap.appendChild(btn);
+      li.appendChild(colWrap);
     } else {
       li.className = LI_CLASS;
       var a = document.createElement('a');
       a.className = A_CLASS + ' ' + A_IDLE.join(' ');
       a.style.cursor = 'pointer';
+      a.setAttribute('role', 'button');
+      a.setAttribute('tabindex', '0');
+      a.setAttribute('draggable', 'false');
 
       // i-lucide-workflow is bundled in Chatwoot's compiled icon CSS (verified) — render it
       // exactly like a native sidebar icon (mask span), no inline SVG needed.
+      var iconWrap = document.createElement('div');
+      iconWrap.className = 'relative flex items-center gap-2';
       var icon = document.createElement('span');
       icon.className = 'i-lucide-workflow size-4';
-      a.appendChild(icon);
+      iconWrap.appendChild(icon);
+      a.appendChild(iconWrap);
 
       var wrap = document.createElement('div');
       wrap.className = 'flex items-center gap-1.5 flex-grow justify-between min-w-0 flex-1';
@@ -173,11 +185,11 @@
     var span = li.querySelector('span.truncate');
     if (on) {
       a.classList.add.apply(a.classList, A_ACTIVE);
-      a.classList.remove('text-n-slate-11');
+      a.classList.remove('text-n-slate-11', 'hover:bg-n-alpha-2');
       if (span) { span.classList.remove('text-body-main'); span.classList.add('font-medium', 'text-sm'); }
     } else {
       a.classList.remove.apply(a.classList, A_ACTIVE);
-      a.classList.add('text-n-slate-11');
+      a.classList.add('text-n-slate-11', 'hover:bg-n-alpha-2');
       if (span) { span.classList.add('text-body-main'); span.classList.remove('font-medium', 'text-sm'); }
     }
   }
@@ -191,6 +203,14 @@
       else removeItem();
     });
   }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!e.target.closest) return;
+    var item = document.getElementById('jrn-nav-item');
+    var link = e.target.closest('a');
+    if (item && link && item.contains(link)) { e.preventDefault(); link.click(); }
+  }, true);
 
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
