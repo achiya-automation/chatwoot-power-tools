@@ -368,6 +368,28 @@
   // close the sequences-nav sidebar panel (if open) so the two full-content overlays never stack
   function hideSiblingPanels() { if (window.__cwptSeqHide) { try { window.__cwptSeqHide(); } catch (e) {} } }
 
+  // ── sidebar-resize passthrough (same fix as sequences-nav.js): dragging the sidebar
+  // handle freezes over an iframe — disable its pointer-events for the drag's duration and
+  // keep the overlay glued to the moving content area. ──
+  var resizeDrag = false, dragRaf = 0;
+  function endResizeDrag() {
+    if (!resizeDrag) return;
+    resizeDrag = false;
+    if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
+    if (frame) frame.style.pointerEvents = '';
+    positionOverlay();
+  }
+  document.addEventListener('mousedown', function (e) {
+    if (!e.target.closest) return;
+    if (e.target.closest('.cursor-col-resize')) { resizeDrag = true; if (frame) frame.style.pointerEvents = 'none'; }
+  }, true);
+  document.addEventListener('mousemove', function () {
+    if (!resizeDrag || !shown || dragRaf) return;
+    dragRaf = requestAnimationFrame(function () { dragRaf = 0; positionOverlay(); });
+  }, true);
+  document.addEventListener('mouseup', endResizeDrag, true);
+  window.addEventListener('blur', endResizeDrag);
+
   // open report on click (event delegation — immune to Vue re-renders)
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;

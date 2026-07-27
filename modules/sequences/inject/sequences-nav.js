@@ -541,6 +541,41 @@
     }
   }
 
+  // ── sidebar-resize passthrough ─────────────────────────────────────────────
+  // Chatwoot's resize handle (div.cursor-col-resize on the aside edge) drags via DOCUMENT-
+  // level mousemove. An iframe swallows mouse events from the parent document, so the moment
+  // the pointer crosses the open panel the drag freezes — the handle feels stuck whenever a
+  // panel tab is open. While a resize drag is active we disable pointer-events on the iframe
+  // (the events then hit the holder <div> and bubble to the document, so Chatwoot's
+  // onResizeMove keeps flowing) and re-glue the panel to the shrinking/growing content area
+  // every frame.
+  var resizeDrag = false, dragRaf = 0;
+  function setFramePassthrough(on) {
+    if (frame) frame.style.pointerEvents = on ? 'none' : '';
+  }
+  function endResizeDrag() {
+    if (!resizeDrag) return;
+    resizeDrag = false;
+    if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
+    setFramePassthrough(false);
+    position();
+  }
+  function startResizeDrag(e) {
+    if (!e.target.closest) return;
+    if (e.target.closest('.cursor-col-resize')) { resizeDrag = true; setFramePassthrough(true); }
+  }
+  function dragReposition() {
+    if (!resizeDrag || !shown || dragRaf) return;
+    dragRaf = requestAnimationFrame(function () { dragRaf = 0; position(); });
+  }
+  document.addEventListener('mousedown', startResizeDrag, true);
+  document.addEventListener('touchstart', startResizeDrag, true);
+  document.addEventListener('mousemove', dragReposition, true);
+  document.addEventListener('touchmove', dragReposition, true);
+  document.addEventListener('mouseup', endResizeDrag, true);
+  document.addEventListener('touchend', endResizeDrag, true);
+  window.addEventListener('blur', endResizeDrag);
+
   // event delegation — immune to Vue re-renders
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
