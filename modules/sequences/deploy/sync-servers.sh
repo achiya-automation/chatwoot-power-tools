@@ -121,7 +121,19 @@ check_drift() {
       drift=1
     fi
   done
-  [[ $drift -eq 0 ]] && ok "engine matches git"
+
+  # The built webapp counts too. Asset filenames are timestamped, so a dist built outside
+  # the repo is trivially detectable here — and is how both servers ended up serving a
+  # bundle that existed on no branch.
+  local container; container="$(engine_container "$layout")"
+  want="$(md5_of "$SEQ/webapp/dist/index.html")"
+  have="$(ssh "$server" "docker exec $container md5sum /app/webapp-dist/index.html 2>/dev/null" | awk '{print $1}')"
+  if [[ -n "$have" && "$want" != "$have" ]]; then
+    warn "webapp dist running on $server was not built from this commit"
+    drift=1
+  fi
+
+  [[ $drift -eq 0 ]] && ok "engine + webapp match git"
   return $drift
 }
 
