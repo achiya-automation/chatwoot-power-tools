@@ -28,6 +28,15 @@ const LABELS = {
     '130472': 'המספר של הנמען משתתף בניסוי של Meta — הודעות שיווקיות אליו אינן נמסרות כרגע',
     '470': 'חלון ההודעות (24 שעות) נסגר',
     '100': 'בקשת API שגויה — בדקו את הפרמטרים',
+    // סיבות מקומיות מ-ledger הקמפיינים (drip.campaign_send_snapshots) — לא קודים של
+    // Meta. אלה המקרים שבהם השליחה נעצרה בצד שלנו ולא הגיעה ל-Meta בכלל.
+    // חייב להישאר זהה ל-ERROR_LABELS ב-engine/src/campaignCsv.js.
+    no_phone: 'לא נשלח — לאיש הקשר אין מספר טלפון',
+    no_template_params: 'לא נשלח — לקמפיין לא הוגדרה תבנית',
+    liquid_blank: 'לא נשלח — שדה בהתאמה האישית של התבנית ריק אצל איש הקשר',
+    template_not_found: 'לא נשלח — התבנית לא נמצאה או אינה מאושרת בשפה שנבחרה',
+    send_failed: 'הבקשה ל-Meta נכשלה — הפרטים בלוג השרת',
+    no_attempt_record: 'לא נוצר ניסיון שליחה',
   },
   en: {
     '131026': 'The message was not delivered — the number may not be on WhatsApp, may have blocked the business, or does not accept business messages',
@@ -45,6 +54,14 @@ const LABELS = {
     '130472': "The recipient's number is part of a Meta experiment — marketing messages to it are currently not delivered",
     '470': 'The messaging window (24 hours) has closed',
     '100': 'Invalid API request — check the parameters',
+    // Local reasons from the campaign ledger (drip.campaign_send_snapshots) — not Meta
+    // codes. Keep in sync with ERROR_LABELS in engine/src/campaignCsv.js.
+    no_phone: 'Not sent — the contact has no phone number',
+    no_template_params: 'Not sent — the campaign has no template configured',
+    liquid_blank: 'Not sent — a template personalization field is empty for this contact',
+    template_not_found: 'Not sent — the template was not found or is not approved in the selected language',
+    send_failed: 'The request to Meta failed — see the server log for details',
+    no_attempt_record: 'No send attempt was created',
   },
 };
 

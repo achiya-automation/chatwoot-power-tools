@@ -116,6 +116,7 @@ var __cwImport = (() => {
     "first_name",
     "last_name",
     "phone_number",
+    "phone_number_alt",
     "email",
     "identifier",
     "company_name",
@@ -172,7 +173,8 @@ var __cwImport = (() => {
   }
   var VALIDATORS = {
     email: (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.trim()),
-    phone_number: (v) => normalizePhone(v) !== null
+    phone_number: (v) => normalizePhone(v) !== null,
+    phone_number_alt: (v) => normalizePhone(v) !== null
   };
   function validateMapping(headers, rows, mapping) {
     const blockers = [];
@@ -199,10 +201,11 @@ var __cwImport = (() => {
         confidence = field ? 0.7 : 0;
       }
       if (field && taken.has(field)) {
-        field = null;
-        confidence = 0;
+        const isPhone = field === "phone_number" || field === "phone_number_alt";
+        field = isPhone ? "phone_number_alt" : null;
+        confidence = isPhone ? 0.6 : 0;
       }
-      if (field) taken.add(field);
+      if (field && field !== "phone_number_alt") taken.add(field);
       return { header: header2, index, field, confidence };
     });
   }
@@ -214,17 +217,25 @@ var __cwImport = (() => {
     const payload = { additional_attributes: {}, custom_attributes: {} };
     let first = "";
     let last = "";
+    const phones = [];
     for (const { index, field } of mapping) {
       const val = (row[index] || "").trim();
       if (!val || !field) continue;
       if (field === "first_name") first = val;
       else if (field === "last_name") last = val;
-      else if (field === "phone_number") {
-        const p = normalizePhone(val);
-        if (p) payload.phone_number = p;
-      } else if (TOP_LEVEL.has(field)) payload[field] = val;
+      else if (field === "phone_number") phones.unshift(val);
+      else if (field === "phone_number_alt") phones.push(val);
+      else if (TOP_LEVEL.has(field)) payload[field] = val;
       else if (ADDITIONAL.has(field)) payload.additional_attributes[field] = val;
     }
+    for (const raw of phones) {
+      const p = normalizePhone(raw);
+      if (p) {
+        payload.phone_number = p;
+        break;
+      }
+    }
+    if (!payload.phone_number && phones.length) payload.__phoneRaw = phones[0];
     if (!payload.name && (first || last)) payload.name = [first, last].filter(Boolean).join(" ");
     for (const { index, attribute_key } of customMap || []) {
       const val = (row[index] || "").trim();
@@ -453,7 +464,7 @@ var __cwImport = (() => {
             await call(() => api.assignLabels(contactId, [labelTitle]));
           }
         }
-        log.add(row, name, status, contactId, "");
+        log.add(row, name, status, contactId, phoneNote(c));
       } catch (e) {
         log.add(row, name, "failed", null, (e.body || e.message || "error").slice(0, 200));
       }
@@ -542,8 +553,12 @@ var __cwImport = (() => {
     return job;
   }
   function stripMeta(c) {
-    const { __row, __match, __dupTail, ...rest } = c;
+    const { __row, __match, __dupTail, __phoneRaw, ...rest } = c;
     return rest;
+  }
+  function phoneNote(c) {
+    if (c.phone_number) return "";
+    return c.__phoneRaw ? `\u05DE\u05E1\u05E4\u05E8 \u05DC\u05D0 \u05EA\u05E7\u05D9\u05DF (${c.__phoneRaw}) \u2014 \u05DC\u05D0 \u05D9\u05E7\u05D1\u05DC \u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4` : "\u05DC\u05DC\u05D0 \u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF \u2014 \u05DC\u05D0 \u05D9\u05E7\u05D1\u05DC \u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4";
   }
   function waSourceId(phone) {
     const digits = String(phone || "").replace(/\D/g, "");
@@ -642,6 +657,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       fFirstName: "\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9",
       fLastName: "\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4",
       fPhone: "\u05D8\u05DC\u05E4\u05D5\u05DF",
+      fPhoneAlt: "\u05D8\u05DC\u05E4\u05D5\u05DF \u05E0\u05D5\u05E1\u05E3 (\u05D2\u05D9\u05D1\u05D5\u05D9)",
       fEmail: "\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC",
       fIdentifier: "\u05DE\u05D6\u05D4\u05D4",
       fCompany: "\u05D7\u05D1\u05E8\u05D4",
@@ -690,6 +706,11 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       existingWillUpdate: "\u05E7\u05D9\u05D9\u05DE\u05D9\u05DD (\u05D9\u05E2\u05D5\u05D3\u05DB\u05E0\u05D5)",
       importVerb: "\u05D9\u05D9\u05D1\u05D0",
       contactsWord: "\u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8",
+      // אזהרת טלפונים חסרים — אלה נכנסים בהצלחה אבל אף קמפיין וואטסאפ לא יגיע אליהם
+      noPhoneTitle: (n) => `${n} \u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8 \u05DC\u05DC\u05D0 \u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF \u05EA\u05E7\u05D9\u05DF \u2014 \u05DC\u05D0 \u05D9\u05E7\u05D1\u05DC\u05D5 \u05D4\u05D5\u05D3\u05E2\u05D5\u05EA \u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4`,
+      noPhoneEmpty: (n) => `${n} \u05DC\u05DC\u05D0 \u05DE\u05E1\u05E4\u05E8 \u05D1\u05E7\u05D5\u05D1\u05E5`,
+      noPhoneInvalid: (n, sample) => `${n} \u05E2\u05DD \u05DE\u05E1\u05E4\u05E8 \u05E9\u05D0\u05D9 \u05D0\u05E4\u05E9\u05E8 \u05DC\u05E7\u05E8\u05D5\u05D0 (\u05DC\u05DE\u05E9\u05DC "${sample}")`,
+      noPhoneHint: '\u05D4\u05DD \u05D9\u05D9\u05D5\u05D5\u05E6\u05E8\u05D5 \u05D5\u05D9\u05EA\u05D5\u05D9\u05D2\u05D5 \u05DB\u05E8\u05D2\u05D9\u05DC. \u05D0\u05DD \u05E7\u05D9\u05D9\u05DE\u05EA \u05D1\u05E7\u05D5\u05D1\u05E5 \u05E2\u05DE\u05D5\u05D3\u05EA \u05D8\u05DC\u05E4\u05D5\u05DF \u05E0\u05D5\u05E1\u05E4\u05EA, \u05D0\u05E4\u05E9\u05E8 \u05DC\u05D7\u05D6\u05D5\u05E8 \u05DC\u05DE\u05D9\u05E4\u05D5\u05D9 \u05D5\u05DC\u05E9\u05D9\u05D9\u05DA \u05D0\u05D5\u05EA\u05D4 \u05DB"\u05D8\u05DC\u05E4\u05D5\u05DF \u05E0\u05D5\u05E1\u05E3 (\u05D2\u05D9\u05D1\u05D5\u05D9)".',
       // step 5 — run / done
       importing: "\u05DE\u05D9\u05D9\u05D1\u05D0\u2026",
       importDone: "\u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D4\u05D5\u05E9\u05DC\u05DD",
@@ -727,6 +748,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       fFirstName: "First name",
       fLastName: "Last name",
       fPhone: "Phone",
+      fPhoneAlt: "Additional phone (fallback)",
       fEmail: "Email",
       fIdentifier: "Identifier",
       fCompany: "Company",
@@ -770,6 +792,10 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       existingWillUpdate: "existing (will be updated)",
       importVerb: "Import",
       contactsWord: "contacts",
+      noPhoneTitle: (n) => `${n} contacts have no usable phone number \u2014 they will not receive WhatsApp messages`,
+      noPhoneEmpty: (n) => `${n} with no number in the file`,
+      noPhoneInvalid: (n, sample) => `${n} with an unusable number (e.g. "${sample}")`,
+      noPhoneHint: 'They will still be created and labelled. If the file has a second phone column, go back to the mapping step and assign it as "Additional phone (fallback)".',
       importing: "Importing\u2026",
       importDone: "Import complete",
       createdWord: "Created",
@@ -806,6 +832,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     first_name: t("fFirstName"),
     last_name: t("fLastName"),
     phone_number: t("fPhone"),
+    phone_number_alt: t("fPhoneAlt"),
     email: t("fEmail"),
     identifier: t("fIdentifier"),
     company_name: t("fCompany"),
@@ -1417,10 +1444,34 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       const existing = contacts.filter((c) => c.__match).length;
       const created = N - existing - dupes;
       status.textContent = dedupOk ? `${t("readyToImport")} ${N} \xB7 ${created} ${t("newWord")} \xB7 ${existing} ${t("existingWillUpdate")}` + (dupes ? ` \xB7 ${dupes} ${t("dupInFile")}` : "") : t("dedupFailed");
+      modal.append(phoneWarning(contacts));
       modal.append(
         previewTable(contacts.slice(0, 10)),
         footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t("importVerb")} ${N} ${t("contactsWord")}` })
       );
+    }
+    function phoneWarning(contacts) {
+      const noPhone = contacts.filter((c) => !c.phone_number);
+      if (!noPhone.length) return document.createDocumentFragment();
+      const unusable = noPhone.filter((c) => c.__phoneRaw);
+      const box = el("div", "mt-3 rounded-lg border border-n-amber-6 bg-n-amber-2 px-3 py-2");
+      const title = el("div", "text-sm font-medium text-n-amber-11");
+      title.textContent = t("noPhoneTitle")(noPhone.length);
+      box.appendChild(title);
+      const parts = [];
+      if (noPhone.length - unusable.length > 0) parts.push(t("noPhoneEmpty")(noPhone.length - unusable.length));
+      if (unusable.length) parts.push(t("noPhoneInvalid")(unusable.length, unusable[0].__phoneRaw));
+      if (parts.length) {
+        const detail = el("div", "mt-0.5 text-xs text-n-amber-11");
+        detail.textContent = parts.join(" \xB7 ");
+        box.appendChild(detail);
+      }
+      if (!state.mapping.some((m) => m.field === "phone_number_alt")) {
+        const hint = el("div", "mt-1 text-xs text-n-slate-11");
+        hint.textContent = t("noPhoneHint");
+        box.appendChild(hint);
+      }
+      return box;
     }
     async function ensureCustomAttributes() {
       for (const c of state.customMap.filter((x) => x.create)) {

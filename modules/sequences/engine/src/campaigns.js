@@ -191,6 +191,10 @@ function collapseRecipientAttempts(rawRecipients, audienceContacts) {
 // wrong way — hence the explicit two-step form.
 const TZ = 'Asia/Jerusalem';
 const localTs = (col) => `((${col}) AT TIME ZONE 'UTC' AT TIME ZONE '${TZ}')`;
+// For timestamptz columns (the drip ledger) the value already carries a zone, so ONE
+// conversion is the whole job. Running localTs on them re-reads the UTC clock reading as
+// a local wall time and shifts the result three hours back — a send at 18:30 reads 12:30.
+const localTsTz = (col) => `((${col}) AT TIME ZONE '${TZ}')`;
 
 // Per-campaign status counts. The durable send ledger wins; explicitly tagged legacy messages
 // are included only when the same Meta/message id is not already represented in the ledger.
@@ -346,7 +350,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
               CASE WHEN s.status = 3 THEN 3
                    ELSE greatest(s.status, coalesce(m.status, 0)) END AS status,
               coalesce(s.error_title, ${caObj('m.content_attributes')} ->> 'external_error') AS error_title,
-              to_char(${localTs('s.attempted_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
+              to_char(${localTsTz('s.attempted_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
               coalesce(m.conversation_id, s.conversation_id) AS conversation_id,
               cv.display_id AS conversation_display_id
          FROM drip.campaign_send_snapshots s
@@ -397,6 +401,10 @@ export async function getCampaignDetail(query, accountId, campaignId) {
 
   const funnel = recipients.reduce(
     (f, r) => {
+      // status 4 = שורת ledger של דילוג: הנמען היה בקהל אבל שום שליחה לא נוסתה
+      // (אין טלפון / אין תבנית / משתנה ריק). היא נספרת בקהל ומוצגת בטבלה עם הסיבה,
+      // אבל אינה ניסיון — אחרת "נוסו" היה כולל את מי שמעולם לא פנינו אליו.
+      if (r.status === 4) { f.skipped += 1; return f; }
       f.attempted += 1;
       if (r.status === 0 || r.status === 1 || r.status === 2) f.sent += 1;
       if (r.status === 1 || r.status === 2) f.delivered += 1;
@@ -405,7 +413,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
       if (r.status === 0) f.pending += 1;
       return f;
     },
-    { audience: 0, attempted: 0, sent: 0, delivered: 0, read: 0, failed: 0, pending: 0 }
+    { audience: 0, attempted: 0, sent: 0, delivered: 0, read: 0, failed: 0, pending: 0, skipped: 0 }
   );
 
   // Engagement uses all attempt conversations, including recovered outgoing-echo rows without
@@ -504,7 +512,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
       phone: normalizeCampaignPhone(contact.phone),
       reason: 'no_attempt_record',
     }));
-  funnel.audience = audienceContacts.length || funnel.attempted;
+  funnel.audience = audienceContacts.length || (funnel.attempted + funnel.skipped);
 
   return { campaign, funnel, engagement, recipients, not_sent, audience_source: audienceSource };
 }
