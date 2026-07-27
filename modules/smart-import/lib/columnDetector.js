@@ -1,7 +1,7 @@
 import { normalizePhone } from './phoneNormalizer.js';
 
 export const SYSTEM_FIELDS = [
-  'name', 'first_name', 'last_name', 'phone_number',
+  'name', 'first_name', 'last_name', 'phone_number', 'phone_number_alt',
   'email', 'identifier', 'company_name', 'city', 'country',
 ];
 
@@ -71,6 +71,7 @@ function contentField(values) {
 const VALIDATORS = {
   email: (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.trim()),
   phone_number: (v) => normalizePhone(v) !== null,
+  phone_number_alt: (v) => normalizePhone(v) !== null,
 };
 
 export function validateMapping(headers, rows, mapping) {
@@ -95,8 +96,17 @@ export function detectColumns(headers, sampleRows) {
     let field = headerField(header);
     let confidence = field ? 0.9 : 0;
     if (!field) { field = contentField(col); confidence = field ? 0.7 : 0; }
-    if (field && taken.has(field)) { field = null; confidence = 0; }
-    if (field) taken.add(field);
+    if (field && taken.has(field)) {
+      // A second phone column ("נייד" next to "טלפון") is real data, not a duplicate:
+      // CRM exports routinely fill one and leave the other empty, and dropping it
+      // imports a contact with no phone at all — which every WhatsApp campaign then
+      // skips in silence. Keep it as a fallback candidate. Other fields stay single.
+      const isPhone = field === 'phone_number' || field === 'phone_number_alt';
+      field = isPhone ? 'phone_number_alt' : null;
+      confidence = isPhone ? 0.6 : 0;
+    }
+    // phone_number_alt is intentionally repeatable — never mark it taken.
+    if (field && field !== 'phone_number_alt') taken.add(field);
     return { header, index, field, confidence };
   });
 }
