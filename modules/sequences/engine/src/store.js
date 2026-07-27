@@ -787,7 +787,7 @@ async function actionDeliveryStats(accountId) {
   //   • חסימת מטא — תקרת שיווק, opt-out, מספר לא קיים. הנמענת אבודה, זה סיפור הרשימה.
   //   • שגיאת שליחה שלנו — פרמטרים לא תואמים לתבנית, מדיה שבורה. ההודעה מעולם לא יצאה
   //     כי הבקשה שגויה, וזה משהו שמתקנים בקוד/בתבנית, לא סימן שהנמענת שרופה.
-  // נמדד בבננה בוק 15/07: כל 8 "החסימות" של היום היו 132000 (חוסר פרמטר ב-bb_existing_07)
+  // נמדד בפרודקשן 15/07: כל 8 "החסימות" של היום היו 132000 (חוסר פרמטר ב-promo_existing_07)
   // — אפס חסימות מטא אמיתיות. הצגתן כ"נחסמו" ניפחה את שיעור החסימה מ-0% ל-22%.
   // הרשימה מתואמת ל-classifyError ('cap' / 'optout' / 'invalid' — כולם צד הנמענת).
   const META_BLOCK = `('131049','130472','131056','131050','131026','131021')`;
@@ -799,13 +799,13 @@ async function actionDeliveryStats(accountId) {
   // The JOIN silently loses history: deleting a Chatwoot inbox cascade-deletes its
   // conversations and messages, and every sent_messages row then points at a message id
   // that no longer exists. `m.status` comes back NULL, and a BLOCKED send is counted as
-  // "awaiting Meta". Measured 2026-07-14 (banana-book, hours after an inbox swap): Chatwoot
+  // "awaiting Meta". Measured 2026-07-14 (production, hours after an inbox swap): Chatwoot
   // held 6 failures for the day, the dashboard showed 1 — four of the five it lost were
   // 131049 caps on brand-new leads. The success rate read 97% when it was 91%.
   // ⭐ `delivery_status` has FOUR values, not three: reconcileDeliveries writes 'delivered'
   // and 'failed', but a read receipt (Meta status 2) is recorded as 'read' — and 'read' means
   // the message both ARRIVED and was opened. Counting only ds='delivered' as arrived dropped
-  // every read message from the arrived total (banana-book 2026-07-15: top card said 6 arrived,
+  // every read message from the arrived total (production 2026-07-15: top card said 6 arrived,
   // the source split said 0/4 — the missing one was 'read'). notify.js already treats
   // ('delivered','read') as delivered; the dashboard must too. `read` is still detected via the
   // message row (status=2) OR the ds value, so a deleted message that we last saw as 'read'
@@ -850,7 +850,7 @@ async function actionDeliveryStats(accountId) {
   ))[0];
 
   // Failed-by-template today (top 5) — which message clusters the failures, and whether each
-  // cluster is a Meta block or OUR send error (so the UI can label bb_existing_07's parameter
+  // cluster is a Meta block or OUR send error (so the UI can label promo_existing_07's parameter
   // mismatch as "fix the template", not "the recipients are burned").
   const byTemplate = (await query(
     `SELECT sm.template_name AS template,
@@ -901,7 +901,7 @@ async function actionDeliveryStats(accountId) {
   //   • ליד חדש שנחסם בהודעה הראשונה בחייו = הוא הגיע רווי מעסקים אחרים. זו בעיית
   //     מקור לידים, ושום שינוי בתוכן או בקצב לא יתקן אותה.
   //   • חסימה בהמשך הרצף = אנחנו עשינו משהו — קצב, תוכן, או תבנית שנשרפה.
-  // נמדד בבננה בוק 14/07: ליד חדש נחסם ב-40%, המשך הרצף ב-2%. פי עשרים.
+  // נמדד בפרודקשן 14/07: ליד חדש נחסם ב-40%, המשך הרצף ב-2%. פי עשרים.
   //
   // ⚠️ "ליד חדש" הוא ההודעה הראשונה *בחייו*, ולא step_order=1: ליד שנרשם מחדש לרצף
   // חוזר לשלב 1 בלי להיות חדש. מתוך 1,506 שליחות של שלב 1 בחשבון הזה, 571 היו ללידים

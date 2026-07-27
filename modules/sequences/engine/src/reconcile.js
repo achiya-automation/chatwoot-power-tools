@@ -28,17 +28,17 @@ export const firstName = (name) => cleanName(name).split(/\s+/).filter(Boolean)[
 /**
  * The CONTENT identity of a template, independent of its version.
  *
- * `bb_new_08`, `bb_new_08_v2`, `bb_new_08_v3` and `bb_new_01_btn_v3` are not four
+ * `promo_new_08`, `promo_new_08_v2`, `promo_new_08_v3` and `promo_new_01_btn_v3` are not four
  * messages — they are the same copy, re-created because Meta down-ranks a template that
  * accumulated a bad delivery history. A twin is a fresh envelope, never a new message.
  *
  * This matters because `enrollments.current_step` is a NUMBER, and step numbers MOVE:
  * inserting a step in the middle shifts everyone after it, so a lead mid-sequence starts
- * pointing at copy she has already received. 35 Banana Book customers got the same
+ * pointing at copy she has already received. 35 production customers got the same
  * message twice exactly this way, before the guard in the send path was added.
  *
  * @param {string} name - template name
- * @returns {string} the family key (`bb_new_08_v3` → `bb_new_08`)
+ * @returns {string} the family key (`promo_new_08_v3` → `promo_new_08`)
  */
 export const templateFamily = (name) =>
   String(name || '')
@@ -655,11 +655,11 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         // ── NEVER SEND COPY SHE HAS ALREADY RECEIVED ─────────────────────────
         // `current_step` is a NUMBER, and step numbers move: inserting a step in the
         // middle shifts everyone after it, and a lead mid-sequence silently starts
-        // pointing at a message she already got. 35 Banana Book customers received the
+        // pointing at a message she already got. 35 production customers received the
         // same message twice exactly this way.
         //
-        // The check is by template FAMILY, not by name — bb_new_08 / bb_new_08_v2 /
-        // bb_new_08_v3 are one message in three envelopes (twins exist to dodge Meta's
+        // The check is by template FAMILY, not by name — promo_new_08 / promo_new_08_v2 /
+        // promo_new_08_v3 are one message in three envelopes (twins exist to dodge Meta's
         // template reputation, not to say something new). Only DELIVERED counts: a step
         // that Meta blocked was never seen, and must still be retried.
         if (e.contact_id) {
@@ -889,7 +889,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         // And a Quick-Reply tap is an INBOUND message — it is what re-opens the window. So
         // stripping the buttons from the one lead who just replied removes the very mechanism
         // that keeps her window (and her ~100% delivery) alive. It made the hottest lead the
-        // only one to receive the worst message. (banana-book, 2026-07-14.)
+        // only one to receive the worst message. (production, 2026-07-14.)
         let sendResult;
         if (session && opts.freeformInSession === true) {
           sendResult = await client.sendFreeform(conversationId, sendArgs);
@@ -1009,7 +1009,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
 
       // ⚠️ השיחה נמחקה מתחת לרגליים. מחיקת תיבה ב-Chatwoot גוררת מחיקת קסקייד של כל
       // השיחות שבה, וה-enrollment שורד עם conversation_id שמצביע לכלום ⇒ POST מחזיר 404.
-      // (בננה בוק, 14/07/2026: הוחלפה תיבת הוואטסאפ, ו-872 לידים נשארו מצביעים לשיחות מחוקות.)
+      // (פרודקשן, 14/07/2026: הוחלפה תיבת הוואטסאפ, ו-872 לידים נשארו מצביעים לשיחות מחוקות.)
       // איפוס הקישור מחזיר את הליד לאותו נתיב שבו נפתחת שיחה לליד חדש: בטיק הבא תיפתח לו
       // שיחה, והוא יישלח מאותו שלב בדיוק. זו לא תקלה שלו — ולכן לא נספר לו ניסיון כושל
       // ולא נדחה אותו ב-backoff, אחרת מחיקת תיבה הייתה מסמנת 'failed' את כל הרשימה.
@@ -1228,7 +1228,7 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
         await failEnrollment(row.enrollment_id, row.conversation_id);
         continue;
 
-      // ── Per-user marketing cap (131049) — the Banana Book failure ────────────
+      // ── Per-user marketing cap (131049) — the production failure ────────────
       // cap_failures (per CONTACT) — how saturated is this person? Meta's per-user marketing
       // limit is cross-business and adaptive. Past max_cap_failures we stop initiating
       // marketing to her: chasing costs money, produces almost nothing (measured: 7.9%
@@ -1265,7 +1265,7 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
             // ⚠️ ולכן חייבים גם להחזיר את המצביע לשלב שנכשל — בדיוק כמו בכל כישלון אחר.
             // בלי זה `current_step` נשאר על השלב *הבא*, כלומר הודעה שמעולם לא הגיעה נספרת
             // כאילו נמסרה. ואז, כשהנמענת אכן מגיבה והחלון נפתח, היא מקבלת את ההמשך של סיפור
-            // שלא שמעה את תחילתו — הפוך בדיוק מהכוונה שמעל. נמדד בבננה בוק (14/07/2026):
+            // שלא שמעה את תחילתו — הפוך בדיוק מהכוונה שמעל. נמדד בפרודקשן (14/07/2026):
             // 293 לידים עמדו אחרי הודעות שלא קיבלו, 197 מהן שלושה שלבים קדימה.
             await rearm(row.enrollment_id, row.step_order, 24 * Math.min(3 * failures, 12));
             continue;

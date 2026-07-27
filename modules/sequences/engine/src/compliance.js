@@ -35,7 +35,7 @@ const STRONG_PHRASES = [
   'אל תשלחו', 'אל תשלח', 'לא לשלוח', 'תפסיקו לשלוח', 'הפסיקו לשלוח',
   'תורידו אותי', 'תוריד אותי', 'הורידו אותי', 'תוציאו אותי', 'להוריד אותי',
 
-  // ⭐ הסירוב הישראלי הנפוץ ביותר — ולא היה כאן. נמדד בבננה בוק (14/07/2026):
+  // ⭐ הסירוב הישראלי הנפוץ ביותר — ולא היה כאן. נמדד בפרודקשן (14/07/2026):
   // 27 אנשים ביקשו להפסיק, המנוע זיהה 8. את 19 הנותרים הוא המשיך להפגיז — 34 הודעות
   // שיווק *אחרי* שסירבו. נופר סירבה שלוש פעמים ("כבר לא רלוונטי" · "בת המצווה כבר
   // התקיימה" · "לא רלוונטי") וקיבלה בתגובה הודעת "תודה שבחרתם בנו". לינור כתבה "לא
@@ -226,13 +226,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // ואינו נורה אף פעם. הבלם האמיתי מודד את המסירה *בפועל*: אם ההודעות על תבניות
   // נקיות מפסיקות להגיע (WABA שרוף, מדיה שבורה, פעולת מדיניות של מטא) — כל שליחה
   // נכשלת בלי שאף תבנית בודדת חוצה את הסף שלה, והחשבון נשאר "בריא" בעיני מטא בזמן
-  // שהוא הולם. checkDeliveryFloor עוצר את זה. נמדד בבננה בוק: מסירה תקינה = 91-98%.
+  // שהוא הולם. checkDeliveryFloor עוצר את זה. נמדד בפרודקשן: מסירה תקינה = 91-98%.
   min_delivery_rate:     70,   // אחוז הגעה מינימלי על מדגם תבניות נקיות
   min_delivery_sample:   20,   // אל תשפוט מסירה על מדגם קטן מזה
 
   // ── חלון הפתיחה לליד חדש (fresh opener) ─────────────────────────────────────
   // גם כשהחשבון עצור על RED, מותר לשלוח את *הפתיחה בלבד* לליד שנרשם ממש לאחרונה.
-  // ליד טרי הוא engagement איכותי (נמדד בבננה בוק: הפתיחה מוסרת ב-91%, לעומת 24%
+  // ליד טרי הוא engagement איכותי (נמדד בפרודקשן: הפתיחה מוסרת ב-91%, לעומת 24%
   // בתבניות מאוחרות שנשלחו לקהל קר) — הוא לא מה ששורף את המספר, ואף מסייע להתאוששות.
   // ליד שלא מקבל פתיחה בזמן = ליד אבוד. ⚠️ רק ליד שנרשם בתוך החלון הזה — לא קהל ישן
   // וקר (שהוא בדיוק מה ששרף את המספר). 0 = לכבות את ההחרגה לגמרי.
@@ -576,7 +576,7 @@ export async function suppressContact(pool, accountId, contactId, reason, detail
   // stopped lead never reaches canSend at all, and the open door it holds for her is one she
   // can never walk through. Deleting her `sequence` tag compounds it — the reconciler reads an
   // empty tag as an opt-out and would refuse to re-enroll her.
-  // Measured (banana-book, 2026-07-14): a lead with 4 cap failures — suppressed, written off
+  // Measured (production, 2026-07-14): a lead with 4 cap failures — suppressed, written off
   // as burned — was delivered AND read the moment she was sent from a clean number.
   if (reason !== 'saturated') {
     await pool.query(

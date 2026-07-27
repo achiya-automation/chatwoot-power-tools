@@ -35,8 +35,8 @@ test('computeSchedule clamps negative/garbage delays to zero', () => {
   assert.deepEqual(core(sched[1]), { days: 0, hours: 3, totalHours: 3 });
 });
 
-test('computeSchedule snaps to sendHour on the same calendar day (bb_new shape)', () => {
-  // mirrors bb_new: immediate → 6h follow-up → daily steps snapped to an exact hour
+test('computeSchedule snaps to sendHour on the same calendar day (promo_new shape)', () => {
+  // mirrors promo_new: immediate → 6h follow-up → daily steps snapped to an exact hour
   const steps = [
     { delayDays: 0 },                // day0 h0  (immediate)
     { delayDays: 0, delayHours: 6 }, // +6h → day0 h6  (video follow-up)

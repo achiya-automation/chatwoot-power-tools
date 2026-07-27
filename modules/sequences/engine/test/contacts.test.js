@@ -29,14 +29,14 @@ beforeEach(async () => {
 // ─────────────────────────── contact search ────────────────────────────────
 test('contacts: matches by name / phone / email and returns the current sequence attr', async () => {
   await pool.query(`INSERT INTO public.contacts(id, account_id, name, phone_number, email, custom_attributes) VALUES
-    (1, 7, 'דנה כהן', '+972500000001', 'dana@x.com', '{"sequence":"bb_new"}'),
+    (1, 7, 'דנה כהן', '+972500000001', 'dana@x.com', '{"sequence":"promo_new"}'),
     (2, 7, 'רון לוי', '+972500000002', 'ron@x.com',  '{}'),
     (3, 9, 'זר',      '+972500000003', NULL,         '{}')`);
 
   const byName = await handleAction(7, 'contacts', { query: 'דנה' });
   assert.equal(byName.data.length, 1);
   assert.equal(byName.data[0].contact_id, 1);
-  assert.equal(byName.data[0].sequence, 'bb_new', 'surfaces that the lead is already in a sequence');
+  assert.equal(byName.data[0].sequence, 'promo_new', 'surfaces that the lead is already in a sequence');
 
   const byPhone = await handleAction(7, 'contacts', { query: '0000002' });
   assert.equal(byPhone.data[0].contact_id, 2);
