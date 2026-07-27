@@ -262,15 +262,29 @@
     return best || document.querySelector('div.overflow-auto.bg-n-surface-1') || document.body;
   }
 
-  var holder = null, frame = null, closeBtn = null, shown = false, loaded = false, loadedSolo = null;
+  var holder = null, frame = null, spinner = null, closeBtn = null, shown = false, loaded = false, loadedSolo = null;
   function buildOverlay() {
     holder = document.createElement('div');
     holder.id = 'cwpt-report-overlay';
-    holder.style.cssText = 'position:fixed;z-index:40;display:none;background:rgb(var(--background,255 255 255));';
+    // bg-n-background = the class the embedded webapp itself uses — theme-correct in dark
+    // mode too. (The previous inline rgb(var(--background,255 255 255)) referenced a CSS
+    // variable that doesn't exist in Chatwoot's compiled CSS → hard-coded WHITE flash in
+    // dark mode while the iframe loaded.)
+    holder.className = 'bg-n-background';
+    holder.style.cssText = 'position:fixed;z-index:40;display:none;';
     frame = document.createElement('iframe');
     frame.title = t('overview');
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
     holder.appendChild(frame);
+    // native loading state while the iframe boots (same brand spinner Chatwoot's own
+    // Dashboard-App Frame.vue shows)
+    spinner = document.createElement('div');
+    spinner.className = 'flex items-center justify-center text-n-brand';
+    spinner.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+    spinner.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+    holder.appendChild(spinner);
+    frame.addEventListener('load', function () { spinner.style.display = 'none'; });
     // close control (×) — returns to the native campaigns list. z above the iframe.
     var close = document.createElement('button');
     close.type = 'button';
@@ -299,6 +313,25 @@
       '&tab=campaigns' + (cid ? '&campaign=' + encodeURIComponent(cid) + '&solo=1' : '') +
       '&theme=' + (isDark() ? 'dark' : 'light') + '&locale=' + locale();
   }
+  // ── URL sync — parity with the sequences panel (?drip=): the open report is reflected as
+  // ?crep=all|<id> on the native campaigns route, so refresh restores it, a link can be
+  // shared, and the browser Back button closes the drill-down like any native navigation. ──
+  function crepFromUrl() {
+    try {
+      var v = new URL(location.href).searchParams.get('crep');
+      if (!v) return null;
+      return v === 'all' ? 'all' : (/^\d+$/.test(v) ? v : null);
+    } catch (e) { return null; }
+  }
+  function urlWithCrep(v) {
+    var u = new URL(location.href); u.searchParams.set('crep', v);
+    return u.pathname + u.search + u.hash;
+  }
+  function urlWithoutCrep() {
+    var u = new URL(location.href); u.searchParams.delete('crep');
+    return u.pathname + u.search + u.hash;
+  }
+
   function showReport(cid) {
     if (!holder) buildOverlay();
     hideSiblingPanels(); // never stack on top of the sequences-nav panel
@@ -306,6 +339,7 @@
     // (Re)load only when switching between the two modes (solo detail vs. overview list); within a
     // mode we just postMessage, so switching campaigns doesn't flash the iframe.
     if (!loaded || loadedSolo !== wantSolo) {
+      if (spinner) spinner.style.display = '';
       frame.setAttribute('src', reportSrc(cid));
       loaded = true; loadedSolo = wantSolo;
     } else if (cid) {
@@ -316,16 +350,45 @@
     shown = true;
     holder.style.display = 'block';
     positionOverlay();
+    var want = cid ? String(cid) : 'all';
+    if (crepFromUrl() !== want) {
+      try { history.pushState(history.state, '', urlWithCrep(want)); } catch (e) {}
+    }
     try { closeBtn.focus(); } catch (e) {} // keyboard users land on the close control
   }
   function hideReport() {
     if (!shown) return;
     shown = false;
     if (holder) holder.style.display = 'none';
+    if (crepFromUrl()) {
+      try { history.replaceState(history.state, '', urlWithoutCrep()); } catch (e) {}
+    }
   }
   window.__cwptReportHide = hideReport; // let sequences-nav close this overlay before opening its panel
   // close the sequences-nav sidebar panel (if open) so the two full-content overlays never stack
   function hideSiblingPanels() { if (window.__cwptSeqHide) { try { window.__cwptSeqHide(); } catch (e) {} } }
+
+  // ── sidebar-resize passthrough (same fix as sequences-nav.js): dragging the sidebar
+  // handle freezes over an iframe — disable its pointer-events for the drag's duration and
+  // keep the overlay glued to the moving content area. ──
+  var resizeDrag = false, dragRaf = 0;
+  function endResizeDrag() {
+    if (!resizeDrag) return;
+    resizeDrag = false;
+    if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
+    if (frame) frame.style.pointerEvents = '';
+    positionOverlay();
+  }
+  document.addEventListener('mousedown', function (e) {
+    if (!e.target.closest) return;
+    if (e.target.closest('.cursor-col-resize')) { resizeDrag = true; if (frame) frame.style.pointerEvents = 'none'; }
+  }, true);
+  document.addEventListener('mousemove', function () {
+    if (!resizeDrag || !shown || dragRaf) return;
+    dragRaf = requestAnimationFrame(function () { dragRaf = 0; positionOverlay(); });
+  }, true);
+  document.addEventListener('mouseup', endResizeDrag, true);
+  window.addEventListener('blur', endResizeDrag);
 
   // open report on click (event delegation — immune to Vue re-renders)
   document.addEventListener('click', function (e) {
@@ -351,6 +414,12 @@
     if (e.key === 'Escape' && shown) hideReport();
   });
   window.addEventListener('resize', positionOverlay);
+  // back/forward: ?crep= is the source of truth (parity with the sequences panel)
+  window.addEventListener('popstate', function () {
+    var v = onPage() ? crepFromUrl() : null;
+    if (v) showReport(v === 'all' ? null : v);
+    else hideReport();
+  });
 
   // live theme/locale sync to the iframe (parity with sequences-nav)
   new MutationObserver(function () {
@@ -374,13 +443,19 @@
   // Selector-drift telemetry: stats exist but ZERO cards match for many consecutive ticks →
   // Chatwoot's DOM likely changed under us; without this warn the feature vanishes in total
   // silence after an upgrade and nobody knows why.
-  var cardMissTicks = 0, warnedCards = false;
+  var cardMissTicks = 0, warnedCards = false, crepRestored = false;
   function tick() {
     if (onPage()) {
       if (statsAcc !== accountId()) fetchStats();
       renderCards();
       renderHeader();
       renderKpiBar();
+      // restore the report from ?crep= after a refresh (once — afterwards popstate owns it)
+      if (!crepRestored) {
+        crepRestored = true;
+        var v = crepFromUrl();
+        if (v && !shown) showReport(v === 'all' ? null : v);
+      }
       if (statsList.length && !document.querySelector(CARD_SEL)) {
         cardMissTicks += 1;
         if (cardMissTicks > 20 && !warnedCards) {

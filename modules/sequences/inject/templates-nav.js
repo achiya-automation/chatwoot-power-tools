@@ -22,14 +22,17 @@
   };
   function tplLabel() { return (I18N[dripLocale()] || I18N.en).label; }
 
-  // exact classes lifted from sequences-nav.js's own sub-item structure (LI/A/LBL) — this item
-  // is top-level (sibling of #drip-nav-item), not a sequences sub-tab, but reuses the same
-  // small/single-line styling rather than cloning the heavier expandable-group markup.
-  var LI_CLASS = 'py-0.5 ltr:pl-2 rtl:pr-2 rtl:mr-3 ltr:ml-3 relative text-n-slate-11 child-item before:bg-n-slate-4 after:bg-transparent after:border-n-slate-4 before:left-0 rtl:before:right-0 min-w-0';
-  var A_CLASS  = 'flex h-8 items-center gap-2 px-2 py-1 rounded-lg hover:bg-gradient-to-r from-transparent via-n-slate-3/70 to-n-slate-3/70 group min-w-0';
-  var LBL_CLASS = 'flex-1 truncate min-w-0 text-sm';
-  // lucide "layout-template" — header bar + two columns, same viewBox/stroke style as
-  // sequences-nav.js's LAYERS icon.
+  // This item is TOP-LEVEL (sibling of the #drip-nav-item group), so it must look like a
+  // native childless sidebar group — NOT like a sub-item (the old child-item/tree-line
+  // classes drew an orphan tree connector and their unprefixed hover class doesn't even
+  // exist in Chatwoot 4.16 compiled CSS → no hover at all). Class strings below are copied
+  // from SidebarGroup.vue / SidebarGroupHeader.vue (4.16.1):
+  var LI_CLASS = 'grid gap-1 text-sm cursor-pointer select-none min-w-0';
+  var A_CLASS = 'flex items-center gap-2 px-1.5 py-1 rounded-lg h-8 min-w-0';
+  var A_IDLE = ['text-n-slate-11', 'hover:bg-n-alpha-2'];
+  var A_ACTIVE = ['text-n-slate-12', 'bg-n-alpha-2', 'font-medium'];
+  // lucide "layout-template" — NOT bundled in Chatwoot's compiled icon CSS (verified), so an
+  // inline SVG with the exact native size (size-4 = 16px) stands in for the mask icon.
   var ICON =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1rem;height:1rem;display:inline-block;">' +
     '<rect width="18" height="7" x="3" y="3" rx="1"/>' +
@@ -113,36 +116,69 @@
     if (li && li.parentElement) li.parentElement.removeChild(li);
   }
 
-  // idempotent — builds a fresh <li> once, right after #drip-nav-item. Live updates (label on
-  // dir flip, active class on ?drip=) are separate functions below, not re-runs of this one.
+  // The sidebar mode (expanded rail vs icon-only collapsed rail) is already detected by
+  // sequences-nav.js and stamped on #drip-nav-item — follow it, so all injected items flip
+  // together. In collapsed mode a childless item is just an icon-only size-10 button
+  // (SidebarGroup.vue collapsed template), no label, tooltip = title.
+  function sidebarMode() {
+    var seq = document.getElementById('drip-nav-item');
+    return seq ? (seq.getAttribute('data-drip-mode') || 'expanded') : null;
+  }
+
+  // idempotent — builds a fresh <li> right after #drip-nav-item, rebuilt when the sidebar
+  // mode flips. Live updates (label on dir flip, active class on ?drip=) are separate
+  // functions below, not re-runs of this one.
   function inject() {
-    if (document.getElementById('tpl-nav-item')) return;
+    var mode = sidebarMode();
+    if (!mode) return;
+    var existing = document.getElementById('tpl-nav-item');
+    if (existing && existing.getAttribute('data-tpl-mode') === mode) return;
+    if (existing) existing.remove();
     var seq = document.getElementById('drip-nav-item');
     if (!seq || !seq.parentElement) return;
 
     var li = document.createElement('li');
     li.id = 'tpl-nav-item';
-    li.className = LI_CLASS;
-
-    var a = document.createElement('a');
-    a.className = A_CLASS;
-    a.style.cursor = 'pointer';
-
-    var icon = document.createElement('span');
-    icon.className = 'size-4';
-    icon.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;';
-    icon.innerHTML = ICON;
-    a.appendChild(icon);
-
-    var lbl = document.createElement('div');
-    lbl.className = LBL_CLASS;
-    a.appendChild(lbl);
-    li.appendChild(a);
-
-    li.__tplLocale = dripLocale();
+    li.setAttribute('data-tpl-mode', mode);
     var text = tplLabel();
-    lbl.textContent = text;
-    a.setAttribute('title', text);
+    li.__tplLocale = dripLocale();
+
+    if (mode === 'collapsed') {
+      li.className = 'grid gap-1 text-sm cursor-pointer select-none min-w-0';
+      var btn = document.createElement('a');
+      btn.className = 'flex items-center justify-center size-10 rounded-lg text-n-slate-11 hover:bg-n-alpha-2';
+      btn.style.cursor = 'pointer';
+      btn.setAttribute('title', text);
+      var cicon = document.createElement('span');
+      cicon.className = 'size-4';
+      cicon.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;';
+      cicon.innerHTML = ICON;
+      btn.appendChild(cicon);
+      li.appendChild(btn);
+    } else {
+      li.className = LI_CLASS;
+      // native SidebarGroupHeader structure: icon span (size-4) + label wrapper (flex-grow) +
+      // span.truncate carrying the weight class (text-body-main idle / font-medium text-sm active)
+      var a = document.createElement('a');
+      a.className = A_CLASS + ' ' + A_IDLE.join(' ');
+      a.style.cursor = 'pointer';
+
+      var icon = document.createElement('span');
+      icon.className = 'size-4';
+      icon.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;';
+      icon.innerHTML = ICON;
+      a.appendChild(icon);
+
+      var wrap = document.createElement('div');
+      wrap.className = 'flex items-center gap-1.5 flex-grow justify-between min-w-0 flex-1';
+      var lbl = document.createElement('span');
+      lbl.className = 'truncate text-body-main';
+      lbl.textContent = text;
+      wrap.appendChild(lbl);
+      a.appendChild(wrap);
+      a.setAttribute('title', text);
+      li.appendChild(a);
+    }
 
     seq.parentElement.insertBefore(li, seq.nextSibling);
     markActive();
@@ -158,7 +194,7 @@
     if (li.__tplLocale === loc) return;
     li.__tplLocale = loc;
     var text = tplLabel();
-    var lbl = li.querySelector('a > div');
+    var lbl = li.querySelector('span.truncate');
     if (lbl) lbl.textContent = text;
     var a = li.querySelector('a');
     if (a) a.setAttribute('title', text);
@@ -171,8 +207,28 @@
     if (!a) return;
     var t;
     try { t = new URL(location.href).searchParams.get('drip'); } catch (e) { t = null; }
-    if (t === 'templates') a.classList.add('bg-n-alpha-2', 'text-n-slate-12', 'font-medium');
-    else a.classList.remove('bg-n-alpha-2', 'text-n-slate-12', 'font-medium');
+    var on = t === 'templates';
+    if (li.getAttribute('data-tpl-mode') === 'collapsed') {
+      // icon-only trigger: active = text-n-slate-12 bg-n-alpha-2 (SidebarGroup.vue collapsed)
+      if (on) {
+        a.classList.add('text-n-slate-12', 'bg-n-alpha-2');
+        a.classList.remove('text-n-slate-11', 'hover:bg-n-alpha-2');
+      } else {
+        a.classList.remove('text-n-slate-12', 'bg-n-alpha-2');
+        a.classList.add('text-n-slate-11', 'hover:bg-n-alpha-2');
+      }
+      return;
+    }
+    var span = li.querySelector('span.truncate');
+    if (on) {
+      a.classList.add.apply(a.classList, A_ACTIVE);
+      a.classList.remove('text-n-slate-11');
+      if (span) { span.classList.remove('text-body-main'); span.classList.add('font-medium', 'text-sm'); }
+    } else {
+      a.classList.remove.apply(a.classList, A_ACTIVE);
+      a.classList.add('text-n-slate-11');
+      if (span) { span.classList.add('text-body-main'); span.classList.remove('font-medium', 'text-sm'); }
+    }
   }
 
   // one tick = re-check access (cached per accountId) → inject/remove + refresh label/active state.
@@ -210,9 +266,18 @@
   new MutationObserver(function () { relabel(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['dir'], subtree: true });
 
-  // bootstrap: re-tick as Chatwoot's own Vue app re-renders the sidebar (mirrors sequences-nav.js)
-  var navTimer;
-  new MutationObserver(function () { clearTimeout(navTimer); navTimer = setTimeout(tick, 150); })
-    .observe(document.documentElement, { childList: true, subtree: true });
+  // register for the synchronous mode-flip ping from sequences-nav.js (the mode authority) —
+  // when the rail collapses/expands, all injected items must flip in the same task, not each
+  // on its own observer delay.
+  window.__cwptNavPing = window.__cwptNavPing || [];
+  window.__cwptNavPing.push(tick);
+
+  // throttle with a guaranteed run (not a trailing debounce) — a mutation storm during a
+  // sidebar drag must not starve the rebuild (see sequences-nav.js bootstrap note).
+  var navTimer = null;
+  new MutationObserver(function () {
+    if (navTimer) return;
+    navTimer = setTimeout(function () { navTimer = null; tick(); }, 120);
+  }).observe(document.documentElement, { childList: true, subtree: true });
   setTimeout(tick, 500);
 })();
