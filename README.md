@@ -6,7 +6,7 @@
 
 **The power-ups your self-hosted Chatwoot has been missing.**
 
-*Smart contact import · WhatsApp drip sequences · dashboard upgrades — one command, same-origin, no SaaS, no second server.*
+*Smart contact import · drip sequences · visual flow builder · template studio · compliance guardrails · campaign analytics — one command, same-origin, no SaaS, no second server.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/achiya-automation/chatwoot-power-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/achiya-automation/chatwoot-power-tools/actions/workflows/ci.yml)
@@ -16,7 +16,7 @@
 
 **3 modules** · **one `curl \| bash`** · **same-origin (zero CORS)** · **least-privilege DB role** · **no telemetry**
 
-[Quick Start](#quick-start) · [Modules](#modules) · [Why](#-without-chatwoot-power-tools) · [Security](#-security) · [Architecture](docs/ARCHITECTURE.md) · [FAQ](#faq)
+[Quick Start](#quick-start) · [Features](#features) · [Modules](#modules) · [Why](#-without-chatwoot-power-tools) · [Security](#-security) · [Compliance](docs/meta-compliance.md) · [Architecture](docs/ARCHITECTURE.md) · [FAQ](#faq)
 
 </div>
 
@@ -28,13 +28,16 @@ Self-hosted Chatwoot is excellent for support — but the moment you want to *gr
 
 - **Importing contacts** means hand-writing API calls, or clicking them in one at a time
 - **WhatsApp drip / follow-up sequences** aren't built in at all
-- **Bulk campaigns** have no variable preview, and any video over WhatsApp's 16MB limit is a dead end
+- **Branching conversations** — ask, wait for an answer, branch on it — have no builder
+- **WhatsApp templates** must be created in Meta's Business Manager, in another tab
+- **Bulk campaigns** have no variable preview, no delivery funnel afterwards, and any video over WhatsApp's 16MB limit is a dead end
+- **Nothing watches your number's health** — quality drops, templates get paused, and you find out when sending stops working
 
 …and every off-the-shelf "fix" is a separate SaaS, a second server, or a subdomain with its own login and its own copy of your customer data.
 
 ## ✅ With chatwoot-power-tools
 
-**One command** adds all three — *inside the Chatwoot you already run*. Everything is served **same-origin** under a single `/chatwoot-addons/*` route: no separate domain, no CORS, no extra login, and **no customer data ever leaves your server**.
+**One command** adds all of it — *inside the Chatwoot you already run*. Everything is served **same-origin** under a single `/chatwoot-addons/*` route: no separate domain, no CORS, no extra login, and **no customer data ever leaves your server**.
 
 ```bash
 curl -fsSL https://github.com/achiya-automation/chatwoot-power-tools/archive/refs/heads/main.tar.gz | tar xz \
@@ -49,6 +52,9 @@ curl -fsSL https://github.com/achiya-automation/chatwoot-power-tools/archive/ref
 
 - **📥 Smart contact import** — a CSV/Excel wizard that looks native, detects columns bilingually (Hebrew + English), de-dupes before import, and maps onto custom attributes
 - **🔁 WhatsApp drip sequences** — automated template-message sequences, managed from inside Chatwoot, with automatic skipping of quiet hours, Shabbat, and Jewish holidays
+- **🔀 Visual flow builder** — a drag-and-drop conversation builder: trigger, message, template, question, buttons, condition, delay, action, webhook and handoff nodes
+- **🛡️ WhatsApp compliance guardrails** — consent records, opt-out detection in the customer's own words, live quality monitoring, and an automatic halt before Meta disables your number
+- **📊 Campaign analytics** — a delivery funnel, per-recipient outcomes with the reason each failure happened, and a read-rate comparison across campaigns
 - **✨ Dashboard upgrades** — a "Sequences" sidebar item, a supercharged campaign modal (variable chips + live preview), and client-side video compression past the 16MB WhatsApp limit
 - **🧩 Modular** — install all three, or exactly the ones you want (`--modules=`)
 - **🔒 Least-privilege by design** — a DB role that can `SELECT` a few tables and write **one column**, nothing more (see [Security](#-security))
@@ -101,6 +107,55 @@ Create, submit, and manage WhatsApp message templates without leaving Chatwoot �
 <tr><td><img src="docs/screenshots/templates-en.png" alt="Template Studio — English"></td><td><img src="docs/screenshots/templates-he.png" alt="Template Studio — Hebrew"></td></tr>
 </table>
 
+The builder itself, with the live WhatsApp-style preview updating as you type:
+
+<table>
+<tr><td width="50%" align="center"><b>🇬🇧 English</b></td><td width="50%" align="center"><b>🇮🇱 עברית</b></td></tr>
+<tr><td><img src="docs/screenshots/templates-builder-en.png" alt="Template builder — English"></td><td><img src="docs/screenshots/templates-builder-he.png" alt="Template builder — Hebrew"></td></tr>
+</table>
+
+### 🔀 Visual Flow Builder
+A drag-and-drop builder for conversations that branch. Ten node types — **trigger, message, WhatsApp template, question, buttons, condition, delay, action, webhook, handoff** — wired on a canvas, with conditions carrying `yes`/`no` branches and questions validating the answer (text, number, email, phone) before saving it to a variable.
+
+A flow starts on a keyword, on every new conversation, or when an agent launches it manually. Answers are stored per run and are addressable later in the flow, so a question early on can drive a condition further down. Quiet hours and Shabbat/holiday pauses apply here exactly as they do to sequences, and any run can be inspected or stopped from the runs panel.
+
+<table>
+<tr><td width="50%" align="center"><b>🇬🇧 English</b></td><td width="50%" align="center"><b>🇮🇱 עברית</b></td></tr>
+<tr><td><img src="docs/screenshots/flow-builder-en.png" alt="Flow builder — English"></td><td><img src="docs/screenshots/flow-builder-he.png" alt="Flow builder — Hebrew"></td></tr>
+</table>
+
+### 🛡️ Compliance
+The screen that keeps your WhatsApp number alive. It shows the number's live quality rating and messaging tier straight from Meta, every template's approval status and quality, and any open alert.
+
+Consent is recorded per contact (or in bulk from a Chatwoot label) and **required before marketing** by default, with a coverage bar measured against the contacts actually enrolled in a sequence. Opt-out requests are detected in the customer's own words — Hebrew and English, matched at whole-word level so "הסרטון" is not read as "הסר" — and a match suppresses the contact permanently. Meta's adaptive per-user cap is treated differently: those contacts are deferred, not removed, because that cap relaxes over time.
+
+When quality goes red, or when actual delivery drops below a floor you set, sending halts automatically and waits for you. Every guard is tunable from this screen.
+
+<table>
+<tr><td width="50%" align="center"><b>🇬🇧 English</b></td><td width="50%" align="center"><b>🇮🇱 עברית</b></td></tr>
+<tr><td><img src="docs/screenshots/compliance-en.png" alt="Compliance — English"></td><td><img src="docs/screenshots/compliance-he.png" alt="Compliance — Hebrew"></td></tr>
+</table>
+
+Full detail on the rules this implements and where each one lives in the code: [docs/meta-compliance.md](docs/meta-compliance.md).
+
+### 📊 Campaign Analytics
+Chatwoot tells you a campaign was sent. This tells you what happened to it.
+
+Every WhatsApp campaign gets a delivery funnel — audience → attempted → sent → delivered → read — plus a daily trend and a read-rate comparison across campaigns. Open one and you get a row per recipient with its real outcome and, for failures, **the reason Meta gave**, alongside a link straight into that conversation in Chatwoot. Contacts that were in the audience but never got a send attempt are listed separately, so a silent drop is visible instead of being rounded away.
+
+<table>
+<tr><td width="50%" align="center"><b>🇬🇧 English</b></td><td width="50%" align="center"><b>🇮🇱 עברית</b></td></tr>
+<tr><td><img src="docs/screenshots/campaigns-en.png" alt="Campaign analytics — English"></td><td><img src="docs/screenshots/campaigns-he.png" alt="Campaign analytics — Hebrew"></td></tr>
+</table>
+
+### 👥 Contacts
+Every lead currently in a sequence, in one table: which sequence, which step, what happens next and when. Search by phone or sequence, filter by state (active / stuck / completed / stopped), enroll a lead by hand, or bulk-enroll everyone carrying a Chatwoot label. Each row opens a panel to restart, advance, or remove that lead from its sequence.
+
+<table>
+<tr><td width="50%" align="center"><b>🇬🇧 English</b></td><td width="50%" align="center"><b>🇮🇱 עברית</b></td></tr>
+<tr><td><img src="docs/screenshots/contacts-en.png" alt="Contacts — English"></td><td><img src="docs/screenshots/contacts-he.png" alt="Contacts — Hebrew"></td></tr>
+</table>
+
 ---
 
 ## Quick Start
@@ -127,8 +182,11 @@ sudo bash install.sh             # install for real
 | Module | `--modules=` flag | What it adds |
 |---|---|---|
 | Smart Contact Import | `import` | CSV/Excel import wizard in the dashboard |
-| WhatsApp Drip Sequences | `sequences` | Sequence engine + management UI + sidebar entry |
+| WhatsApp Sequences | `sequences` | The sidecar engine and its full dashboard: sequences, flow builder, template studio, compliance, campaign analytics, contacts — plus the sidebar entry |
 | Dashboard Enhancements | `dashboard` | Campaign modal upgrade + video compressor |
+
+The `sequences` module is one install unit, not six — the screens above all live in the
+same sidecar app and share its engine and database schema.
 
 Install all three (default), or just the ones you want:
 
@@ -169,6 +227,7 @@ Built to be safe to run on a production support desk:
 - **No telemetry, no third parties.** The engine talks only to your own Chatwoot API (which relays WhatsApp to Meta exactly as it already does for any WhatsApp channel) and the public [Hebcal](https://www.hebcal.com/) holiday API. Nothing else — no analytics, no phone-home.
 - **Non-destructive.** `--uninstall` removes everything it added and **preserves any existing `DASHBOARD_SCRIPTS`** content (it edits only its own marked block) and your data. The DB role/schema is left for you to drop manually.
 - **Auditable & previewable.** A plain, readable Bash installer — no opaque binaries piped to root. Every run is `--dry-run`-previewable, and the full test suite (`node --test` across all modules + a `bats` suite for `install.sh`/`lib/`) runs in CI on every push.
+- **Safe to point at a live WhatsApp number.** Consent is required before marketing by default, opt-outs are honoured automatically, and sending halts on its own when Meta's quality rating — or actual delivery — drops. See [docs/meta-compliance.md](docs/meta-compliance.md) for the rules and where each is enforced.
 
 ---
 
