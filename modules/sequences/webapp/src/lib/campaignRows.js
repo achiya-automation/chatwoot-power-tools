@@ -12,12 +12,14 @@
  */
 
 // messages.status: 0=נשלח 1=נמסר 2=נקרא 3=נכשל (ראו engine/src/campaigns.js).
+// 4 = דילוג מה-ledger: הפאטצ' של Chatwoot עצר לפני שליחה והסיבה ב-error_title.
 // כל ערך אחר (null/NaN — שורה שטרם קיבלה סטטוס) נופל ל-pending, כמו בטבלה.
 export function statusKeyOf(status) {
   return status === 2 ? 'read'
     : status === 1 ? 'delivered'
       : status === 3 ? 'failed'
-        : status === 0 ? 'sent' : 'pending';
+        : status === 0 ? 'sent'
+          : status === 4 ? 'notsent' : 'pending';
 }
 
 /** סדר הצגת הצ'יפים — מהמצב הטוב ביותר לגרוע, ולבסוף מי שלא נוסה כלל. */
@@ -29,10 +31,12 @@ export function buildRows({ recipients = [], not_sent = [] } = {}) {
     contact_name: r.contact_name || '',
     phone: r.phone || '',
     statusKey: statusKeyOf(r.status),
-    // המחרוזת הגולמית של Meta; התרגום נעשה בשכבת התצוגה (deliveryError.js).
-    error_title: r.status === 3 ? (r.error_title || '') : '',
-    attempts: r.attempt_count || 1,
-    sent_at: r.sent_at || '',
+    // המחרוזת הגולמית של Meta, או מפתח סיבה מקומי מה-ledger כשהשליחה נעצרה אצלנו
+    // (status 4). התרגום של שניהם נעשה בשכבת התצוגה (deliveryError.js).
+    error_title: (r.status === 3 || r.status === 4) ? (r.error_title || '') : '',
+    // דילוג אינו ניסיון שליחה — 0, לא 1.
+    attempts: r.status === 4 ? 0 : (r.attempt_count || 1),
+    sent_at: r.status === 4 ? '' : (r.sent_at || ''),
     replied: !!r.replied,
     reply_content: r.reply_content || '',
     replied_at: r.replied_at || '',
@@ -42,7 +46,7 @@ export function buildRows({ recipients = [], not_sent = [] } = {}) {
     contact_name: c.contact_name || '',
     phone: c.phone || '',
     statusKey: 'notsent',
-    error_title: '',
+    error_title: c.reason || '',
     attempts: 0,
     sent_at: '',
     replied: false,

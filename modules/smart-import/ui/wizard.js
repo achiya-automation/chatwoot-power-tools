@@ -20,7 +20,7 @@ const I18N = {
   he: {
     // system-field labels (mapping dropdown)
     ignore: '— התעלם —', fName: 'שם מלא', fFirstName: 'שם פרטי', fLastName: 'שם משפחה',
-    fPhone: 'טלפון', fEmail: 'אימייל', fIdentifier: 'מזהה', fCompany: 'חברה',
+    fPhone: 'טלפון', fPhoneAlt: 'טלפון נוסף (גיבוי)', fEmail: 'אימייל', fIdentifier: 'מזהה', fCompany: 'חברה',
     fCity: 'עיר', fCountry: 'מדינה',
     // step 1 — upload
     uploadTitle: 'ייבוא אנשי קשר', uploadDesc: 'גררו קובץ CSV או Excel, או לחצו לבחירה. ',
@@ -47,6 +47,11 @@ const I18N = {
     previewTitle: 'בדיקה לפני ייבוא', checkingDupes: 'בודק כפילויות…',
     readyToImport: 'מוכן לייבוא:', newWord: 'חדשים', existingWillUpdate: 'קיימים (יעודכנו)',
     importVerb: 'ייבא', contactsWord: 'אנשי קשר',
+    // אזהרת טלפונים חסרים — אלה נכנסים בהצלחה אבל אף קמפיין וואטסאפ לא יגיע אליהם
+    noPhoneTitle: (n) => `${n} אנשי קשר ללא מספר טלפון תקין — לא יקבלו הודעות וואטסאפ`,
+    noPhoneEmpty: (n) => `${n} ללא מספר בקובץ`,
+    noPhoneInvalid: (n, sample) => `${n} עם מספר שאי אפשר לקרוא (למשל "${sample}")`,
+    noPhoneHint: 'הם ייווצרו ויתויגו כרגיל. אם קיימת בקובץ עמודת טלפון נוספת, אפשר לחזור למיפוי ולשייך אותה כ"טלפון נוסף (גיבוי)".',
     // step 5 — run / done
     importing: 'מייבא…', importDone: 'הייבוא הושלם',
     createdWord: 'נוצרו', updatedWord: 'עודכנו', skippedWord: 'דולגו', failedWord: 'נכשלו',
@@ -70,7 +75,7 @@ const I18N = {
   },
   en: {
     ignore: '— Ignore —', fName: 'Full name', fFirstName: 'First name', fLastName: 'Last name',
-    fPhone: 'Phone', fEmail: 'Email', fIdentifier: 'Identifier', fCompany: 'Company',
+    fPhone: 'Phone', fPhoneAlt: 'Additional phone (fallback)', fEmail: 'Email', fIdentifier: 'Identifier', fCompany: 'Company',
     fCity: 'City', fCountry: 'Country',
     uploadTitle: 'Import contacts', uploadDesc: 'Drag a CSV or Excel file here, or click to choose. ',
     sampleLink: 'Download a sample file', sampleFileName: 'sample-contacts.csv',
@@ -92,6 +97,10 @@ const I18N = {
     previewTitle: 'Review before import', checkingDupes: 'Checking for duplicates…',
     readyToImport: 'Ready to import:', newWord: 'new', existingWillUpdate: 'existing (will be updated)',
     importVerb: 'Import', contactsWord: 'contacts',
+    noPhoneTitle: (n) => `${n} contacts have no usable phone number — they will not receive WhatsApp messages`,
+    noPhoneEmpty: (n) => `${n} with no number in the file`,
+    noPhoneInvalid: (n, sample) => `${n} with an unusable number (e.g. "${sample}")`,
+    noPhoneHint: 'They will still be created and labelled. If the file has a second phone column, go back to the mapping step and assign it as "Additional phone (fallback)".',
     importing: 'Importing…', importDone: 'Import complete',
     createdWord: 'Created', updatedWord: 'Updated', skippedWord: 'Skipped', failedWord: 'Failed',
     downloadReport: 'Download CSV report', close: 'Close',
@@ -113,7 +122,7 @@ function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
 
 const FIELD_LABELS = {
   '': t('ignore'), name: t('fName'), first_name: t('fFirstName'), last_name: t('fLastName'),
-  phone_number: t('fPhone'), email: t('fEmail'), identifier: t('fIdentifier'),
+  phone_number: t('fPhone'), phone_number_alt: t('fPhoneAlt'), email: t('fEmail'), identifier: t('fIdentifier'),
   company_name: t('fCompany'), city: t('fCity'), country: t('fCountry'),
 };
 
@@ -785,10 +794,46 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
         (dupes ? ` · ${dupes} ${t('dupInFile')}` : '')
       : t('dedupFailed');
 
+    modal.append(phoneWarning(contacts));
     modal.append(
       previewTable(contacts.slice(0, 10)),
       footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t('importVerb')} ${N} ${t('contactsWord')}` }),
     );
+  }
+
+  // A contact with no usable phone imports and labels without a murmur, and is then
+  // skipped in silence by every WhatsApp campaign it lands in — the whole loss is
+  // invisible until a campaign report shows a gap weeks later. Say it here, while the
+  // mapping step is still one click away. A warning, not a blocker: contacts without a
+  // phone are legitimate for email-only or CRM-only use.
+  function phoneWarning(contacts) {
+    const noPhone = contacts.filter((c) => !c.phone_number);
+    if (!noPhone.length) return document.createDocumentFragment();
+
+    const unusable = noPhone.filter((c) => c.__phoneRaw);
+    // Chatwoot's JIT build only ships the utilities Chatwoot itself uses: bg-n-amber-2,
+    // text-n-amber-11 and border-n-amber-6 are compiled, ring-n-amber-* is not.
+    const box = el('div', 'mt-3 rounded-lg border border-n-amber-6 bg-n-amber-2 px-3 py-2');
+    const title = el('div', 'text-sm font-medium text-n-amber-11');
+    title.textContent = t('noPhoneTitle')(noPhone.length);
+    box.appendChild(title);
+
+    const parts = [];
+    if (noPhone.length - unusable.length > 0) parts.push(t('noPhoneEmpty')(noPhone.length - unusable.length));
+    if (unusable.length) parts.push(t('noPhoneInvalid')(unusable.length, unusable[0].__phoneRaw));
+    if (parts.length) {
+      const detail = el('div', 'mt-0.5 text-xs text-n-amber-11');
+      detail.textContent = parts.join(' · ');
+      box.appendChild(detail);
+    }
+
+    // The fallback tip only helps when no fallback column is mapped yet.
+    if (!state.mapping.some((m) => m.field === 'phone_number_alt')) {
+      const hint = el('div', 'mt-1 text-xs text-n-slate-11');
+      hint.textContent = t('noPhoneHint');
+      box.appendChild(hint);
+    }
+    return box;
   }
 
   async function ensureCustomAttributes() {
