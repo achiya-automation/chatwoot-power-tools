@@ -8,6 +8,7 @@ import { notifyNewLeads } from './notify.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 import { pollTemplateStatuses } from './templates.js';
+import { reconcileJourneys } from './journeys.js';
 import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
 import * as compliance from './compliance.js';
 
@@ -77,10 +78,14 @@ async function tick() {
   // that has one and lacks a token onboards itself on the next tick: drip.ensure_account_bot
   // (SECURITY DEFINER — the engine holds no write grant on access_tokens) creates its
   // AgentBot, mints the token, and registers it. Idempotent; the token never comes back here.
+  // גם חשבון שיש לו רק פלואו (journey) בלי רצף צריך בוט וטוקן — אותה הצטרפות עצמית.
   const unregistered = await query(
-    `SELECT DISTINCT s.account_id
-       FROM drip.sequences s
-      WHERE NOT EXISTS (SELECT 1 FROM drip.account_tokens t WHERE t.account_id = s.account_id)`
+    `SELECT account_id FROM (
+       SELECT DISTINCT s.account_id FROM drip.sequences s
+       UNION
+       SELECT DISTINCT j.account_id FROM drip.journeys j
+     ) x
+      WHERE NOT EXISTS (SELECT 1 FROM drip.account_tokens t WHERE t.account_id = x.account_id)`
   );
   for (const u of unregistered) {
     try {
@@ -201,6 +206,18 @@ async function tick() {
           );
         } catch { /* alert is best-effort */ }
       }
+    }
+
+    // ── בונה פלואו: השהיות שהבשילו, פולואפים, וסריקת-גיבוי ─────────────────────
+    // מחוץ ל-try של הרצפים בכוונה: חשבון שנופל על "אין ערוץ וואטסאפ" (רצפים) עדיין
+    // מריץ את הפלואו שלו — אלה שני פיצ'רים נפרדים שחולקים רק את הבוט.
+    try {
+      await reconcileJourneys(
+        { query, reads, makeClientFor: async () => client, config, windows },
+        a.account_id
+      );
+    } catch (e) {
+      console.error(`[drip] journeys acct ${a.account_id} (non-fatal):`, e.message);
     }
   }
 

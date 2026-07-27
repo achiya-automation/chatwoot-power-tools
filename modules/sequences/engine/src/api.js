@@ -1,12 +1,17 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { handleAction, initStore } from './store.js';
 import { authGate } from './auth.js';
 import { query, getPool } from './db.js';
+import { getCampaignDetail } from './campaigns.js';
+import { buildRows, filterRows, parseFilter, toCsv, csvFileName } from './campaignCsv.js';
 import { validateWhatsAppMedia, extForMime } from './media.js';
 import { uploadExampleMedia, hasTemplateAccess } from './templates.js';
+import { handleJourneyHook, makeJourneysCtx, perAccountHookToken } from './journeys.js';
+import { makeClient } from './chatwoot.js';
+import { makeDbReads } from './reads.js';
 
 /**
  * createApp(config) — express app factory.
@@ -140,6 +145,30 @@ export function createApp(config) {
     );
   }
 
+  // ── journey hook (PUBLIC — Chatwoot דוחף אירועי זמן-אמת; הנתיב נושא סוד לכל חשבון) ──
+  // עונים 200 מיד ומעבדים אחר-כך: WebhookJob של Chatwoot לא צריך להמתין לביצוע הגרף,
+  // וכישלון עיבוד אצלנו לא מייצר retries שמכפילים הודעות. סוד-אב ריק = הדלת לא קיימת.
+  //
+  // 🔒 בידוד דיירים: הסוד בנתיב הוא HMAC(master, account_id) ספציפי לחשבון, לא סוד גלובלי.
+  // אנחנו מאמתים שהוא תואם ל-account.id שבגוף הבקשה, בהשוואת זמן-קבוע. כך אדמין של דייר A
+  // שרואה את ה-webhook שלו (Settings→Integrations) יודע רק את הסוד של A, ולא יכול לזייף
+  // אירוע עבור דייר B — הוא לא יכול לחשב HMAC(master, B) בלי סוד-האב.
+  if (config.journeyHookSecret) {
+    const journeysCtx = makeJourneysCtx({ query, makeClient, makeDbReads, config });
+    app.post('/drip-api/journey-hook/:secret', (req, res) => {
+      const accountId = Number(req.body?.account?.id);
+      const got = String(req.params.secret || '');
+      const expected = accountId ? perAccountHookToken(config.journeyHookSecret, accountId) : '';
+      const ok = expected.length > 0 && got.length === expected.length
+        && timingSafeEqual(Buffer.from(got), Buffer.from(expected));
+      if (!ok) return res.status(404).end();
+      res.json({ ok: true });
+      handleJourneyHook(journeysCtx, req.body || {}).catch((e) =>
+        console.error('[journeys] hook error:', e.message)
+      );
+    });
+  }
+
   // ── auth gate ──────────────────────────────────────────────────────────────
   // The panel + API are reachable on the open web (Caddy /drip/ → engine). Everything
   // below this line requires a valid Chatwoot session cookie (verified against
@@ -235,6 +264,42 @@ export function createApp(config) {
     }
   );
 
+  // ── campaign CSV download (AUTHED — registered after the gate) ─────────────
+  // ניווט רגיל של הדפדפן אל קובץ עם Content-Disposition: attachment. קיים כי הורדת
+  // blob בצד הלקוח נכשלת בשקט ב-Safari בתוך ה-iframe של ה-overlay ב-Chatwoot —
+  // בעוד שהורדת-שרת עובדת מכל הקשר. authGate כבר אימת session + הרשאה ל-account_id.
+  // סינון: ?statuses=read,failed,notsent&reply=yes|no (ריק = הכל) — ראו campaignCsv.js.
+  app.get('/drip-api/campaign-csv', async (req, res) => {
+    const locale = req.query.locale === 'en' ? 'en' : 'he';
+    try {
+      const accountId = parseInt(req.query.account_id || '0', 10);
+      const campaignId = parseInt(req.query.campaign_id || '0', 10);
+      if (!accountId || !campaignId) {
+        return res.status(400).json({ ok: false, error: 'account_id and campaign_id required' });
+      }
+      const detail = await getCampaignDetail(query, accountId, campaignId);
+      if (!detail) return res.status(404).json({ ok: false, error: 'campaign not found' });
+
+      const filter = parseFilter(req.query);
+      const filtered = filter.statuses.size > 0 || filter.reply !== 'all';
+      // origin לקישורי השיחות בקובץ — מה-publicBase (https://host/drip → https://host)
+      let origin = '';
+      try { origin = new URL(config.publicBase).origin; } catch { /* בלי קישורים */ }
+      const csv = toCsv(filterRows(buildRows(detail), filter), { locale, origin, accountId });
+
+      const name = csvFileName(detail.campaign, { locale, filtered });
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      // filename* (RFC 5987) — שם עברי; filename פשוט כ-fallback לדפדפנים עתיקים
+      res.set('Content-Disposition',
+        `attachment; filename="campaign-${campaignId}.csv"; filename*=UTF-8''${encodeURIComponent(name)}`);
+      res.set('Cache-Control', 'no-store');
+      return res.send(csv);
+    } catch (err) {
+      console.error('[drip-api] campaign-csv error:', err.message);
+      return res.status(500).json({ ok: false, error: locale === 'en' ? 'Export failed' : 'הייצוא נכשל' });
+    }
+  });
+
   // ── main API endpoint ─────────────────────────────────────────────────────
   app.post('/drip-api', async (req, res) => {
     const accountId = parseInt(req.query.account_id || '0', 10);
@@ -266,6 +331,18 @@ export function createApp(config) {
       // them (not merely defaulting them) is what keeps both honest.
       payload.__actor = { uid: String(req.dripAccess.userId ?? ''), name: '' };
       payload.__isAdmin = admin;
+    }
+
+    // בונה פלואו: ניהול (שמירה/מחיקה/הפעלה-כיבוי) לאדמינים בלבד; רשימה והפעלה-ידנית
+    // פתוחות לכל חבר בחשבון — נציג מזניק פלואו מתוך שיחה, אבל לא עורך אותו.
+    // זהות הפועל נקבעת בשרת (לעולם לא מהלקוח) כדי ש-jrn_launch יוכל לאכוף ראיית-שיחה.
+    if (/^jrn_/.test(action)) {
+      const JRN_ANY_MEMBER = new Set(['jrn_list', 'jrn_launch']);
+      const admin = isTplAdmin(req.dripAccess, accountId);
+      if (!JRN_ANY_MEMBER.has(action) && !admin) {
+        return res.status(403).json({ ok: false, error: 'administrator role required' });
+      }
+      payload.__actor = { uid: Number(req.dripAccess?.userId) || null, isAdmin: admin };
     }
 
     try {

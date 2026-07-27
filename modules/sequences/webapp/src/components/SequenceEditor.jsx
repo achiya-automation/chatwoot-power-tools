@@ -253,6 +253,14 @@ function mediaHeaderFormat(t) {
   return MEDIA_FORMATS.has(f) ? f : null;
 }
 
+
+// שלבים נפתחים מקופלים כברירת מחדל — אבל רצף של שלב יחיד (רצף חדש) נפתח פרוס,
+// אחרת כל יצירת רצף מתחילה בקליק מיותר.
+function collapsedByDefault(sequence) {
+  const steps = sequence?.steps || [];
+  return new Set(steps.length > 1 ? steps.map((s) => s.id) : []);
+}
+
 export default function SequenceEditor({ open, sequence, templates = [], onSave, onClose, accountId }) {
   const { toast } = useToast();
   const t = useT(M);
@@ -268,14 +276,16 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
   const [saveError, setSaveError] = useState('');
   const [dragIndex, setDragIndex] = useState(null); // אינדקס השלב הנגרר
   const [dragOverIndex, setDragOverIndex] = useState(null); // אינדקס יעד הגרירה (לקו)
-  const [collapsed, setCollapsed] = useState(() => new Set()); // stepIds מקופלים
+  // stepIds מקופלים — שלבים נפתחים סגורים כברירת מחדל (כמו ציר-הזמן בפאנל השיחה:
+  // שורת-תקציר לכל שלב, קליק פותח), כדי שהעורך לא ייפתח "פרוס" על כל המסך.
+  const [collapsed, setCollapsed] = useState(() => collapsedByDefault(sequence));
   const [showPreview, setShowPreview] = useState(false); // תצוגת רצף מלא
 
   // סנכרון העותק כשנפתח רצף אחר
   useEffect(() => {
     setDraft(sequence);
     setSaveError('');
-    setCollapsed(new Set());
+    setCollapsed(collapsedByDefault(sequence));
     setShowPreview(false);
   }, [sequence]);
 

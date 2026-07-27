@@ -191,6 +191,10 @@ function collapseRecipientAttempts(rawRecipients, audienceContacts) {
 // wrong way — hence the explicit two-step form.
 const TZ = 'Asia/Jerusalem';
 const localTs = (col) => `((${col}) AT TIME ZONE 'UTC' AT TIME ZONE '${TZ}')`;
+// For timestamptz columns (the drip ledger) the value already carries a zone, so ONE
+// conversion is the whole job. Running localTs on them re-reads the UTC clock reading as
+// a local wall time and shifts the result three hours back — a send at 18:30 reads 12:30.
+const localTsTz = (col) => `((${col}) AT TIME ZONE '${TZ}')`;
 
 // Per-campaign status counts. The durable send ledger wins; explicitly tagged legacy messages
 // are included only when the same Meta/message id is not already represented in the ledger.
@@ -346,7 +350,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
               CASE WHEN s.status = 3 THEN 3
                    ELSE greatest(s.status, coalesce(m.status, 0)) END AS status,
               coalesce(s.error_title, ${caObj('m.content_attributes')} ->> 'external_error') AS error_title,
-              to_char(${localTs('s.attempted_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
+              to_char(${localTsTz('s.attempted_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
               coalesce(m.conversation_id, s.conversation_id) AS conversation_id,
               cv.display_id AS conversation_display_id
          FROM drip.campaign_send_snapshots s
@@ -397,6 +401,10 @@ export async function getCampaignDetail(query, accountId, campaignId) {
 
   const funnel = recipients.reduce(
     (f, r) => {
+      // status 4 = שורת ledger של דילוג: הנמען היה בקהל אבל שום שליחה לא נוסתה
+      // (אין טלפון / אין תבנית / משתנה ריק). היא נספרת בקהל ומוצגת בטבלה עם הסיבה,
+      // אבל אינה ניסיון — אחרת "נוסו" היה כולל את מי שמעולם לא פנינו אליו.
+      if (r.status === 4) { f.skipped += 1; return f; }
       f.attempted += 1;
       if (r.status === 0 || r.status === 1 || r.status === 2) f.sent += 1;
       if (r.status === 1 || r.status === 2) f.delivered += 1;
@@ -405,21 +413,25 @@ export async function getCampaignDetail(query, accountId, campaignId) {
       if (r.status === 0) f.pending += 1;
       return f;
     },
-    { audience: 0, attempted: 0, sent: 0, delivered: 0, read: 0, failed: 0, pending: 0 }
+    { audience: 0, attempted: 0, sent: 0, delivered: 0, read: 0, failed: 0, pending: 0, skipped: 0 }
   );
 
   // Engagement uses all attempt conversations, including recovered outgoing-echo rows without
   // campaign_id. Restrict incoming messages to after the campaign was created.
   const conversationIds = [...new Set(rawRecipients.map((r) => asPositiveInt(r.conversation_id)).filter(Boolean))];
-  const replied = conversationIds.length ? Number((await query(
-    `SELECT count(DISTINCT m_in.conversation_id)::int AS c
+  // The ids themselves, not just the count: the per-recipient "replied" flag (report filter +
+  // CSV column) must stay exact even when the reply-content list below is capped or fails.
+  const repliedRows = conversationIds.length ? await query(
+    `SELECT DISTINCT m_in.conversation_id AS conversation_id
        FROM public.messages m_in
       WHERE m_in.account_id = $1
         AND m_in.message_type = 0
         AND m_in.conversation_id = ANY($3::bigint[])
         AND m_in.created_at > (SELECT created_at FROM public.campaigns WHERE account_id = $1 AND id = $2)`,
     [accountId, id, conversationIds]
-  ))[0]?.c || 0) : 0;
+  ) : [];
+  const repliedConversationIds = new Set(repliedRows.map((r) => asPositiveInt(r.conversation_id)).filter(Boolean));
+  const replied = repliedConversationIds.size;
 
   // The replies themselves (first incoming message per conversation, capped): who replied,
   // what they opened with, and the conversation display_id for a click-through into Chatwoot.
@@ -428,7 +440,9 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   try {
     if (!conversationIds.length) throw new Error('no campaign conversations');
     // הפנימי: התגובה הראשונה לכל שיחה (DISTINCT ON מחייב מיון לפי conversation_id);
-    // החיצוני: טריות קודם — לידים חדשים למעלה, וב-overflow נשמרים ה-200 העדכניים.
+    // החיצוני: טריות קודם — לידים חדשים למעלה, וב-overflow נשמרים ה-1000 העדכניים.
+    // התקרה קיימת כדי שקמפיין ענק לא ינפח את ה-payload; היא חלה על *תוכן* התגובה בלבד —
+    // דגל "הגיב" לכל נמען מגיע מ-repliedConversationIds ולכן נשאר מדויק גם מעליה.
     replies = await query(
       `SELECT conversation_id, conversation_display_id, contact_id, contact_name, contact_phone,
               source_id, content, replied_at FROM (
@@ -453,10 +467,19 @@ export async function getCampaignDetail(query, accountId, campaignId) {
           ORDER BY m_in.conversation_id, m_in.created_at
        ) r
        ORDER BY r.first_reply_at DESC
-       LIMIT 200`,
+       LIMIT 1000`,
       [accountId, id, conversationIds]
     );
   } catch { replies = []; }
+  // תוכן התגובה לכל שיחה, לפני ההמרה לתצוגה (שם) — מזין את עמודות התגובה בטבלה ובייצוא.
+  const replyByConversation = new Map(replies.map((r) => [asPositiveInt(r.conversation_id), r]));
+  for (const r of recipients) {
+    const cid = asPositiveInt(r.conversation_id);
+    const reply = cid ? replyByConversation.get(cid) : null;
+    r.replied = !!(cid && repliedConversationIds.has(cid));
+    r.reply_content = reply?.content || '';
+    r.replied_at = reply?.replied_at || '';
+  }
   const replyResolver = audienceResolver(audienceContacts);
   const recipientByConversation = new Map(recipients.map((r) => [asPositiveInt(r.conversation_id), r]));
   replies = replies.map((reply) => {
@@ -489,7 +512,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
       phone: normalizeCampaignPhone(contact.phone),
       reason: 'no_attempt_record',
     }));
-  funnel.audience = audienceContacts.length || funnel.attempted;
+  funnel.audience = audienceContacts.length || (funnel.attempted + funnel.skipped);
 
   return { campaign, funnel, engagement, recipients, not_sent, audience_source: audienceSource };
 }

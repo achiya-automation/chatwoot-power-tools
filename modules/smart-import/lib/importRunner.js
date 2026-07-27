@@ -84,7 +84,7 @@ export async function runImport({
           await call(() => api.assignLabels(contactId, [labelTitle]));
         }
       }
-      log.add(row, name, status, contactId, '');
+      log.add(row, name, status, contactId, phoneNote(c));
     } catch (e) {
       log.add(row, name, 'failed', null, (e.body || e.message || 'error').slice(0, 200));
     }
@@ -157,8 +157,18 @@ export function createImportJob({ contacts, api, labelTitle, waInboxId, concurre
 }
 
 function stripMeta(c) {
-  const { __row, __match, __dupTail, ...rest } = c;
+  const { __row, __match, __dupTail, __phoneRaw, ...rest } = c;
   return rest;
+}
+
+// A contact with no usable phone imports and labels successfully, and is then skipped
+// in silence by every WhatsApp campaign it lands in. Carry the reason into the log so
+// the row is findable in the downloaded CSV, not just in a headline count.
+function phoneNote(c) {
+  if (c.phone_number) return '';
+  return c.__phoneRaw
+    ? `מספר לא תקין (${c.__phoneRaw}) — לא יקבל וואטסאפ`
+    : 'ללא מספר טלפון — לא יקבל וואטסאפ';
 }
 
 // WhatsApp addresses a contact by bare digits (972501234567) while imported phones are

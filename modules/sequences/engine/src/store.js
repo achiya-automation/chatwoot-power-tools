@@ -51,6 +51,8 @@ import { createTemplateCopy } from './meta.js';
 import { projectSchedule } from './schedule.js';
 import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from './campaigns.js';
 import { handleTemplatesAction } from './templates.js';
+import { handleJourneysAction, makeJourneysCtx } from './journeys.js';
+import { makeClient } from './chatwoot.js';
 
 let _config = null;
 
@@ -100,6 +102,17 @@ export async function handleAction(accountId, action, payload) {
   // Template Studio actions (tpl_list/create/edit/delete/flows) live in their own module —
   // dispatched here, ahead of the switch, so they don't need a case per action.
   if (action.startsWith('tpl_')) return handleTemplatesAction(accId, action, payload);
+
+  // בונה פלואו (journeys) — אותו דפוס: מודול נפרד, פריפיקס jrn_.
+  // api.js משדר ללקוח את result.data — לכן העטיפה כאן, פעם אחת לכל פעולות ה-jrn_
+  // (הלקוח קורא json.data; ההחזרות של handleJourneysAction הן הערך עצמו).
+  if (action.startsWith('jrn_')) {
+    const result = await handleJourneysAction(
+      makeJourneysCtx({ query, makeClient, makeDbReads, config: {} }),
+      action, payload, accId
+    );
+    return { data: result };
+  }
 
   switch (action) {
     case 'list':

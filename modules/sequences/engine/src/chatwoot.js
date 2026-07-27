@@ -235,6 +235,108 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       return { id: m.id, content };
     },
 
+    /** journeys: plain text message (already-rendered content, no template involved). */
+    sendText: async (cid, content) => {
+      const m = await req(`/conversations/${cid}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      });
+      return { id: m.id, content };
+    },
+
+    /** journeys: choice question. On official Cloud-API inboxes Chatwoot renders
+     *  input_select as real interactive buttons (≤3) or a list; on other channels the
+     *  caller should pre-render a numbered fallback and use sendText instead.
+     *  items: [{ title, value }] */
+    sendInputSelect: async (cid, content, items) => {
+      const m = await req(`/conversations/${cid}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({
+          content,
+          content_type: 'input_select',
+          content_attributes: { items },
+        }),
+      });
+      return { id: m.id, content };
+    },
+
+    /** journeys: media message from the addons media library (same disk-read approach as
+     *  sendFreeform — Chatwoot takes multipart file parts, not URLs). */
+    sendMedia: async (cid, { content = '', mediaUrl }) => {
+      const file = String(mediaUrl).split('/').pop().split('?')[0];
+      let buf;
+      try {
+        buf = await readFile(`${process.env.MEDIA_DIR || '/app/media'}/${file}`);
+      } catch {
+        console.warn(`[drip] journeys: media missing (${file}) — sending text only`);
+        const m = await req(`/conversations/${cid}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ content: content || mediaUrl }),
+        });
+        return { id: m.id, content };
+      }
+      const fd = new FormData();
+      if (content) fd.append('content', content);
+      fd.append('attachments[]', new Blob([buf]), file);
+      const r = await fetch(`${base}/conversations/${cid}/messages`, {
+        method: 'POST',
+        headers: { api_access_token: token },
+        body: fd,
+      });
+      if (!r.ok) throw new Error(`Chatwoot POST media /conversations/${cid}/messages → ${r.status}`);
+      const m = await r.json();
+      return { id: m.id, content };
+    },
+
+    /** journeys: conversation status — 'open' (handoff to human) / 'pending' (bot owns)
+     *  / 'resolved'. POST /toggle_status with an explicit target status. */
+    toggleStatus: async (cid, status) => {
+      return req(`/conversations/${cid}/toggle_status`, {
+        method: 'POST',
+        body: JSON.stringify({ status }),
+      });
+    },
+
+    /** journeys: assign conversation to an agent and/or team. */
+    assignConversation: async (cid, { assigneeId, teamId }) => {
+      const body = {};
+      if (assigneeId != null) body.assignee_id = assigneeId;
+      if (teamId != null) body.team_id = teamId;
+      return req(`/conversations/${cid}/assignments`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    },
+
+    /** journeys: ADD labels (Chatwoot's POST /labels REPLACES the list, so we merge with
+     *  the current labels read from the DB — the bot token has no GET here). */
+    addLabels: async (cid, labels) => {
+      const current = reads?.getConversationLabels
+        ? await reads.getConversationLabels(cid, accountId)
+        : [];
+      const merged = [...new Set([...current, ...labels])];
+      return req(`/conversations/${cid}/labels`, {
+        method: 'POST',
+        body: JSON.stringify({ labels: merged }),
+      });
+    },
+
+    /** journeys: merge custom_attributes on a CONTACT (answers land here by default).
+     *  Read current via DB (merge semantics), write via PUT like setContactSequence. */
+    patchContactAttrs: async (contactId, attrs) => {
+      let cur = {};
+      if (reads?.getContactAttrs) {
+        cur = await reads.getContactAttrs(contactId, accountId);
+      } else {
+        const r = await req(`/contacts/${contactId}`);
+        cur = (r.payload || r).custom_attributes || {};
+      }
+      return req(`/contacts/${contactId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ custom_attributes: { ...cur, ...attrs } }),
+      });
+    },
+
     /**
      * Send the step through Meta's Marketing Messages (MM Lite) API instead of Chatwoot's
      * Cloud-API path — `POST /{PHONE_NUMBER_ID}/marketing_messages`.
@@ -342,7 +444,7 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       if (reads?.getContact) return reads.getContact(cid, accountId);
       const conv = await req(`/conversations/${cid}`);
       const m = conv.meta?.sender || {};
-      return { name: m.name, phone: m.phone_number, email: m.email };
+      return { name: m.name, phone: m.phone_number, email: m.email, custom_attributes: m.custom_attributes || {} };
     },
 
     /** Returns true if any incoming (customer) message arrived after sinceISO

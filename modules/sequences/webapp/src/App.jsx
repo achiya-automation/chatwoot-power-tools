@@ -10,11 +10,7 @@ import {
   User,
   AlertCircle,
   Search,
-  BarChart3,
   Tag,
-  Megaphone,
-  ShieldCheck,
-  LayoutTemplate,
 } from 'lucide-react';
 import Button from './components/ui/Button.jsx';
 import Switch from './components/ui/Switch.jsx';
@@ -40,6 +36,7 @@ import CampaignDetailView from './components/CampaignDetailView.jsx';
 import ComplianceView from './components/ComplianceView.jsx';
 import TemplatesView from './components/TemplatesView.jsx';
 import TemplateBuilder from './components/TemplateBuilder.jsx';
+import JourneysScreen from './components/journeys/JourneysScreen.jsx';
 import useChatwootContext from './useChatwootContext.js';
 import useVersionCheck from './useVersionCheck.js';
 import UpdateBanner from './components/UpdateBanner.jsx';
@@ -71,6 +68,7 @@ const M = {
     tab_campaigns: 'קמפיינים',
     tab_compliance: 'ציות',
     tab_templates: 'תבניות',
+    tab_journeys: 'בונה פלואו',
     appTitle: 'רצפי WhatsApp',
     subtitle: 'ניהול רצפי הודעות אוטומטיים (drip)',
     subtitleFull: 'ניהול רצפי הודעות אוטומטיים (drip) ללקוחות',
@@ -121,6 +119,7 @@ const M = {
     tab_campaigns: 'Campaigns',
     tab_compliance: 'Compliance',
     tab_templates: 'Templates',
+    tab_journeys: 'Flow Builder',
     appTitle: 'WhatsApp Sequences',
     subtitle: 'Manage automated (drip) message sequences',
     subtitleFull: 'Manage automated (drip) message sequences for your customers',
@@ -193,7 +192,7 @@ export default function App() {
   // טאב פעיל: סקירה (ברירת מחדל) / רצפים / אנשי קשר.
   // נשמר ב-localStorage כדי שריענון העמוד יישאר באותו טאב; ?tab= גובר (deep-link).
   const [view, setView] = useState(() => {
-    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview' || v === 'campaigns' || v === 'compliance' || v === 'templates';
+    const valid = (v) => v === 'contacts' || v === 'sequences' || v === 'overview' || v === 'campaigns' || v === 'compliance' || v === 'templates' || v === 'journeys';
     const t = new URLSearchParams(window.location.search).get('tab');
     if (valid(t)) return t;
     try {
@@ -222,7 +221,7 @@ export default function App() {
       if (e.origin !== window.location.origin) return; // same-origin embed בלבד
       const d = e?.data;
       if (d && typeof d === 'object' && d.type === 'drip-nav'
-          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns' || d.tab === 'compliance' || d.tab === 'templates')) {
+          && (d.tab === 'overview' || d.tab === 'sequences' || d.tab === 'contacts' || d.tab === 'campaigns' || d.tab === 'compliance' || d.tab === 'templates' || d.tab === 'journeys')) {
         setView(d.tab);
         setCampaignId(null); // איפוס צלילת הקמפיין — לא לנחות על תצוגת פרטים ישנה (כמו TabButton הפנימי)
       }
@@ -252,7 +251,7 @@ export default function App() {
     else setCampaignId(null);
   };
   // כותרת לפי הטאב הפעיל — בסגנון הכותרות הנייטיביות של Chatwoot (text-base font-medium)
-  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : view === 'compliance' ? t('tab_compliance') : view === 'templates' ? t('tab_templates') : t('tab_overview');
+  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : view === 'compliance' ? t('tab_compliance') : view === 'templates' ? t('tab_templates') : view === 'journeys' ? t('tab_journeys') : t('tab_overview');
 
   // מצב "שיחה" — האפליקציה רצה כ-Dashboard App בתוך שיחה (סרגל צד צר).
   // אז מציגים תצוגת מצב קומפקטית לקריאה-בלבד של הליד הזה בלבד (בלי ניהול).
@@ -472,32 +471,35 @@ export default function App() {
           {sideNav ? (
             <h1 className="m-0 text-base font-medium text-n-slate-12">{viewTitle}</h1>
           ) : (
-            <div className="flex items-center gap-1">
-              <TabButton active={view === 'overview'} onClick={() => setView('overview')} icon={BarChart3}>
+            <div className="relative flex items-center h-8 rounded-lg bg-n-alpha-1 dark:bg-n-solid-1 w-fit">
+              <TabButton active={view === 'overview'} onClick={() => setView('overview')}>
                 {t('tab_overview')}
               </TabButton>
-              <TabButton active={view === 'sequences'} onClick={() => setView('sequences')} icon={Layers}>
+              <TabButton active={view === 'sequences'} onClick={() => setView('sequences')}>
                 {t('tab_sequences')}
               </TabButton>
-              <TabButton active={view === 'contacts'} onClick={() => setView('contacts')} icon={Users}>
+              <TabButton active={view === 'contacts'} onClick={() => setView('contacts')}>
                 {t('tab_contacts')}
               </TabButton>
-              <TabButton active={view === 'campaigns'} onClick={() => { setView('campaigns'); setCampaignId(null); }} icon={Megaphone}>
+              <TabButton active={view === 'campaigns'} onClick={() => { setView('campaigns'); setCampaignId(null); }}>
                 {t('tab_campaigns')}
               </TabButton>
-              <TabButton active={view === 'compliance'} onClick={() => setView('compliance')} icon={ShieldCheck}>
+              <TabButton active={view === 'compliance'} onClick={() => setView('compliance')}>
                 {t('tab_compliance')}
               </TabButton>
-              <TabButton active={view === 'templates'} onClick={() => setView('templates')} icon={LayoutTemplate}>
+              <TabButton active={view === 'templates'} onClick={() => setView('templates')}>
                 {t('tab_templates')}
+              </TabButton>
+              <TabButton active={view === 'journeys'} onClick={() => setView('journeys')}>
+                {t('tab_journeys')}
               </TabButton>
             </div>
           )}
           <div className="flex items-center gap-2">
             {/* "שיוך לפי תווית" משייך רצף לאנשי קשר — לא רלוונטי בהקשר הקמפיינים, שם מסתירים אותו.
                 גם בטאב הציות מסתירים: שם יש "רישום הסכמה לפי תווית" — שתי פעולות-לפי-תווית שונות
-                באותו מסך הן מלכודת. גם בטאב התבניות מסתירים: אין שם רצפים לשייך אליהם תווית. */}
-            {!noAccount && view !== 'campaigns' && view !== 'compliance' && view !== 'templates' ? (
+                באותו מסך הן מלכודת. גם בטאב התבניות ובבונה הפלואו מסתירים: אין שם רצפים לשייך אליהם תווית. */}
+            {!noAccount && view !== 'campaigns' && view !== 'compliance' && view !== 'templates' && view !== 'journeys' ? (
               <Button
                 variant="faded"
                 color="slate"
@@ -531,6 +533,8 @@ export default function App() {
           <ComplianceView accountId={accountId} />
         ) : view === 'templates' ? (
           <TemplatesScreen accountId={accountId} />
+        ) : view === 'journeys' ? (
+          <JourneysScreen accountId={accountId} />
         ) : view === 'contacts' ? (
           <EnrollmentsView accountId={accountId} />
         ) : loading ? (
@@ -724,20 +728,21 @@ export default function App() {
   );
 }
 
-function TabButton({ active, onClick, icon: Icon, children }) {
+// טאב בסגנון ה-TabBar הנייטיבי של Chatwoot (components-next/tabbar/TabBar.vue):
+// כפתור בתוך מכולת-גלולה, hover צובע את הטקסט ב-brand, והטאב הפעיל מקבל כרטיס מוגבה
+// (bg-n-solid-active + shadow + outline) — בדיוק כמו טאבי "שלי/לא הוקצתה/הכל" המקוריים.
+function TabButton({ active, onClick, children }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`relative flex items-center gap-1.5 px-3.5 py-2.5 text-sm font-medium transition-colors ${
-        active ? 'text-n-blue-11' : 'text-n-slate-11 hover:text-n-slate-12'
+      className={`relative z-10 px-4 truncate py-1.5 text-sm border-0 rounded-lg transition-all duration-200 ease-out hover:text-n-brand active:scale-[1.02] ${
+        active
+          ? 'text-n-blue-11 bg-n-solid-active shadow-sm outline outline-1 outline-n-container'
+          : 'text-n-slate-10 scale-[0.98]'
       }`}
     >
-      {Icon ? <Icon size={15} aria-hidden="true" /> : null}
       {children}
-      {active ? (
-        <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-n-brand" aria-hidden="true" />
-      ) : null}
     </button>
   );
 }

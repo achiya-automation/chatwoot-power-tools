@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detectColumns, SYSTEM_FIELDS } from '../lib/columnDetector.js';
+import { buildContactPayload } from '../lib/fieldMapper.js';
 
 const f = (res, header) => res.find((r) => r.header === header).field;
 
@@ -42,9 +43,34 @@ test('does not assign the same system field twice (first wins)', () => {
 
 test('SYSTEM_FIELDS contains exactly expected fields in order', () => {
   assert.deepEqual(SYSTEM_FIELDS, [
-    'name', 'first_name', 'last_name', 'phone_number',
+    'name', 'first_name', 'last_name', 'phone_number', 'phone_number_alt',
     'email', 'identifier', 'company_name', 'city', 'country'
   ]);
+});
+
+test('a second phone column becomes a fallback instead of being dropped', () => {
+  const headers = ['שם', 'נייד', 'טלפון'];
+  const rows = [['דנה', '', '03-6123456'], ['רון', '0501234567', '']];
+  const cols = detectColumns(headers, rows);
+  assert.equal(cols[1].field, 'phone_number');
+  assert.equal(cols[2].field, 'phone_number_alt');
+
+  // The row whose primary phone column is empty still imports with a number.
+  const mapping = cols.map(({ index, field }) => ({ index, field }));
+  assert.equal(buildContactPayload(rows[0], mapping, []).phone_number, '+97236123456');
+  assert.equal(buildContactPayload(rows[1], mapping, []).phone_number, '+972501234567');
+});
+
+test('an unusable number is reported as __phoneRaw, not silently dropped', () => {
+  const mapping = [{ index: 0, field: 'name' }, { index: 1, field: 'phone_number' }];
+  const bad = buildContactPayload(['דנה', '050-123'], mapping, []);
+  assert.equal(bad.phone_number, undefined);
+  assert.equal(bad.__phoneRaw, '050-123');
+
+  // Nothing in the file at all → no raw value to show, so the two cases stay distinct.
+  const empty = buildContactPayload(['רון', ''], mapping, []);
+  assert.equal(empty.phone_number, undefined);
+  assert.equal(empty.__phoneRaw, undefined);
 });
 
 // Real-world insurance-export format (בני הבוט.xlsx): every header carries a

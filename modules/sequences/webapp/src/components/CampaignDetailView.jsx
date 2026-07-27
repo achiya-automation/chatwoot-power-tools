@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, ArrowLeft, AlertCircle, Download, MessageSquare, Coins, Printer, ExternalLink } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRight, ArrowLeft, AlertCircle, ChevronDown, Download, MessageSquare, Coins, Printer, ExternalLink, Filter } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
 import Skeleton from './ui/Skeleton.jsx';
 import { Table, THead, TBody, TR, TH, TD } from './ui/Table.jsx';
 import { getCampaignDetail } from '../api/sequencesApi.js';
+import { API_BASE } from '../config.js';
 import { estimateCost } from '../lib/campaignCost.js';
-import { csvRow } from '../lib/csv.js';
+import { buildRows, countRows, filterRows, STATUS_KEYS } from '../lib/campaignRows.js';
 import { deliveryErrorLabel } from '../lib/deliveryError.js';
 import useT, { useLocale } from '../useT.js';
 import { translate } from '../i18n.js';
@@ -22,7 +23,14 @@ const M = {
         name: 'שם', phone: 'טלפון', status: 'סטטוס', attempts: 'ניסיונות', when: 'זמן', reason: 'סיבה', conversation: 'קישור לשיחה', noAttempt: 'לא נוצר ניסיון שליחה',
         export: 'ייצוא CSV', print: 'הדפסה / PDF', printedAt: 'הופק', openConv: 'פתיחת השיחה ב-Chatwoot',
         noReplyText: '(מדיה או הודעה ללא טקסט)', errLoad: 'שגיאה בטעינת הקמפיין', notFound: 'הקמפיין לא נמצא', retry: 'ניסיון חוזר',
-        s_sent: 'נשלח — ממתין למסירה', s_delivered: 'נמסר', s_read: 'נקרא', s_failed: 'נכשל', s_pending: 'ממתין', s_notsent: 'לא נוסה לשליחה' },
+        s_sent: 'נשלח — ממתין למסירה', s_delivered: 'נמסר', s_read: 'נקרא', s_failed: 'נכשל', s_pending: 'ממתין', s_notsent: 'לא נוסה לשליחה',
+        // ── סינון + עמודות תגובה ──
+        filter: 'סינון', clearFilter: 'ניקוי סינון', outOf: 'מתוך', noMatch: 'אין נמענים שתואמים לסינון',
+        exportAll: 'הכל', exportCurrent: 'לפי הסינון הנוכחי', exportWhat: 'מה להוריד?',
+        reply: 'תגובה', col_replied: 'הגיב', yes: 'כן', no: 'לא', replyText: 'תוכן התגובה', replyWhen: 'זמן התגובה',
+        f_read: 'נקראו', f_delivered: 'נמסרו · טרם נקראו', f_sent: 'נשלחו · טרם נמסרו', f_pending: 'ממתינים', f_failed: 'נכשלו', f_notsent: 'לא נוסו',
+        f_replied: 'הגיבו', f_noreply: 'לא הגיבו',
+        exactNote: 'הסטטוס בטבלה הוא המצב הסופי של כל נמען, ולכן הקטגוריות אינן חופפות (סכומן = קהל היעד) — בשונה מהמשפך למעלה' },
   en: { back: 'Back', audience: 'Target audience', attempted: 'Attempted', sent: 'Sent successfully', delivered: 'Delivered', read: 'Read', failed: 'Failed',
         funnel: 'Delivery funnel', replied: 'Replied', replyRate: 'Reply rate', costTitle: 'Estimated cost',
         costNote: 'Estimate: Meta IL rate ($/msg), excl. free service window / volume discounts · updated',
@@ -32,24 +40,94 @@ const M = {
         name: 'Name', phone: 'Phone', status: 'Status', attempts: 'Attempts', when: 'Time', reason: 'Reason', conversation: 'Conversation link', noAttempt: 'No send attempt was created',
         export: 'Export CSV', print: 'Print / PDF', printedAt: 'Generated', openConv: 'Open the conversation in Chatwoot',
         noReplyText: '(media or empty message)', errLoad: 'Failed to load campaign', notFound: 'Campaign not found', retry: 'Retry',
-        s_sent: 'Sent — awaiting delivery', s_delivered: 'Delivered', s_read: 'Read', s_failed: 'Failed', s_pending: 'Pending', s_notsent: 'Not attempted' },
+        s_sent: 'Sent — awaiting delivery', s_delivered: 'Delivered', s_read: 'Read', s_failed: 'Failed', s_pending: 'Pending', s_notsent: 'Not attempted',
+        filter: 'Filter', clearFilter: 'Clear filter', outOf: 'of', noMatch: 'No recipients match the filter',
+        exportAll: 'All', exportCurrent: 'Current filter', exportWhat: 'What to download?',
+        reply: 'Reply', col_replied: 'Replied', yes: 'Yes', no: 'No', replyText: 'Reply text', replyWhen: 'Reply time',
+        f_read: 'Read', f_delivered: 'Delivered · not read yet', f_sent: 'Sent · not delivered yet', f_pending: 'Pending', f_failed: 'Failed', f_notsent: 'Not attempted',
+        f_replied: 'Replied', f_noreply: 'No reply',
+        exactNote: 'The table status is each recipient’s final state, so the categories do not overlap (they sum to the audience) — unlike the funnel above' },
 };
-// Status enum (messages.status, ראו engine/src/campaigns.js): sent:0, delivered:1, read:2, failed:3.
-const STATUS_KEY = { 0: 's_sent', 1: 's_delivered', 2: 's_read', 3: 's_failed' };
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0);
+// גוון הבאדג' לכל מצב סופי בטבלה (ראו lib/campaignRows.js).
+const STATUS_COLOR = { read: 'blue', delivered: 'teal', sent: 'slate', pending: 'slate', failed: 'ruby', notsent: 'amber' };
 
-// external_error מגיע מ-Meta כמחרוזת גולמית ("131049: This message was not delivered…") —
-// מחלצים את הקוד המספרי וממפים להסבר מתורגם מ-deliveryError.js (משותף עם הרצפים).
+// error_title הוא או מחרוזת גולמית של Meta ("131049: This message was not delivered…"),
+// שממנה מחלצים את הקוד המספרי, או מפתח סיבה מילולי מה-ledger ("no_phone") כשהשליחה
+// נעצרה אצלנו. שניהם ממופים דרך אותה טבלה ב-deliveryError.js (משותפת עם הרצפים).
 const errorLabel = (raw) => {
   if (!raw) return '';
-  const code = (/^(\d+)/.exec(String(raw)) || [])[1] || null;
-  return deliveryErrorLabel(code, raw);
+  const text = String(raw);
+  const code = (/^(\d+)/.exec(text) || [])[1] || text;
+  return deliveryErrorLabel(code, text);
 };
 
 /*
- * CampaignDetailView — רמה 2 (קמפיין בודד): משפך מסירה, engagement + עלות, טבלת נמענים
- * (עם שגיאת שליחה per-recipient), "לא נשלחו" (קהל היעד שלא קיבל הודעה), וייצוא CSV צד-לקוח.
- * נטען דרך CampaignsView.onSelect(campaignId) → onBack חוזר לרמה 1.
+ * ExportMenu — כפתור "ייצוא CSV" שנפתח לתפריט חתכים. כל פריט הוא <a href> רגיל אל
+ * נקודת הקצה בשרת — בלי blob, בלי download attribute, בלי JS בזמן הלחיצה: הניווט
+ * עצמו מוריד את הקובץ (attachment), ולכן עובד גם ב-Safari בתוך iframe.
+ */
+function ExportMenu({ options, label, heading }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  return (
+    <div ref={rootRef} className="relative">
+      <Button
+        variant="faded" color="slate" size="sm" icon={Download} trailingIcon={ChevronDown}
+        aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label}
+      </Button>
+      {open ? (
+        <div role="menu" className="absolute end-0 top-full z-20 mt-1 w-56 rounded-xl border border-n-weak bg-n-surface-1 p-1 shadow-lg">
+          <p className="px-2.5 pb-1 pt-1.5 text-xs text-n-slate-10">{heading}</p>
+          {options.map((o) => (
+            <a
+              key={o.key}
+              role="menuitem"
+              href={o.href}
+              onClick={() => setOpen(false)}
+              className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm text-n-slate-12 no-underline hover:bg-n-alpha-2"
+            >
+              <span>{o.label}</span>
+              <span className="text-xs text-n-slate-10">{o.count}</span>
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* צ'יפ סינון דו-מצבי — אותו דפוס טבעות של כרטיסי הסינון ב-EnrollmentsView. */
+function FilterChip({ active, onClick, label, count }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
+        active ? 'bg-n-brand/10 text-n-blue-11 ring-1 ring-n-brand' : 'bg-n-alpha-2 text-n-slate-11 ring-1 ring-transparent hover:bg-n-alpha-3'
+      }`}
+    >
+      {label} <span className="font-semibold">{count}</span>
+    </button>
+  );
+}
+
+/*
+ * CampaignDetailView — רמה 2 (קמפיין בודד): משפך מסירה, engagement + עלות, וטבלת נמענים
+ * מאוחדת (מי שנוסה + מי שלא נוסה כלל) עם סינון דו-צירי — סטטוס מסירה × תגובה — שחל גם על
+ * הטבלה, גם על ההדפסה וגם על ייצוא ה-CSV. נטען דרך CampaignsView.onSelect(campaignId).
  */
 export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   const t = useT(M);
@@ -57,6 +135,9 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // סינון הטבלה והייצוא — שני צירים בלתי-תלויים, כל אחד קבוצת מפתחות. ריקה = בלי סינון.
+  const [statusSel, setStatusSel] = useState(() => new Set());
+  const [replySel, setReplySel] = useState(() => new Set());
 
   const load = useCallback(() => {
     if (accountId == null || campaignId == null) return;
@@ -68,8 +149,26 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   }, [campaignId, accountId]);
   useEffect(() => { load(); }, [load]);
 
+  // ── שורות, ספירות וסינון (כל ה-hooks לפני ה-return המוקדמים של טעינה/שגיאה) ──
+  const rows = useMemo(() => buildRows(d || {}), [d]);
+  const counts = useMemo(() => countRows(rows), [rows]);
+  // שני צ'יפים דלוקים בציר התגובה = כמו אף אחד: אין סינון.
+  const replyMode = replySel.size === 1 ? (replySel.has('replied') ? 'yes' : 'no') : 'all';
+  const visible = useMemo(
+    () => filterRows(rows, { statuses: statusSel, reply: replyMode }),
+    [rows, statusSel, replyMode]
+  );
+
   // חץ "חזרה" — כיוון ויזואלי לפי שפה (עברית RTL: חזרה = ימינה).
   const BackIcon = locale === 'he' ? ArrowRight : ArrowLeft;
+
+  const toggle = (set, update, key) => {
+    const next = new Set(set);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    update(next);
+  };
+  const clearFilters = () => { setStatusSel(new Set()); setReplySel(new Set()); };
+  const filtered = statusSel.size > 0 || replyMode !== 'all';
 
   // ניווט לשיחה ב-Chatwoot: בתוך iframe (ה-overlay של עמוד הקמפיינים) — postMessage להורה,
   // שסוגר את ה-overlay ומנווט; standalone — טאב חדש. same-origin בלבד.
@@ -90,29 +189,30 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   );
   if (!d) return <div className="py-16 text-center text-sm text-n-slate-11">{t('notFound')}</div>;
 
-  const { campaign, funnel, engagement, recipients, not_sent, audience_source } = d;
+  const { campaign, funnel, engagement, not_sent, audience_source } = d;
   // Meta charges for delivered template messages; failed/pending attempts must not inflate cost.
   const cost = estimateCost({ category: campaign.category, sent: funnel.delivered });
 
-  // ייצוא CSV צד-לקוח: BOM (פתיחה תקינה בעברית ב-Excel) + בריחה מלאה דרך lib/csv.js
-  // (ציטוט, הכפלת גרשיים, ומגן הזרקת-נוסחאות CWE-1236 — שם/טלפון מפרופיל וואטסאפ אינם מהימנים).
-  // כולל עמודת סיבת-כשל מתורגמת, ואת רשימת "לא נשלחו" כשורות עם סטטוס משלהן.
-  const exportCsv = () => {
-    const head = [t('name'), t('phone'), t('status'), t('attempts'), t('when'), t('reason'), t('conversation')];
-    const body = recipients.map((r) => {
-      const conversationUrl = Number.isInteger(r.conversation_display_id)
-        ? `${window.location.origin}/app/accounts/${accountId}/conversations/${r.conversation_display_id}` : '';
-      return [r.contact_name || '', r.phone || '', t(STATUS_KEY[r.status] || 's_pending'), r.attempt_count || 1, r.sent_at || '', r.status === 3 ? errorLabel(r.error_title) : '', conversationUrl];
-    });
-    const missed = (not_sent || []).map((c) => [c.contact_name || '', c.phone || '', t('s_notsent'), 0, '', t('noAttempt'), '']);
-    const csv = '﻿' + [head, ...body, ...missed].map(csvRow).join('\r\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const safeTitle = String(campaign.title || `campaign-${campaign.id}`).replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 70);
-    const date = String(campaign.created_at || '').slice(0, 10) || campaign.id;
-    const a = document.createElement('a'); a.href = url; a.download = `דוח-${safeTitle}-${date}.csv`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+  // כתובת הורדת CSV בשרת (Content-Disposition: attachment) — הורדה בניווט רגיל, עובדת
+  // גם מתוך ה-iframe של ה-overlay ב-Chatwoot שבו Safari חוסם הורדות blob בשקט.
+  // extra: { statuses?: [..], reply?: 'yes'|'no' } — אותו סינון כמו הטבלה, בצד השרת.
+  const csvHref = (extra = {}) => {
+    const p = new URLSearchParams({ account_id: accountId, campaign_id: campaign.id, locale });
+    if (extra.statuses?.length) p.set('statuses', extra.statuses.join(','));
+    if (extra.reply) p.set('reply', extra.reply);
+    return `${API_BASE}/campaign-csv?${p}`;
   };
+  // אפשרויות ההורדה: הסינון הנוכחי (כשפעיל), הכל, ואז החתכים העסקיים שביקש הלקוח —
+  // הגיבו / לא הגיבו / נכשלו / לא נוסו. חתך ריק לא מוצג (אין מה להוריד).
+  const exportOptions = [
+    filtered && { key: 'current', label: t('exportCurrent'), count: visible.length,
+      href: csvHref({ statuses: [...statusSel], reply: replyMode === 'all' ? undefined : replyMode }) },
+    { key: 'all', label: t('exportAll'), count: rows.length, href: csvHref() },
+    { key: 'replied', label: t('f_replied'), count: counts.replied, href: csvHref({ reply: 'yes' }) },
+    { key: 'noreply', label: t('f_noreply'), count: counts.noreply, href: csvHref({ reply: 'no' }) },
+    { key: 'failed', label: t('f_failed'), count: counts.failed, href: csvHref({ statuses: ['failed'] }) },
+    { key: 'notsent', label: t('f_notsent'), count: counts.notsent, href: csvHref({ statuses: ['notsent'] }) },
+  ].filter((o) => o && (o.key === 'all' || o.key === 'current' || o.count > 0));
 
   const FUNNEL = [
     { label: t('audience'), value: funnel.audience, text: 'text-n-slate-12' },
@@ -131,7 +231,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         </button>
         <div className="flex items-center gap-2">
           <Button variant="faded" color="slate" size="sm" icon={Printer} onClick={() => window.print()}>{t('print')}</Button>
-          <Button variant="faded" color="slate" size="sm" icon={Download} onClick={exportCsv}>{t('export')}</Button>
+          <ExportMenu options={exportOptions} label={t('export')} heading={t('exportWhat')} />
         </div>
       </div>
 
@@ -196,44 +296,76 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         </div>
       </div>
 
-      {/* נמענים */}
-      <h2 className="mb-2 text-sm font-medium text-n-slate-12">{t('recipients')} ({recipients.length})</h2>
+      {/* נמענים — כותרת + סרגל סינון. הטבלה מאחדת את מי שנוסה עם מי שלא נוסה כלל,
+          כדי שסינון אחד יכסה את כל קהל היעד (ולא רק חלק ממנו). */}
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <h2 className="text-sm font-medium text-n-slate-12">{t('recipients')} ({visible.length}{filtered ? ` ${t('outOf')} ${rows.length}` : ''})</h2>
+        {not_sent && not_sent.length > 0 ? (
+          <span className="text-xs text-n-slate-10">· {t(audience_source === 'snapshot' ? 'snapshotNote' : 'currentLabelNote')}</span>
+        ) : null}
+      </div>
+
+      <div className="no-print mb-3 flex flex-wrap items-center gap-1.5 rounded-xl bg-n-alpha-1 px-2.5 py-2 ring-1 ring-n-weak">
+        <span className="flex items-center gap-1.5 pe-1 text-xs text-n-slate-11"><Filter size={13} aria-hidden="true" />{t('filter')}</span>
+        {STATUS_KEYS.filter((key) => counts[key] > 0).map((key) => (
+          <FilterChip
+            key={key}
+            active={statusSel.has(key)}
+            onClick={() => toggle(statusSel, setStatusSel, key)}
+            label={t(`f_${key}`)}
+            count={counts[key]}
+          />
+        ))}
+        {counts.replied > 0 || counts.noreply > 0 ? (
+          <span className="mx-1 h-4 w-px bg-n-slate-6" aria-hidden="true" />
+        ) : null}
+        {['replied', 'noreply'].filter((key) => counts[key] > 0).map((key) => (
+          <FilterChip
+            key={key}
+            active={replySel.has(key)}
+            onClick={() => toggle(replySel, setReplySel, key)}
+            label={t(`f_${key}`)}
+            count={counts[key]}
+          />
+        ))}
+        {filtered ? (
+          <button type="button" onClick={clearFilters} className="ms-auto rounded-lg px-2 py-1 text-xs text-n-slate-11 hover:bg-n-alpha-2 hover:text-n-slate-12">
+            {t('clearFilter')}
+          </button>
+        ) : null}
+      </div>
+
       <Table>
-        <THead><TR className="hover:bg-transparent"><TH>{t('name')}</TH><TH>{t('phone')}</TH><TH>{t('status')}</TH><TH>{t('attempts')}</TH><TH>{t('when')}</TH></TR></THead>
+        <THead><TR className="hover:bg-transparent"><TH>{t('name')}</TH><TH>{t('phone')}</TH><TH>{t('status')}</TH><TH>{t('reply')}</TH><TH>{t('attempts')}</TH><TH>{t('when')}</TH></TR></THead>
         <TBody>
-          {recipients.map((r, i) => (
+          {visible.map((r, i) => (
             <TR
               key={i}
-              className={Number.isInteger(r.conversation_display_id) ? 'cursor-pointer' : ''}
-              onClick={Number.isInteger(r.conversation_display_id) ? () => openConversation(r.conversation_display_id) : undefined}
-              tabIndex={Number.isInteger(r.conversation_display_id) ? 0 : undefined}
-              role={Number.isInteger(r.conversation_display_id) ? 'button' : undefined}
-              aria-label={Number.isInteger(r.conversation_display_id) ? `${r.contact_name || r.phone || ''} — ${t('openConv')}` : undefined}
-              onKeyDown={Number.isInteger(r.conversation_display_id) ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openConversation(r.conversation_display_id); } } : undefined}
+              className={r.conversation_display_id ? 'cursor-pointer' : ''}
+              onClick={r.conversation_display_id ? () => openConversation(r.conversation_display_id) : undefined}
+              tabIndex={r.conversation_display_id ? 0 : undefined}
+              role={r.conversation_display_id ? 'button' : undefined}
+              aria-label={r.conversation_display_id ? `${r.contact_name || r.phone || ''} — ${t('openConv')}` : undefined}
+              onKeyDown={r.conversation_display_id ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openConversation(r.conversation_display_id); } } : undefined}
             >
               <TD><span className="text-n-slate-12">{r.contact_name || '—'}</span></TD>
               <TD><span className="font-mono text-xs">{r.phone || '—'}</span></TD>
-              <TD><Badge color={r.status === 3 ? 'ruby' : r.status === 2 ? 'blue' : r.status === 1 ? 'teal' : 'slate'}>{t(STATUS_KEY[r.status] || 's_pending')}</Badge>
+              <TD><Badge color={STATUS_COLOR[r.statusKey] || 'slate'}>{t(`s_${r.statusKey}`)}</Badge>
                 {/* ההסבר המתורגם מוצג; המחרוזת הגולמית של Meta נשמרת ב-title לרחיפה (תמיכה/דיבוג) */}
-                {r.error_title ? <span title={r.error_title} className="mt-0.5 block text-xs text-n-ruby-11">{errorLabel(r.error_title)}</span> : null}</TD>
-              <TD><span className="text-xs text-n-slate-11">{r.attempt_count || 1}</span></TD>
+                {r.error_title ? <span title={r.error_title} className={`mt-0.5 block text-xs ${r.statusKey === 'notsent' ? 'text-n-amber-11' : 'text-n-ruby-11'}`}>{errorLabel(r.error_title)}</span> : null}</TD>
+              <TD>{r.replied
+                ? <span title={r.reply_content || undefined} className="block max-w-[16rem] truncate text-xs text-n-teal-11">{r.reply_content || t('yes')}</span>
+                : <span className="text-xs text-n-slate-10">—</span>}</TD>
+              <TD><span className="text-xs text-n-slate-11">{r.attempts || '—'}</span></TD>
               <TD><span className="text-xs text-n-slate-11">{r.sent_at || '—'}</span></TD>
             </TR>
           ))}
         </TBody>
       </Table>
-
-      {/* לא נשלחו — קהל היעד שלא קיבל הודעה (למשל: הצטרף לתווית אחרי השליחה) */}
-      {not_sent && not_sent.length > 0 ? (
-        <div className="mt-5">
-          <h2 className="mb-2 text-sm font-medium text-n-slate-12">{t('notSent')} ({not_sent.length}) <span className="font-normal text-xs text-n-slate-10">· {t(audience_source === 'snapshot' ? 'snapshotNote' : 'currentLabelNote')}</span></h2>
-          <div className="flex flex-wrap gap-1.5">
-            {not_sent.map((c, i) => (
-              <span key={i} className="rounded-full bg-n-alpha-2 px-2.5 py-1 text-xs text-n-slate-11">{c.contact_name || c.phone}</span>
-            ))}
-          </div>
-        </div>
+      {visible.length === 0 ? (
+        <p className="py-8 text-center text-sm text-n-slate-11">{t('noMatch')}</p>
       ) : null}
+      <p className="mt-2 text-xs text-n-slate-10">{t('exactNote')}</p>
     </>
   );
 }
