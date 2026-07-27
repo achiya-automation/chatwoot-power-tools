@@ -416,7 +416,8 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
       : `⚠️ התבנית "${t.template_name}" מתחילה להישרף (מעל ${warnAt} כישלוני מסירה, הבלם ב-${cSettings.max_template_failures}). ` +
         `כדאי ליצור לה עותק שריפה: בעורך הרצף ← השלב ← "תבנית לנמענות רוויות" ← "צור עותק".`;
     await compliance.raiseAlert(
-      pool, accountId, 'warn', `template_degrading:${t.template_name}`, msg
+      pool, accountId, 'warn', `template_degrading:${t.template_name}`, msg,
+      { template: t.template_name, warnAt, limit: cSettings.max_template_failures }
     ).catch(() => {});                                     // התראה לעולם לא מפילה שליחה
   }
 
@@ -786,7 +787,8 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
             await compliance.raiseAlert(
               pool, accountId, 'error', `template_burned:${step.template_name}`,
               `🔴 התבנית "${step.template_name}" הגיעה ל-${cSettings.max_template_failures} כישלוני מסירה ` +
-              `והשליחה בה נעצרה. צריך ליצור תאומה ולהחליף את השלב עכשיו — הרצף תקוע כאן.`
+              `והשליחה בה נעצרה. צריך ליצור תאומה ולהחליף את השלב עכשיו — הרצף תקוע כאן.`,
+              { template: step.template_name, limit: cSettings.max_template_failures }
             );
           }
           const waitMs =
@@ -1168,7 +1170,8 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
     if (kind === 'policy') {
       const h = await compliance.loadHealth(pool, accountId);
       if (!h.halted) {
-        await compliance.haltAccount(pool, accountId, `מטא החזירה קוד ${code}: ${parsed?.title || ''}`);
+        await compliance.haltAccount(pool, accountId, `מטא החזירה קוד ${code}: ${parsed?.title || ''}`,
+          'meta_policy', { code, title: parsed?.title || '' });
       }
       if (row.enrollment_id) await rearm(row.enrollment_id, row.step_order, 1);
       continue;
@@ -1201,7 +1204,8 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
           );
           await compliance.raiseAlert(
             pool, accountId, 'warn', 'template_paused',
-            `התבנית "${row.template_name}" הושהתה ע"י מטא. הרצף ממתין ויימשך אוטומטית כשהיא תחזור.`
+            `התבנית "${row.template_name}" הושהתה ע"י מטא. הרצף ממתין ויימשך אוטומטית כשהיא תחזור.`,
+            { template: row.template_name }
           );
         }
         await rearm(row.enrollment_id, row.step_order, 1);
@@ -1305,7 +1309,8 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
             await compliance.raiseAlert(
               pool, accountId, 'warn', 'unknown_meta_code',
               `מטא החזירה קוד שאיננו מכירים (${code}): ${parsed?.title || ''}. ` +
-              `הליד לא נמחק — הוא מתקרר וינסה שוב. כדאי לבדוק מה הקוד אומר.`
+              `הליד לא נמחק — הוא מתקרר וינסה שוב. כדאי לבדוק מה הקוד אומר.`,
+              { code, title: parsed?.title || '' }
             );
           } catch { /* alert is best-effort */ }
         }

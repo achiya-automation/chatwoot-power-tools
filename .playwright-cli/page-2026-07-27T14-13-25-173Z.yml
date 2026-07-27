@@ -1,0 +1,210 @@
+- generic [ref=e4]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - generic [ref=e12]:
+        - heading "WhatsApp Sequences" [level=1] [ref=e13]
+        - paragraph [ref=e14]: Manage automated (drip) message sequences for your customers · 2 active of 3
+  - generic [ref=e16]:
+    - button "Overview" [ref=e17] [cursor=pointer]
+    - button "Sequences" [ref=e18] [cursor=pointer]
+    - button "Contacts" [ref=e19] [cursor=pointer]
+    - button "Campaigns" [ref=e20] [cursor=pointer]
+    - button "Compliance" [ref=e21] [cursor=pointer]
+    - button "Templates" [ref=e22] [cursor=pointer]
+    - button "Flow Builder" [ref=e23] [cursor=pointer]
+  - generic [ref=e24]:
+    - heading "Number health" [level=2] [ref=e25]:
+      - img [ref=e26]
+      - text: Number health
+    - button "Refresh" [ref=e28] [cursor=pointer]:
+      - img [ref=e29]
+      - generic [ref=e34]: Refresh
+  - generic [ref=e35]:
+    - generic [ref=e36]:
+      - generic [ref=e39]: Yellow
+      - generic [ref=e40]: Quality rating
+    - generic [ref=e41]:
+      - generic [ref=e42]: "2000"
+      - generic [ref=e43]: Daily cap · TIER_2K
+    - generic [ref=e44]:
+      - generic [ref=e46]:
+        - img [ref=e47]
+        - text: Sending
+      - generic [ref=e50]: "Last checked: 22/06/2026, 08:15:00"
+  - generic [ref=e51]:
+    - heading "Open alerts" [level=2] [ref=e52]:
+      - img [ref=e53]
+      - text: Open alerts
+    - generic [ref=e56]:
+      - generic [ref=e57]:
+        - generic [ref=e58]: warn
+        - generic [ref=e59]:
+          - paragraph [ref=e60]: Template "offer_discount" is paused by Meta. Sequences using it are waiting and will resume when it returns.
+          - paragraph [ref=e61]: template_paused · 22/06/2026, 07:40:00
+      - button "Dismiss alert" [ref=e62] [cursor=pointer]:
+        - img [ref=e63]
+  - generic [ref=e65]:
+    - generic [ref=e66]:
+      - heading "Consent coverage" [level=2] [ref=e67]:
+        - img [ref=e68]
+        - text: Consent coverage
+      - generic [ref=e72]: 94%
+    - paragraph [ref=e73]: 386 of 412 contacts have a consent record
+    - generic [ref=e76]:
+      - generic [ref=e77]: "Contacts: 412"
+      - generic [ref=e78]: "Blocked for marketing: 19"
+      - generic [ref=e79]: "Stale consent: 7"
+    - generic [ref=e80]:
+      - generic [ref=e81]:
+        - img [ref=e82]
+        - text: 26 contacts are enrolled in a sequence without a consent record — marketing to them is blocked.
+      - button "Record consent by label" [ref=e84] [cursor=pointer]:
+        - img [ref=e85]
+        - generic [ref=e88]: Record consent by label
+  - generic [ref=e89]:
+    - generic [ref=e90]:
+      - heading "Compliance policy" [level=2] [ref=e91]:
+        - img [ref=e92]
+        - text: Compliance policy
+      - button "Save policy" [ref=e95] [cursor=pointer]:
+        - img [ref=e96]
+        - generic [ref=e100]: Save policy
+    - generic [ref=e101]:
+      - generic [ref=e102]:
+        - generic [ref=e103]:
+          - paragraph [ref=e104]: Require consent before marketing
+          - paragraph [ref=e105]: "Without a consent record Meta treats marketing messages as spam — the #1 cause of disabled numbers."
+        - switch "Require consent before marketing" [checked] [ref=e106] [cursor=pointer]
+      - generic [ref=e107]:
+        - generic [ref=e108]:
+          - paragraph [ref=e109]: Block US marketing
+          - paragraph [ref=e110]: Meta blocked marketing messages to US recipients — sending there fails and hurts your rating.
+        - switch "Block US marketing" [checked] [ref=e111] [cursor=pointer]
+      - generic [ref=e112]:
+        - generic [ref=e113]:
+          - paragraph [ref=e114]: Auto-halt on red rating
+          - paragraph [ref=e115]: A red rating is one step before the number is disabled — an automatic halt saves the account.
+        - switch "Auto-halt on red rating" [checked] [ref=e116] [cursor=pointer]
+      - generic [ref=e117]:
+        - generic [ref=e118]:
+          - generic [ref=e119]: Max marketing messages per person per day
+          - spinbutton "Max marketing messages per person per day" [ref=e120]: "1"
+          - paragraph [ref=e121]: Meta penalises multiple marketing messages to the same person in a short window.
+        - generic [ref=e122]:
+          - generic [ref=e123]: Max unanswered messages
+          - spinbutton "Max unanswered messages" [ref=e124]: "3"
+          - paragraph [ref=e125]: People who never reply tend to block or report you — every report lowers your quality rating.
+        - generic [ref=e126]:
+          - generic [ref=e127]: Max cap failures
+          - spinbutton "Max cap failures" [ref=e128]: "2"
+          - paragraph [ref=e129]: How many cap failures (131049) before the contact is stopped — repeated attempts count against you.
+        - generic [ref=e130]:
+          - generic [ref=e131]: Consent validity (days)
+          - spinbutton "Consent validity (days)" [ref=e132]: "30"
+          - paragraph [ref=e133]: "Consent goes stale: reaching out months after sign-up reads as spam. After this period it must be refreshed."
+      - generic [ref=e134]:
+        - generic [ref=e135]: Opt-out keywords
+        - textbox "Opt-out keywords" [ref=e136]:
+          - /placeholder: stop, unsubscribe
+          - text: להסיר, די
+        - paragraph [ref=e137]: When a customer writes one of these they are blocked from marketing immediately. Comma-separated.
+  - heading "Template health" [level=2] [ref=e138]:
+    - img [ref=e139]
+    - text: Template health
+  - table [ref=e144]:
+    - rowgroup [ref=e145]:
+      - row "Template Language Category Status Quality" [ref=e146]:
+        - columnheader "Template" [ref=e147]
+        - columnheader "Language" [ref=e148]
+        - columnheader "Category" [ref=e149]
+        - columnheader "Status" [ref=e150]
+        - columnheader "Quality" [ref=e151]
+    - rowgroup [ref=e152]:
+      - row "welcome_intro he MARKETING Approved Green" [ref=e153]:
+        - cell "welcome_intro" [ref=e154]
+        - cell "he" [ref=e155]
+        - cell "MARKETING" [ref=e156]
+        - cell "Approved" [ref=e157]:
+          - generic [ref=e158]: Approved
+        - cell "Green" [ref=e159]:
+          - generic [ref=e160]: Green
+      - row "followup_value he MARKETING Approved Yellow" [ref=e161]:
+        - cell "followup_value" [ref=e162]
+        - cell "he" [ref=e163]
+        - cell "MARKETING" [ref=e164]
+        - cell "Approved" [ref=e165]:
+          - generic [ref=e166]: Approved
+        - cell "Yellow" [ref=e167]:
+          - generic [ref=e168]: Yellow
+      - row "offer_discount he MARKETING Paused Red" [ref=e169]:
+        - cell "offer_discount" [ref=e170]
+        - cell "he" [ref=e171]
+        - cell "MARKETING" [ref=e172]
+        - cell "Paused" [ref=e173]:
+          - generic [ref=e174]:
+            - img [ref=e175]
+            - text: Paused
+        - cell "Red" [ref=e177]:
+          - generic [ref=e178]: Red
+      - row "appointment_reminder he UTILITY Approved Green" [ref=e179]:
+        - cell "appointment_reminder" [ref=e180]
+        - cell "he" [ref=e181]
+        - cell "UTILITY" [ref=e182]
+        - cell "Approved" [ref=e183]:
+          - generic [ref=e184]: Approved
+        - cell "Green" [ref=e185]:
+          - generic [ref=e186]: Green
+  - heading "Blocked for marketing" [level=2] [ref=e187]:
+    - img [ref=e188]
+    - text: Blocked for marketing
+  - table [ref=e192]:
+    - rowgroup [ref=e193]:
+      - row "Contact Phone Reason Detail When Action" [ref=e194]:
+        - columnheader "Contact" [ref=e195]
+        - columnheader "Phone" [ref=e196]
+        - columnheader "Reason" [ref=e197]
+        - columnheader "Detail" [ref=e198]
+        - columnheader "When" [ref=e199]
+        - columnheader "Action" [ref=e200]
+    - rowgroup [ref=e201]:
+      - row "— +972541112222 opted_out להסיר 21/06/2026, 14:20:00 Unblock" [ref=e202]:
+        - cell "—" [ref=e203]
+        - cell "+972541112222" [ref=e204]
+        - cell "opted_out" [ref=e205]:
+          - generic [ref=e206]: opted_out
+        - cell "להסיר" [ref=e207]
+        - cell "21/06/2026, 14:20:00" [ref=e208]
+        - cell "Unblock" [ref=e209]:
+          - button "Unblock" [ref=e210] [cursor=pointer]:
+            - generic [ref=e211]: Unblock
+      - row "— +972523334444 Hit their personal cap 131049 20/06/2026, 09:05:00 Unblock" [ref=e212]:
+        - cell "—" [ref=e213]
+        - cell "+972523334444" [ref=e214]
+        - cell "Hit their personal cap" [ref=e215]:
+          - generic [ref=e216]: Hit their personal cap
+        - cell "131049" [ref=e217]
+        - cell "20/06/2026, 09:05:00" [ref=e218]
+        - cell "Unblock" [ref=e219]:
+          - button "Unblock" [ref=e220] [cursor=pointer]:
+            - generic [ref=e221]: Unblock
+      - row "— +972505556666 Never opened messages — 19/06/2026, 16:45:00 Unblock" [ref=e222]:
+        - cell "—" [ref=e223]
+        - cell "+972505556666" [ref=e224]
+        - cell "Never opened messages" [ref=e225]:
+          - generic [ref=e226]: Never opened messages
+        - cell "—" [ref=e227]
+        - cell "19/06/2026, 16:45:00" [ref=e228]
+        - cell "Unblock" [ref=e229]:
+          - button "Unblock" [ref=e230] [cursor=pointer]:
+            - generic [ref=e231]: Unblock
+      - row "— +15551234567 Invalid number US number 18/06/2026, 11:10:00 Unblock" [ref=e232]:
+        - cell "—" [ref=e233]
+        - cell "+15551234567" [ref=e234]
+        - cell "Invalid number" [ref=e235]:
+          - generic [ref=e236]: Invalid number
+        - cell "US number" [ref=e237]
+        - cell "18/06/2026, 11:10:00" [ref=e238]
+        - cell "Unblock" [ref=e239]:
+          - button "Unblock" [ref=e240] [cursor=pointer]:
+            - generic [ref=e241]: Unblock
