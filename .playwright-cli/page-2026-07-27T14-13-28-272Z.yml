@@ -1,0 +1,210 @@
+- generic [ref=e4]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - generic [ref=e12]:
+        - heading "רצפי WhatsApp" [level=1] [ref=e13]
+        - paragraph [ref=e14]: ניהול רצפי הודעות אוטומטיים (drip) ללקוחות · 2 פעילים מתוך 3
+  - generic [ref=e16]:
+    - button "סקירה" [ref=e17] [cursor=pointer]
+    - button "רצפים" [ref=e18] [cursor=pointer]
+    - button "אנשי קשר" [ref=e19] [cursor=pointer]
+    - button "קמפיינים" [ref=e20] [cursor=pointer]
+    - button "ציות" [ref=e21] [cursor=pointer]
+    - button "תבניות" [ref=e22] [cursor=pointer]
+    - button "בונה פלואו" [ref=e23] [cursor=pointer]
+  - generic [ref=e24]:
+    - heading "בריאות המספר" [level=2] [ref=e25]:
+      - img [ref=e26]
+      - text: בריאות המספר
+    - button "רענון" [ref=e28] [cursor=pointer]:
+      - img [ref=e29]
+      - generic [ref=e34]: רענון
+  - generic [ref=e35]:
+    - generic [ref=e36]:
+      - generic [ref=e39]: צהוב
+      - generic [ref=e40]: דירוג איכות
+    - generic [ref=e41]:
+      - generic [ref=e42]: "2000"
+      - generic [ref=e43]: תקרה יומית · TIER_2K
+    - generic [ref=e44]:
+      - generic [ref=e46]:
+        - img [ref=e47]
+        - text: שולח
+      - generic [ref=e50]: "נבדק לאחרונה: 22.6.2026, 8:15:00"
+  - generic [ref=e51]:
+    - heading "התראות פתוחות" [level=2] [ref=e52]:
+      - img [ref=e53]
+      - text: התראות פתוחות
+    - generic [ref=e56]:
+      - generic [ref=e57]:
+        - generic [ref=e58]: warn
+        - generic [ref=e59]:
+          - paragraph [ref=e60]: התבנית "offer_discount" מושהית ע"י מטא. רצפים שמשתמשים בה ממתינים ויימשכו כשתחזור.
+          - paragraph [ref=e61]: template_paused · 22.6.2026, 7:40:00
+      - button "סימון ההתראה כטופלה" [ref=e62] [cursor=pointer]:
+        - img [ref=e63]
+  - generic [ref=e65]:
+    - generic [ref=e66]:
+      - heading "כיסוי הסכמות" [level=2] [ref=e67]:
+        - img [ref=e68]
+        - text: כיסוי הסכמות
+      - generic [ref=e72]: 94%
+    - paragraph [ref=e73]: 386 מתוך 412 אנשי קשר עם רשומת הסכמה
+    - generic [ref=e76]:
+      - generic [ref=e77]: "אנשי קשר: 412"
+      - generic [ref=e78]: "חסומים לשיווק: 19"
+      - generic [ref=e79]: "הסכמה שהתיישנה: 7"
+    - generic [ref=e80]:
+      - generic [ref=e81]:
+        - img [ref=e82]
+        - text: 26 אנשי קשר משויכים לרצף בלי רשומת הסכמה — שיווק אליהם חסום.
+      - button "רישום הסכמה לפי תווית" [ref=e84] [cursor=pointer]:
+        - img [ref=e85]
+        - generic [ref=e88]: רישום הסכמה לפי תווית
+  - generic [ref=e89]:
+    - generic [ref=e90]:
+      - heading "מדיניות ציות" [level=2] [ref=e91]:
+        - img [ref=e92]
+        - text: מדיניות ציות
+      - button "שמירת מדיניות" [ref=e95] [cursor=pointer]:
+        - img [ref=e96]
+        - generic [ref=e100]: שמירת מדיניות
+    - generic [ref=e101]:
+      - generic [ref=e102]:
+        - generic [ref=e103]:
+          - paragraph [ref=e104]: דרוש הסכמה לפני שיווק
+          - paragraph [ref=e105]: בלי רשומת הסכמה מטא רואה בהודעה השיווקית ספאם — וזו הסיבה מספר 1 להשבתת מספרים.
+        - switch "דרוש הסכמה לפני שיווק" [checked] [ref=e106] [cursor=pointer]
+      - generic [ref=e107]:
+        - generic [ref=e108]:
+          - paragraph [ref=e109]: חסימת שיווק לארה״ב
+          - paragraph [ref=e110]: מטא חסמה הודעות שיווק לנמענים בארה״ב — שליחה לשם תיכשל ותפגע בדירוג.
+        - switch "חסימת שיווק לארה״ב" [checked] [ref=e111] [cursor=pointer]
+      - generic [ref=e112]:
+        - generic [ref=e113]:
+          - paragraph [ref=e114]: עצירה אוטומטית בדירוג אדום
+          - paragraph [ref=e115]: דירוג אדום הוא הצעד שלפני השבתת המספר — עצירה אוטומטית מצילה את החשבון.
+        - switch "עצירה אוטומטית בדירוג אדום" [checked] [ref=e116] [cursor=pointer]
+      - generic [ref=e117]:
+        - generic [ref=e118]:
+          - generic [ref=e119]: מקסימום הודעות שיווק ליום לאדם
+          - spinbutton "מקסימום הודעות שיווק ליום לאדם" [ref=e120]: "1"
+          - paragraph [ref=e121]: מטא מענישה ריבוי הודעות שיווקיות לאותו אדם בזמן קצר.
+        - generic [ref=e122]:
+          - generic [ref=e123]: מקסימום הודעות ללא תגובה
+          - spinbutton "מקסימום הודעות ללא תגובה" [ref=e124]: "3"
+          - paragraph [ref=e125]: מי שלא מגיב שוב ושוב צפוי לחסום או לדווח — כל דיווח מוריד את דירוג האיכות.
+        - generic [ref=e126]:
+          - generic [ref=e127]: מקסימום כשלי תקרה
+          - spinbutton "מקסימום כשלי תקרה" [ref=e128]: "2"
+          - paragraph [ref=e129]: אחרי כמה כשלי תקרה (131049) עוצרים את איש הקשר — ניסיונות חוזרים נספרים לרעתכם.
+        - generic [ref=e130]:
+          - generic [ref=e131]: תוקף ההסכמה (ימים)
+          - spinbutton "תוקף ההסכמה (ימים)" [ref=e132]: "30"
+          - paragraph [ref=e133]: "הסכמה מתיישנת: פנייה חודשים אחרי ההרשמה נתפסת כספאם. אחרי התקופה הזו צריך לרענן אותה."
+      - generic [ref=e134]:
+        - generic [ref=e135]: מילות הסרה
+        - textbox "מילות הסרה" [ref=e136]:
+          - /placeholder: הסר, הסרה, stop
+          - text: להסיר, די
+        - paragraph [ref=e137]: כשלקוח כותב אחת מהן הוא נחסם מיידית לשיווק. מופרדות בפסיק.
+  - heading "בריאות התבניות" [level=2] [ref=e138]:
+    - img [ref=e139]
+    - text: בריאות התבניות
+  - table [ref=e144]:
+    - rowgroup [ref=e145]:
+      - row "תבנית שפה קטגוריה סטטוס איכות" [ref=e146]:
+        - columnheader "תבנית" [ref=e147]
+        - columnheader "שפה" [ref=e148]
+        - columnheader "קטגוריה" [ref=e149]
+        - columnheader "סטטוס" [ref=e150]
+        - columnheader "איכות" [ref=e151]
+    - rowgroup [ref=e152]:
+      - row "welcome_intro he MARKETING מאושרת ירוק" [ref=e153]:
+        - cell "welcome_intro" [ref=e154]
+        - cell "he" [ref=e155]
+        - cell "MARKETING" [ref=e156]
+        - cell "מאושרת" [ref=e157]:
+          - generic [ref=e158]: מאושרת
+        - cell "ירוק" [ref=e159]:
+          - generic [ref=e160]: ירוק
+      - row "followup_value he MARKETING מאושרת צהוב" [ref=e161]:
+        - cell "followup_value" [ref=e162]
+        - cell "he" [ref=e163]
+        - cell "MARKETING" [ref=e164]
+        - cell "מאושרת" [ref=e165]:
+          - generic [ref=e166]: מאושרת
+        - cell "צהוב" [ref=e167]:
+          - generic [ref=e168]: צהוב
+      - row "offer_discount he MARKETING מושהית אדום" [ref=e169]:
+        - cell "offer_discount" [ref=e170]
+        - cell "he" [ref=e171]
+        - cell "MARKETING" [ref=e172]
+        - cell "מושהית" [ref=e173]:
+          - generic [ref=e174]:
+            - img [ref=e175]
+            - text: מושהית
+        - cell "אדום" [ref=e177]:
+          - generic [ref=e178]: אדום
+      - row "appointment_reminder he UTILITY מאושרת ירוק" [ref=e179]:
+        - cell "appointment_reminder" [ref=e180]
+        - cell "he" [ref=e181]
+        - cell "UTILITY" [ref=e182]
+        - cell "מאושרת" [ref=e183]:
+          - generic [ref=e184]: מאושרת
+        - cell "ירוק" [ref=e185]:
+          - generic [ref=e186]: ירוק
+  - heading "חסומים לשיווק" [level=2] [ref=e187]:
+    - img [ref=e188]
+    - text: חסומים לשיווק
+  - table [ref=e192]:
+    - rowgroup [ref=e193]:
+      - row "איש קשר טלפון סיבה פירוט מתי פעולה" [ref=e194]:
+        - columnheader "איש קשר" [ref=e195]
+        - columnheader "טלפון" [ref=e196]
+        - columnheader "סיבה" [ref=e197]
+        - columnheader "פירוט" [ref=e198]
+        - columnheader "מתי" [ref=e199]
+        - columnheader "פעולה" [ref=e200]
+    - rowgroup [ref=e201]:
+      - row "— +972541112222 opted_out להסיר 21.6.2026, 14:20:00 בטל חסימה" [ref=e202]:
+        - cell "—" [ref=e203]
+        - cell "+972541112222" [ref=e204]
+        - cell "opted_out" [ref=e205]:
+          - generic [ref=e206]: opted_out
+        - cell "להסיר" [ref=e207]
+        - cell "21.6.2026, 14:20:00" [ref=e208]
+        - cell "בטל חסימה" [ref=e209]:
+          - button "בטל חסימה" [ref=e210] [cursor=pointer]:
+            - generic [ref=e211]: בטל חסימה
+      - row "— +972523334444 מיצה/תה את המכסה האישית 131049 20.6.2026, 9:05:00 בטל חסימה" [ref=e212]:
+        - cell "—" [ref=e213]
+        - cell "+972523334444" [ref=e214]
+        - cell "מיצה/תה את המכסה האישית" [ref=e215]:
+          - generic [ref=e216]: מיצה/תה את המכסה האישית
+        - cell "131049" [ref=e217]
+        - cell "20.6.2026, 9:05:00" [ref=e218]
+        - cell "בטל חסימה" [ref=e219]:
+          - button "בטל חסימה" [ref=e220] [cursor=pointer]:
+            - generic [ref=e221]: בטל חסימה
+      - row "— +972505556666 לא פתח/ה הודעות — 19.6.2026, 16:45:00 בטל חסימה" [ref=e222]:
+        - cell "—" [ref=e223]
+        - cell "+972505556666" [ref=e224]
+        - cell "לא פתח/ה הודעות" [ref=e225]:
+          - generic [ref=e226]: לא פתח/ה הודעות
+        - cell "—" [ref=e227]
+        - cell "19.6.2026, 16:45:00" [ref=e228]
+        - cell "בטל חסימה" [ref=e229]:
+          - button "בטל חסימה" [ref=e230] [cursor=pointer]:
+            - generic [ref=e231]: בטל חסימה
+      - row "— +15551234567 מספר לא תקין US number 18.6.2026, 11:10:00 בטל חסימה" [ref=e232]:
+        - cell "—" [ref=e233]
+        - cell "+15551234567" [ref=e234]
+        - cell "מספר לא תקין" [ref=e235]:
+          - generic [ref=e236]: מספר לא תקין
+        - cell "US number" [ref=e237]
+        - cell "18.6.2026, 11:10:00" [ref=e238]
+        - cell "בטל חסימה" [ref=e239]:
+          - button "בטל חסימה" [ref=e240] [cursor=pointer]:
+            - generic [ref=e241]: בטל חסימה

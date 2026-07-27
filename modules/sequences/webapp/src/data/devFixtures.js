@@ -374,7 +374,8 @@ const COMPLIANCE = {
     { template_name: 'appointment_reminder', language: 'he', status: 'APPROVED', quality: 'GREEN', category: 'UTILITY', checked_at: '2026-06-22 08:15' },
   ],
   alerts: [
-    { id: 1, level: 'warn', code: 'template_paused', message: 'התבנית offer_discount הושהתה על-ידי מטא (איכות RED).', created_at: '2026-06-22 07:40', acked_at: null },
+    // code+params — ה-UI מרכיב את המשפט בשפת הנציג. message הוא ה-fallback בלבד.
+    { id: 1, level: 'warn', code: 'template_paused', params: { template: 'offer_discount' }, message: 'התבנית offer_discount מושהית ע"י מטא.', created_at: '2026-06-22 07:40', acked_at: null },
   ],
   contacts: { known: 412, with_consent: 386, suppressed: 19, stale: 7 },
   // הכיסוי נמדד על מי שנמצא ברצף בלבד (386 + 26), לא על כל 412 אנשי הקשר — מכנה
