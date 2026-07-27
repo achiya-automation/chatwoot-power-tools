@@ -265,6 +265,18 @@ The software is free and MIT-licensed. Running it still costs whatever your serv
 
 Issues and pull requests are welcome — see the issue templates for bug reports and feature requests. CI (`.github/workflows/ci.yml`) runs the full test suite (`node --test` across all three modules, plus the `bats` suite for `install.sh`/`lib/`) on every push and pull request.
 
+### Seeing the dashboard without installing anything
+
+Every screen above runs locally against fixtures — no Chatwoot, no database, no WhatsApp account:
+
+```bash
+cd modules/sequences/webapp && npm install && npm run dev
+```
+
+Then open **`http://localhost:5173/?mock=1&account_id=1`**. Add `&tab=` (`overview`, `sequences`, `contacts`, `campaigns`, `compliance`, `templates`, `journeys`) to land on a specific screen, and `&locale=en` or `&locale=he` to switch language — that's how the screenshots in this README were taken.
+
+The fixtures live in `src/data/devFixtures.js` and are deliberately not an all-green account: one paused template, a YELLOW quality rating and an open alert, so the states that actually matter are visible. The whole file is tree-shaken out of production builds (`import.meta.env.DEV`) and never reaches an installed instance.
+
 ## License
 
 [MIT](LICENSE)

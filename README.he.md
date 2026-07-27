@@ -233,6 +233,24 @@ role+schema אחד במסד הנתונים (`drip_engine`/`drip`, הרשאות �
 [docs/hosting.md](docs/hosting.md) למבט שקוף על אפשרויות אחסון, כולל שירות התקנה/תחזוקה
 בתשלום אם אתם מעדיפים לא להריץ את ההתקנה בעצמכם.
 
+## הרצה מקומית — לראות את הדשבורד בלי להתקין כלום
+
+כל המסכים שלמעלה רצים מקומית מול נתוני דמו — בלי Chatwoot, בלי מסד נתונים, בלי חשבון
+WhatsApp:
+
+```bash
+cd modules/sequences/webapp && npm install && npm run dev
+```
+
+ואז לפתוח **`http://localhost:5173/?mock=1&account_id=1`**. אפשר להוסיף `&tab=`
+(`overview`, `sequences`, `contacts`, `campaigns`, `compliance`, `templates`, `journeys`)
+כדי לנחות ישירות על מסך מסוים, ו-`&locale=he` או `&locale=en` להחלפת שפה — כך צולמו
+הצילומים ב-README הזה.
+
+נתוני הדמו יושבים ב-`src/data/devFixtures.js`, ובמכוון אינם חשבון מושלם: תבנית מושהית
+אחת, דירוג איכות צהוב והתראה פתוחה — כדי שהמצבים שבאמת חשובים יהיו גלויים. כל הקובץ
+נגזם מ-build של production (`import.meta.env.DEV`) ולעולם לא מגיע להתקנה אמיתית.
+
 ## תרומה לפרויקט (Contributing)
 
 Issues ו-Pull Requests מתקבלים בברכה — ראו את תבניות ה-issue לדיווח באגים ובקשות
