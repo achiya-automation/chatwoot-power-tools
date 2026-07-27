@@ -52,12 +52,14 @@ const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0);
 // גוון הבאדג' לכל מצב סופי בטבלה (ראו lib/campaignRows.js).
 const STATUS_COLOR = { read: 'blue', delivered: 'teal', sent: 'slate', pending: 'slate', failed: 'ruby', notsent: 'amber' };
 
-// external_error מגיע מ-Meta כמחרוזת גולמית ("131049: This message was not delivered…") —
-// מחלצים את הקוד המספרי וממפים להסבר מתורגם מ-deliveryError.js (משותף עם הרצפים).
+// error_title הוא או מחרוזת גולמית של Meta ("131049: This message was not delivered…"),
+// שממנה מחלצים את הקוד המספרי, או מפתח סיבה מילולי מה-ledger ("no_phone") כשהשליחה
+// נעצרה אצלנו. שניהם ממופים דרך אותה טבלה ב-deliveryError.js (משותפת עם הרצפים).
 const errorLabel = (raw) => {
   if (!raw) return '';
-  const code = (/^(\d+)/.exec(String(raw)) || [])[1] || null;
-  return deliveryErrorLabel(code, raw);
+  const text = String(raw);
+  const code = (/^(\d+)/.exec(text) || [])[1] || text;
+  return deliveryErrorLabel(code, text);
 };
 
 /*
@@ -350,7 +352,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
               <TD><span className="font-mono text-xs">{r.phone || '—'}</span></TD>
               <TD><Badge color={STATUS_COLOR[r.statusKey] || 'slate'}>{t(`s_${r.statusKey}`)}</Badge>
                 {/* ההסבר המתורגם מוצג; המחרוזת הגולמית של Meta נשמרת ב-title לרחיפה (תמיכה/דיבוג) */}
-                {r.error_title ? <span title={r.error_title} className="mt-0.5 block text-xs text-n-ruby-11">{errorLabel(r.error_title)}</span> : null}</TD>
+                {r.error_title ? <span title={r.error_title} className={`mt-0.5 block text-xs ${r.statusKey === 'notsent' ? 'text-n-amber-11' : 'text-n-ruby-11'}`}>{errorLabel(r.error_title)}</span> : null}</TD>
               <TD>{r.replied
                 ? <span title={r.reply_content || undefined} className="block max-w-[16rem] truncate text-xs text-n-teal-11">{r.reply_content || t('yes')}</span>
                 : <span className="text-xs text-n-slate-10">—</span>}</TD>

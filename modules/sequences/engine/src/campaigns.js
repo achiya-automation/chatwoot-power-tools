@@ -397,6 +397,10 @@ export async function getCampaignDetail(query, accountId, campaignId) {
 
   const funnel = recipients.reduce(
     (f, r) => {
+      // status 4 = שורת ledger של דילוג: הנמען היה בקהל אבל שום שליחה לא נוסתה
+      // (אין טלפון / אין תבנית / משתנה ריק). היא נספרת בקהל ומוצגת בטבלה עם הסיבה,
+      // אבל אינה ניסיון — אחרת "נוסו" היה כולל את מי שמעולם לא פנינו אליו.
+      if (r.status === 4) { f.skipped += 1; return f; }
       f.attempted += 1;
       if (r.status === 0 || r.status === 1 || r.status === 2) f.sent += 1;
       if (r.status === 1 || r.status === 2) f.delivered += 1;
@@ -405,7 +409,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
       if (r.status === 0) f.pending += 1;
       return f;
     },
-    { audience: 0, attempted: 0, sent: 0, delivered: 0, read: 0, failed: 0, pending: 0 }
+    { audience: 0, attempted: 0, sent: 0, delivered: 0, read: 0, failed: 0, pending: 0, skipped: 0 }
   );
 
   // Engagement uses all attempt conversations, including recovered outgoing-echo rows without
@@ -504,7 +508,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
       phone: normalizeCampaignPhone(contact.phone),
       reason: 'no_attempt_record',
     }));
-  funnel.audience = audienceContacts.length || funnel.attempted;
+  funnel.audience = audienceContacts.length || (funnel.attempted + funnel.skipped);
 
   return { campaign, funnel, engagement, recipients, not_sent, audience_source: audienceSource };
 }
