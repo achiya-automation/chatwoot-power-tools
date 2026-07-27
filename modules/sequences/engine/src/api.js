@@ -333,6 +333,16 @@ export function createApp(config) {
       payload.__isAdmin = admin;
     }
 
+    // Presence: קריאה/כתיבה של הגדרות "נקרא"/"מקליד" — אדמינים בלבד. שני חריגים
+    // פתוחים לכל חבר: prs_typing (ממסר הקלדה מתוך שיחה — נציג מקליד, לא מגדיר) ו-
+    // prs_get (המסך רק מציג). זהות מהשרת, לא מהלקוח — אותו כלל כמו tpl_/jrn_.
+    if (/^prs_/.test(action)) {
+      const PRS_ANY_MEMBER = new Set(['prs_typing', 'prs_get']);
+      if (!PRS_ANY_MEMBER.has(action) && !isTplAdmin(req.dripAccess, accountId)) {
+        return res.status(403).json({ ok: false, error: 'administrator role required' });
+      }
+    }
+
     // בונה פלואו: ניהול (שמירה/מחיקה/הפעלה-כיבוי) לאדמינים בלבד; רשימה והפעלה-ידנית
     // פתוחות לכל חבר בחשבון — נציג מזניק פלואו מתוך שיחה, אבל לא עורך אותו.
     // זהות הפועל נקבעת בשרת (לעולם לא מהלקוח) כדי ש-jrn_launch יוכל לאכוף ראיית-שיחה.

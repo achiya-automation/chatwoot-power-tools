@@ -52,6 +52,7 @@ import { projectSchedule } from './schedule.js';
 import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from './campaigns.js';
 import { handleTemplatesAction } from './templates.js';
 import { handleJourneysAction, makeJourneysCtx } from './journeys.js';
+import { handlePresenceAction } from './presence.js';
 import { makeClient } from './chatwoot.js';
 
 let _config = null;
@@ -106,6 +107,12 @@ export async function handleAction(accountId, action, payload) {
   // בונה פלואו (journeys) — אותו דפוס: מודול נפרד, פריפיקס jrn_.
   // api.js משדר ללקוח את result.data — לכן העטיפה כאן, פעם אחת לכל פעולות ה-jrn_
   // (הלקוח קורא json.data; ההחזרות של handleJourneysAction הן הערך עצמו).
+  // Presence — "נקרא"/"מקליד" (prs_*): אותו דפוס, מודול נפרד.
+  if (action.startsWith('prs_')) {
+    const result = await handlePresenceAction({ query, log: (m) => console.log(m) }, action, payload, accId);
+    return { data: result };
+  }
+
   if (action.startsWith('jrn_')) {
     const result = await handleJourneysAction(
       makeJourneysCtx({ query, makeClient, makeDbReads, config: {} }),

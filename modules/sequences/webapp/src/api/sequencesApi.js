@@ -279,6 +279,19 @@ export async function getCompliance(accountId) {
   return call('compliance', {}, accountId);
 }
 
+// Presence — "נקרא"/"מקליד": prs_get → { defaults, inboxes:[{id,name,phone_number,
+// settings, inherited}] }. שמירה עם inbox_id=0 קובעת את ברירת המחדל של החשבון;
+// reset מוחק את שורת התיבה (חזרה לירושה).
+export async function getPresence(accountId) {
+  return call('prs_get', {}, accountId);
+}
+export async function savePresence(accountId, settings) {
+  return call('prs_save', settings, accountId);
+}
+export async function resetPresence(accountId, inboxId) {
+  return call('prs_reset', { inbox_id: inboxId }, accountId);
+}
+
 // whatsapp_inboxes — מספרי הוואטסאפ של החשבון: { inboxes: [{id, name, phone_number_id,
 // chosen}], count, needs_choice }. needs_choice=true ⇒ יש כמה מספרים ולא נבחר אחד,
 // והמנוע **עוצר** עד שיבחרו (הוא לא מנחש ממי לשלוח).
