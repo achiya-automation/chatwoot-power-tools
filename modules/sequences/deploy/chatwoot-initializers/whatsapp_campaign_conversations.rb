@@ -13,13 +13,13 @@
 #    template's example handle is downloaded and re-uploaded to the WhatsApp
 #    Media API (Meta's fetcher 403s on its own scontent links — error 131053),
 #    and the media id is cached in Redis for 25 days.
-# 4. Durable send ledger (drip.campaign_audience_snapshots / campaign_send_snapshots):
-#    one immutable row per recipient — including the ones upstream silently drops
-#    (no phone, no template params, blank Liquid, Meta rejection). Without it a
-#    campaign report has to infer "was this sent?" from content_attributes.campaign_id
-#    on the outgoing message, which the panel's own retry button wipes
-#    (messages_controller#retry does `update!(content_attributes: {})`), and which
-#    never exists at all for a recipient the send never reached.
+# 4. Captures the exact audience before processing and stamps the original contact identity on
+#    every recorded message. Imported contacts can otherwise be represented by a second,
+#    channel-bound Contact record with an automatic name and no phone, corrupting CSV reports.
+# 5. Records a ledger row for EVERY recipient, including the ones upstream drops in silence:
+#    no phone, no template params, blank Liquid, or a send Meta rejected. Without them a
+#    recipient simply vanishes from the report with no reason attached — that is how 39
+#    phone-less contacts sat in a campaign audience and received nothing, unnoticed.
 #
 # Mounted read-only via docker-compose into rails + sidekiq (survives image updates).
 # Created: 2026-02-18 | Rewritten: 2026-06-10 for Chatwoot v4.14.1
@@ -35,12 +35,51 @@
 # applied — upstream campaign sending keeps working, only the local extras
 # (conversation recording, carousel) are skipped — and a loud error is logged.
 
+# Delivery webhooks can update or replace Chatwoot's presentation message. Keep the durable
+# attempt row in sync by Meta source id so reports do not lose a final status with the UI row.
+module WhatsappCampaignStatusSnapshotWriter
+  def self.record(message)
+    return if message.source_id.blank?
+
+    connection = ActiveRecord::Base.connection
+    status = message.status_before_type_cast.to_i
+    error = status == 3 ? message.external_error : nil
+    connection.execute(<<~SQL.squish)
+      UPDATE drip.campaign_send_snapshots
+         SET message_id = #{message.id.to_i},
+             conversation_id = #{message.conversation_id.to_i},
+             status = CASE
+               WHEN status = 3 OR #{status} = 3 THEN 3
+               ELSE GREATEST(status, #{status})
+             END,
+             error_title = CASE
+               WHEN #{status} = 3 THEN #{connection.quote(error)}
+               ELSE error_title
+             END,
+             status_updated_at = CURRENT_TIMESTAMP
+       WHERE account_id = #{message.account_id.to_i}
+         AND source_id = #{connection.quote(message.source_id.to_s)}
+    SQL
+  rescue StandardError => e
+    Rails.logger.error "Campaign delivery snapshot update failed: #{e.class}: #{e.message}"
+  end
+end
+
+module WhatsappCampaignIncomingStatusPatch
+  private
+
+  def update_message_with_status(message, status)
+    result = super
+    WhatsappCampaignStatusSnapshotWriter.record(message)
+    result
+  end
+end
+
 # Error sink handed to Chatwoot's send_template in place of the `message` argument.
 # Upstream passes nil, so Meta's rejection reason is written to the log and lost. A real
-# Message can't be used either: Base::SendOnChannelService skips a send only when
-# source_id is already present, so an unsent Message record would be delivered a second
-# time by SendReplyJob. This object satisfies the three calls handle_error makes
-# (blank? / external_error= / status= / save!) and nothing else.
+# Message can't be used either: Base::SendOnChannelService skips a send only when source_id
+# is already present, so an unsent Message record would be delivered a second time by
+# SendReplyJob. This object satisfies the calls handle_error makes and nothing else.
 class WhatsappCampaignErrorSink
   attr_accessor :external_error, :status
 
@@ -76,46 +115,119 @@ Rails.application.config.after_initialize do
                          'send ledger will not be recorded — campaign reports go blind. ' \
                          'Review /opt/chatwoot/custom-initializers/whatsapp_campaign_conversations.rb against the new Chatwoot version!'
     else
-      # Ledger status codes used below. 0..3 mirror Message#status
-      # (sent / delivered / read / failed); 4 is local and means "no send was
-      # attempted at all" — the reason is carried in error_title.
       svc.class_eval do
         private
 
-        # Same as upstream, plus the audience snapshot. Label membership drifts after a
-        # send (contacts get re-tagged, imported twins appear), so a report that resolves
-        # the audience from the label at read time reports a different campaign than the
-        # one that ran. Capture it once, before the first send.
+        # Freeze the exact relation once so the audience count, snapshot and processed contacts
+        # cannot drift if label membership changes while a large campaign is running.
         def process_audience(audience_labels)
-          contacts = campaign.account.contacts.tagged_with(audience_labels, any: true)
-          Rails.logger.info "Processing #{contacts.count} contacts for campaign #{campaign.id}"
+          contacts = campaign.account.contacts.tagged_with(audience_labels, any: true).to_a
+          Rails.logger.info "Processing #{contacts.length} contacts for campaign #{campaign.id}"
 
-          capture_campaign_audience(contacts)
+          snapshot_campaign_audience(contacts)
           contacts.each { |contact| process_contact(contact) }
 
           Rails.logger.info "Campaign #{campaign.id} processing completed"
         end
 
+        # Best-effort by design: a reporting-table problem must never block customer messages.
+        # ON CONFLICT DO NOTHING preserves the first (historically correct) audience on job retry.
+        def snapshot_campaign_audience(contacts)
+          return if contacts.empty?
+
+          connection = ActiveRecord::Base.connection
+          contacts.each_slice(500) do |batch|
+            values = batch.map do |contact|
+              "(#{campaign.account_id.to_i},#{campaign.id.to_i},#{contact.id.to_i}," \
+                "#{connection.quote(contact.name)},#{connection.quote(contact.phone_number)},CURRENT_TIMESTAMP)"
+            end.join(',')
+
+            connection.execute(<<~SQL.squish)
+              INSERT INTO drip.campaign_audience_snapshots
+                (account_id, campaign_id, contact_id, contact_name, phone, captured_at)
+              VALUES #{values}
+              ON CONFLICT (account_id, campaign_id, contact_id) DO NOTHING
+            SQL
+          end
+          Rails.logger.info "Campaign #{campaign.id}: Captured audience snapshot (#{contacts.length} contacts)"
+        rescue StandardError => e
+          Rails.logger.error "Campaign #{campaign.id}: Audience snapshot failed: #{e.class}: #{e.message}"
+        end
+
+        # Record the accepted Meta send before touching Chatwoot's conversation/message layer.
+        # source_id is Meta's stable wamid and therefore remains reliable even when an outgoing
+        # echo is later represented by a different Chatwoot message row.
+        #
+        # status: 0 = accepted by Meta, 3 = Meta rejected the request, 4 = local skip, no send
+        # was attempted at all (reason in error_title). 4 is ours; 0..3 mirror Message#status.
+        def snapshot_campaign_send(contact, whatsapp_message_id, status: 0, error: nil)
+          connection = ActiveRecord::Base.connection
+          # A skip or a rejection has no wamid, but source_id is part of the primary key —
+          # a per-contact synthetic key keeps one row per recipient and lets a re-run update it.
+          key = whatsapp_message_id.presence || "skip:#{campaign.id}:#{contact.id}"
+          connection.execute(<<~SQL.squish)
+            INSERT INTO drip.campaign_send_snapshots
+              (account_id, campaign_id, contact_id, contact_name, phone, source_id, status,
+               error_title, attempted_at, status_updated_at)
+            VALUES
+              (#{campaign.account_id.to_i}, #{campaign.id.to_i}, #{contact.id.to_i},
+               #{connection.quote(contact.name)}, #{connection.quote(contact.phone_number)},
+               #{connection.quote(key.to_s)}, #{status.to_i}, #{connection.quote(error)},
+               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (account_id, campaign_id, source_id) DO UPDATE
+              SET contact_id = EXCLUDED.contact_id,
+                  contact_name = EXCLUDED.contact_name,
+                  phone = EXCLUDED.phone,
+                  -- A re-run may turn a skip into a real send or vice versa, so a terminal
+                  -- outcome (3/4) always wins. An accepted send (0) must NOT overwrite a
+                  -- status a delivery webhook has already advanced.
+                  status = CASE WHEN EXCLUDED.status >= 3 THEN EXCLUDED.status
+                                ELSE drip.campaign_send_snapshots.status END,
+                  error_title = COALESCE(EXCLUDED.error_title, drip.campaign_send_snapshots.error_title),
+                  status_updated_at = CURRENT_TIMESTAMP
+          SQL
+        rescue StandardError => e
+          Rails.logger.error "Campaign #{campaign.id}: Send snapshot failed: #{e.class}: #{e.message}"
+        end
+
+        def attach_campaign_send_snapshot(whatsapp_message_id, conversation, message = nil)
+          connection = ActiveRecord::Base.connection
+          message_id_sql = message&.id ? message.id.to_i : 'message_id'
+          status = message&.status_before_type_cast.to_i
+          connection.execute(<<~SQL.squish)
+            UPDATE drip.campaign_send_snapshots
+               SET conversation_id = #{conversation.id.to_i},
+                   message_id = #{message_id_sql},
+                   status = CASE WHEN status = 3 THEN 3 ELSE GREATEST(status, #{status}) END,
+                   status_updated_at = CURRENT_TIMESTAMP
+             WHERE account_id = #{campaign.account_id.to_i}
+               AND campaign_id = #{campaign.id.to_i}
+               AND source_id = #{connection.quote(whatsapp_message_id.to_s)}
+          SQL
+        rescue StandardError => e
+          Rails.logger.error "Campaign #{campaign.id}: Send snapshot link failed: #{e.class}: #{e.message}"
+        end
+
         # Same flow as upstream v4.14.1 #process_contact (including Liquid), plus
-        # conversation/message recording after a successful send and a ledger row for
-        # every outcome — upstream returns silently on each skip, which is exactly how
-        # a recipient disappears from the report with no reason attached.
+        # conversation/message recording after a successful send — and a ledger row for every
+        # outcome. Upstream returns silently on each of these skips, which is exactly how a
+        # recipient disappears from the report with no reason attached.
         def process_contact(contact)
           Rails.logger.info "Processing contact: #{contact.name} (#{contact.phone_number})"
 
           if contact.phone_number.blank?
             Rails.logger.info "Skipping contact #{contact.name} - no phone number"
-            return record_campaign_send(contact, status: 4, error: 'no_phone')
+            return snapshot_campaign_send(contact, nil, status: 4, error: 'no_phone')
           end
 
           if campaign.template_params.blank?
             Rails.logger.error "Skipping contact #{contact.name} - no template_params found for WhatsApp campaign"
-            return record_campaign_send(contact, status: 4, error: 'no_template_params')
+            return snapshot_campaign_send(contact, nil, status: 4, error: 'no_template_params')
           end
 
           processed_template_params = process_liquid_template_params(contact)
           if processed_template_params.nil?
-            return record_campaign_send(contact, status: 4, error: 'liquid_blank')
+            return snapshot_campaign_send(contact, nil, status: 4, error: 'liquid_blank')
           end
 
           error_sink = WhatsappCampaignErrorSink.new
@@ -124,18 +236,17 @@ Rails.application.config.after_initialize do
           )
 
           if whatsapp_message_id.present?
-            message = create_campaign_conversation_and_message(contact, whatsapp_message_id, processed_template_params)
-            record_campaign_send(contact, status: 0, source_id: whatsapp_message_id,
-                                          message_id: message&.id, conversation_id: message&.conversation_id)
+            snapshot_campaign_send(contact, whatsapp_message_id)
+            create_campaign_conversation_and_message(contact, whatsapp_message_id, processed_template_params)
           else
             Rails.logger.error "Campaign #{campaign.id}: Send failed for #{contact.phone_number}"
-            record_campaign_send(contact, status: 3,
-                                          error: error_sink.external_error.presence || 'send_failed')
+            snapshot_campaign_send(contact, nil, status: 3,
+                                                 error: error_sink.external_error.presence || 'send_failed')
           end
         end
 
-        # Same as upstream v4.14.1, plus append_carousel_component before send and the
-        # error sink in place of upstream's nil (see WhatsappCampaignErrorSink).
+        # Same as upstream v4.14.1, plus append_carousel_component before send and the error
+        # sink in place of upstream's nil (see WhatsappCampaignErrorSink).
         def send_whatsapp_template_message(to:, template_params:, error_sink: nil)
           processor = Whatsapp::TemplateProcessorService.new(
             channel: channel,
@@ -283,66 +394,6 @@ Rails.application.config.after_initialize do
           url.to_s.first(60)
         end
 
-        # ── Durable send ledger ──────────────────────────────────────────────
-        # Written by Rails (the only place that sees every outcome) and read by the
-        # campaign report. Best-effort by design: an installation without the drip
-        # schema, or a revoked grant, must never break an actual send — the write is
-        # logged and skipped.
-
-        def campaign_ledger_exec(sql)
-          ActiveRecord::Base.connection.exec_query(sql, 'campaign-ledger')
-          true
-        rescue StandardError => e
-          Rails.logger.warn "[CUSTOM] Campaign ledger write skipped: #{e.class}: #{e.message}"
-          false
-        end
-
-        def capture_campaign_audience(contacts)
-          values = contacts.map do |c|
-            ActiveRecord::Base.sanitize_sql_array(
-              ['(?, ?, ?, ?, ?)', campaign.account_id, campaign.id, c.id, c.name.to_s, c.phone_number.to_s]
-            )
-          end
-          return if values.empty?
-
-          # ON CONFLICT DO NOTHING keeps a re-run (retriggered campaign) from rewriting
-          # the original capture — the first snapshot is the historical truth.
-          values.each_slice(500) do |slice|
-            campaign_ledger_exec(<<~SQL.squish)
-              INSERT INTO drip.campaign_audience_snapshots
-                (account_id, campaign_id, contact_id, contact_name, phone)
-              VALUES #{slice.join(', ')}
-              ON CONFLICT (account_id, campaign_id, contact_id) DO NOTHING
-            SQL
-          end
-        end
-
-        def record_campaign_send(contact, status:, source_id: nil, error: nil, message_id: nil, conversation_id: nil)
-          # source_id is part of the primary key, but a skip/rejection has no Meta id —
-          # a per-contact synthetic key keeps one row per recipient and makes a re-run
-          # update that row instead of appending a duplicate.
-          key = source_id.presence || "skip:#{campaign.id}:#{contact.id}"
-          template = <<~SQL.squish
-            INSERT INTO drip.campaign_send_snapshots
-              (account_id, campaign_id, contact_id, contact_name, phone, source_id,
-               conversation_id, message_id, status, error_title)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (account_id, campaign_id, source_id) DO UPDATE
-              SET status = EXCLUDED.status,
-                  error_title = EXCLUDED.error_title,
-                  conversation_id = COALESCE(EXCLUDED.conversation_id, drip.campaign_send_snapshots.conversation_id),
-                  message_id = COALESCE(EXCLUDED.message_id, drip.campaign_send_snapshots.message_id),
-                  status_updated_at = now()
-          SQL
-          campaign_ledger_exec(ActiveRecord::Base.sanitize_sql_array(
-                                 [template, campaign.account_id, campaign.id, contact.id, contact.name.to_s,
-                                  contact.phone_number.to_s, key, conversation_id, message_id, status, error]
-                               ))
-          nil
-        end
-
-        # Returns the recorded Message (nil if anything went wrong) so the caller can
-        # link the ledger row to the conversation.
         def create_campaign_conversation_and_message(contact, whatsapp_message_id, template_params)
           phone_number = contact.phone_number.to_s.delete_prefix('+')
 
@@ -372,6 +423,8 @@ Rails.application.config.after_initialize do
             end
           end
 
+          attach_campaign_send_snapshot(whatsapp_message_id, conversation)
+
           template_text = build_template_text(template_params)
           sender = campaign.sender || campaign.account.users.first
 
@@ -383,20 +436,23 @@ Rails.application.config.after_initialize do
             source_id: whatsapp_message_id.to_s,
             sender: sender,
             status: :sent,
-            content_attributes: { 'campaign_id' => campaign.id }
+            content_attributes: {
+              'campaign_id' => campaign.id,
+              'campaign_contact_id' => contact.id,
+              'campaign_contact_name' => contact.name,
+              'campaign_phone' => contact.phone_number
+            }
           )
 
           if message.persisted?
+            attach_campaign_send_snapshot(whatsapp_message_id, conversation, message)
             Rails.logger.info "Campaign #{campaign.id}: Created message #{message.id} in conversation #{conversation.id} for #{contact.phone_number}"
-            message
           else
             Rails.logger.error "Campaign #{campaign.id}: Failed to create message: #{message.errors.full_messages.join(', ')}"
-            nil
           end
         rescue StandardError => e
           Rails.logger.error "Campaign #{campaign.id}: Conversation creation failed for #{contact.phone_number}: #{e.message}"
           Rails.logger.error e.backtrace.first(5).join("\n")
-          nil
         end
 
         # Renders the template body using the per-contact (Liquid-resolved)
@@ -415,6 +471,10 @@ Rails.application.config.after_initialize do
 
           text
         end
+      end
+
+      unless Whatsapp::IncomingMessageBaseService.ancestors.include?(WhatsappCampaignIncomingStatusPatch)
+        Whatsapp::IncomingMessageBaseService.prepend(WhatsappCampaignIncomingStatusPatch)
       end
 
       Rails.logger.info '[CUSTOM] WhatsApp campaign conversation patch loaded successfully (v4.14.1 Liquid-aware)'
