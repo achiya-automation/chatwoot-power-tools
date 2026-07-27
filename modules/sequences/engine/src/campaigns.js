@@ -191,6 +191,10 @@ function collapseRecipientAttempts(rawRecipients, audienceContacts) {
 // wrong way — hence the explicit two-step form.
 const TZ = 'Asia/Jerusalem';
 const localTs = (col) => `((${col}) AT TIME ZONE 'UTC' AT TIME ZONE '${TZ}')`;
+// For timestamptz columns (the drip ledger) the value already carries a zone, so ONE
+// conversion is the whole job. Running localTs on them re-reads the UTC clock reading as
+// a local wall time and shifts the result three hours back — a send at 18:30 reads 12:30.
+const localTsTz = (col) => `((${col}) AT TIME ZONE '${TZ}')`;
 
 // Per-campaign status counts. The durable send ledger wins; explicitly tagged legacy messages
 // are included only when the same Meta/message id is not already represented in the ledger.
@@ -346,7 +350,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
               CASE WHEN s.status = 3 THEN 3
                    ELSE greatest(s.status, coalesce(m.status, 0)) END AS status,
               coalesce(s.error_title, ${caObj('m.content_attributes')} ->> 'external_error') AS error_title,
-              to_char(${localTs('s.attempted_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
+              to_char(${localTsTz('s.attempted_at')}, 'YYYY-MM-DD HH24:MI') AS sent_at,
               coalesce(m.conversation_id, s.conversation_id) AS conversation_id,
               cv.display_id AS conversation_display_id
          FROM drip.campaign_send_snapshots s
