@@ -91,7 +91,7 @@ export default function Dropdown({
         aria-expanded={open}
         onClick={() => !disabled && setOpen((o) => !o)}
         onKeyDown={onKeyDown}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-n-weak bg-n-alpha-1 px-3 text-start text-sm outline-none transition-colors duration-150 focus:border-n-brand focus:ring-1 focus:ring-n-brand/40 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border-none bg-n-alpha-black2 px-3 text-start text-sm outline outline-1 outline-offset-[-1px] outline-n-weak hover:outline-n-slate-6 focus:outline-n-brand transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className={`truncate ${selected ? 'text-n-slate-12' : 'text-n-slate-10'}`}>
           {selected ? selected.label : _placeholder}
@@ -108,7 +108,7 @@ export default function Dropdown({
           ref={listRef}
           role="listbox"
           aria-activedescendant={active >= 0 ? `${id || 'dd'}-opt-${active}` : undefined}
-          className="mt-1 max-h-64 overflow-auto rounded-lg border border-n-weak bg-n-surface-1 py-1 shadow-lg shadow-black/10"
+          className="mt-1 max-h-64 overflow-auto rounded-xl bg-n-alpha-3 backdrop-blur-[100px] outline outline-1 outline-n-container pt-2 pb-1 px-1 shadow-lg"
         >
           {options.length === 0 ? (
             <li className="px-3 py-3 text-center text-xs text-n-slate-11">{t('noOptions')}</li>
@@ -125,9 +125,9 @@ export default function Dropdown({
                     disabled={opt.disabled}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => choose(opt)}
-                    className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-start transition-colors ${
+                    className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 min-h-8 text-start transition-colors ${
                       opt.disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'
-                    } ${isActive && !opt.disabled ? 'bg-n-alpha-2' : ''}`}
+                    } ${isActive && !opt.disabled ? 'bg-n-alpha-1 dark:bg-n-alpha-2' : ''} ${sel ? 'bg-n-alpha-1 dark:bg-n-solid-active' : ''}`}
                   >
                     <span className="min-w-0">
                       <span className={`block truncate text-sm ${sel ? 'font-medium text-n-slate-12' : 'text-n-slate-11'}`}>

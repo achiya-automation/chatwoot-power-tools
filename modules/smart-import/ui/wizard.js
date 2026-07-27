@@ -912,7 +912,7 @@ function mountPill(job, { dark, rtl }) {
   head.append(title, xBtn);
 
   const track = el('div', 'h-1.5 w-full rounded-full bg-n-alpha-2 overflow-hidden');
-  const fill = el('div', 'cwi-prog-fill');
+  const fill = el('div', 'cwi-prog-fill bg-n-brand');
   fill.style.width = '0%';
   track.appendChild(fill);
 

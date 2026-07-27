@@ -1,16 +1,16 @@
 import React from 'react';
 
 /*
- * Table — זהה לטבלה של Chatwoot v4.
- * כותרת slate-11 קטנה, שורות עם border-n-weak, hover עדין.
- * עטוף ב-Card-like container.
+ * Table — זהה ל-BaseTable.vue של Chatwoot (components-next/table): טבלה שטוחה עם
+ * divide-y, כותרות text-heading-3 slate-12, תאים text-body-main על slate-11 —
+ * בלי מעטפת כרטיס, בלי צל, בלי hover על שורות (כמו במקור).
  */
 
 export function Table({ children, className = '' }) {
   return (
-    <div className="w-full overflow-x-auto bg-n-solid-2 border border-n-weak rounded-xl shadow-sm">
+    <div className="w-full overflow-x-auto">
       <table
-        className={['w-full border-collapse text-sm', className]
+        className={['min-w-full table-auto divide-y divide-n-weak', className]
           .filter(Boolean)
           .join(' ')}
       >
@@ -21,25 +21,16 @@ export function Table({ children, className = '' }) {
 }
 
 export function THead({ children }) {
-  return <thead className="bg-n-alpha-1">{children}</thead>;
+  return <thead className="border-t border-n-weak">{children}</thead>;
 }
 
 export function TBody({ children }) {
-  return <tbody>{children}</tbody>;
+  return <tbody className="divide-y divide-n-weak text-n-slate-11">{children}</tbody>;
 }
 
 export function TR({ children, className = '', ...props }) {
   return (
-    <tr
-      className={[
-        'border-b border-n-weak last:border-b-0 transition-colors',
-        'hover:bg-n-alpha-2',
-        className,
-      ]
-        .filter(Boolean)
-        .join(' ')}
-      {...props}
-    >
+    <tr className={className || undefined} {...props}>
       {children}
     </tr>
   );
@@ -50,7 +41,7 @@ export function TH({ children, className = '', align = 'start' }) {
     <th
       scope="col"
       className={[
-        'px-4 py-3 text-xs font-semibold text-n-slate-11 uppercase tracking-wide',
+        'py-4 pe-4 first:ps-4 text-heading-3 text-n-slate-12',
         align === 'end' ? 'text-end' : 'text-start',
         className,
       ]
@@ -66,7 +57,7 @@ export function TD({ children, className = '', align = 'start' }) {
   return (
     <td
       className={[
-        'px-4 py-3 text-n-slate-12 align-middle',
+        'py-3 pe-4 first:ps-4 text-body-main align-middle',
         align === 'end' ? 'text-end' : 'text-start',
         className,
       ]

@@ -278,7 +278,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
                   >
                     <span className="shrink-0 text-xs font-medium text-n-slate-12">{r.contact_name || '—'}</span>
                     <span className="min-w-0 flex-1 truncate text-xs text-n-slate-11">{r.content || t('noReplyText')}</span>
-                    <span className="shrink-0 text-[10px] text-n-slate-10">{r.replied_at}</span>
+                    <span className="shrink-0 text-xxs text-n-slate-10">{r.replied_at}</span>
                     <ExternalLink size={11} className="no-print shrink-0 text-n-slate-10 opacity-0 group-hover:opacity-100" aria-hidden="true" />
                   </button>
                 </li>
@@ -334,7 +334,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
       </div>
 
       <Table>
-        <THead><TR className="hover:bg-transparent"><TH>{t('name')}</TH><TH>{t('phone')}</TH><TH>{t('status')}</TH><TH>{t('reply')}</TH><TH>{t('attempts')}</TH><TH>{t('when')}</TH></TR></THead>
+        <THead><TR><TH>{t('name')}</TH><TH>{t('phone')}</TH><TH>{t('status')}</TH><TH>{t('reply')}</TH><TH>{t('attempts')}</TH><TH>{t('when')}</TH></TR></THead>
         <TBody>
           {visible.map((r, i) => (
             <TR

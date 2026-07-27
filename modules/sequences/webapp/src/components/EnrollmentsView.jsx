@@ -323,7 +323,7 @@ export default function EnrollmentsView({ accountId }) {
       ) : (
         <Table>
           <THead>
-            <TR className="hover:bg-transparent">
+            <TR>
               <TH>{t('colContact')}</TH>
               <TH>{t('colSequence')}</TH>
               <TH>{t('colProgress')}</TH>

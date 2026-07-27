@@ -50,7 +50,7 @@
     btn.id = BTN_ID;
     btn.type = 'button';
     btn.className = 'text-sm font-medium rounded-full shadow-lg border border-n-weak bg-n-background text-n-blue-11 hover:bg-n-alpha-2';
-    btn.style.cssText = 'position:fixed;bottom:92px;inset-inline-end:18px;z-index:9998;padding:6px 14px;display:none;cursor:pointer;';
+    btn.style.cssText = 'position:fixed;bottom:92px;inset-inline-end:18px;z-index:9998;padding:6px 12px;display:none;cursor:pointer;';
     btn.innerHTML = '<span class="i-lucide-zap size-3.5" style="display:inline-block;vertical-align:-2px;"></span> <span></span>';
     btn.addEventListener('click', togglePopover);
     document.body.appendChild(btn);
@@ -85,7 +85,7 @@
         var it = document.createElement('button');
         it.type = 'button';
         it.className = 'text-sm rounded-lg hover:bg-n-alpha-2 text-n-slate-12';
-        it.style.cssText = 'display:block;width:100%;text-align:start;padding:7px 10px;cursor:pointer;background:none;border:none;';
+        it.style.cssText = 'display:block;width:100%;text-align:start;padding:6px 8px;cursor:pointer;background:none;border:none;';
         it.textContent = j.name;
         it.addEventListener('click', function () { launch(ctx, j, it); });
         pop.appendChild(it);
@@ -110,7 +110,7 @@
     var el = document.createElement('div');
     el.className = 'text-sm rounded-lg shadow-lg border ' +
       (kind === 'ok' ? 'bg-n-background text-n-teal-11 border-n-weak' : 'bg-n-background text-n-ruby-11 border-n-weak');
-    el.style.cssText = 'position:fixed;bottom:92px;inset-inline-end:18px;z-index:10000;padding:8px 14px;';
+    el.style.cssText = 'position:fixed;bottom:92px;inset-inline-end:18px;z-index:10000;padding:8px 12px;';
     el.textContent = text;
     document.body.appendChild(el);
     setTimeout(function () { el.remove(); }, 2600);

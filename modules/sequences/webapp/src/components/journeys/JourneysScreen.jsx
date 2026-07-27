@@ -331,7 +331,7 @@ export default function JourneysScreen({ accountId }) {
       ) : rows.length > 0 ? (
         <Table>
           <THead>
-            <TR className="hover:bg-transparent">
+            <TR>
               <TH>{t('colName')}</TH>
               <TH>{t('colStatus')}</TH>
               <TH>{t('colNodes')}</TH>

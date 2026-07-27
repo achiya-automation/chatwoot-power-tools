@@ -1,3 +1,4 @@
+import { RefreshCw } from 'lucide-react';
 import Button from './ui/Button.jsx';
 import useT from '../useT.js';
 
@@ -20,7 +21,7 @@ export default function UpdateBanner() {
       className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-n-amber-7 bg-n-amber-3 px-4 py-2 text-sm text-n-amber-12"
     >
       <span className="flex items-center gap-2">
-        <span aria-hidden="true">🔄</span>
+        <RefreshCw size={15} aria-hidden="true" className="shrink-0 text-n-amber-11" />
         {t('updateAvailable')}
       </span>
       <Button variant="solid" color="blue" size="sm" onClick={() => window.location.reload()}>

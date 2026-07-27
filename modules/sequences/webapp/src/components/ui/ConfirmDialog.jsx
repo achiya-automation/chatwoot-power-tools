@@ -47,7 +47,7 @@ export default function ConfirmDialog({
 
   const footer = (
     <>
-      <Button variant="ghost" color="slate" onClick={onClose} disabled={loading}>
+      <Button variant="faded" color="slate" onClick={onClose} disabled={loading}>
         {_cancel}
       </Button>
       <Button variant="solid" color={toneCfg.color} onClick={onConfirm} loading={loading}>
@@ -66,7 +66,7 @@ export default function ConfirmDialog({
           <Icon size={22} strokeWidth={2} />
         </span>
         <div className="min-w-0 grow pt-0.5">
-          {title ? <h3 className="text-base font-semibold text-n-slate-12">{title}</h3> : null}
+          {title ? <h3 className="text-base font-medium leading-6 text-n-slate-12 m-0">{title}</h3> : null}
           {description ? (
             <p className="mt-1 text-sm leading-relaxed text-n-slate-11">{description}</p>
           ) : null}

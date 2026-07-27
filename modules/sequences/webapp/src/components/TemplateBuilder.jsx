@@ -225,7 +225,7 @@ function CategoryCard({ cat, selected, onSelect, t }) {
     >
       <Icon size={16} className={selected ? 'text-n-blue-11' : 'text-n-slate-10'} aria-hidden="true" />
       <span className="text-sm font-medium text-n-slate-12">{t(`cat_${cat}`)}</span>
-      <span className="text-[11px] text-n-slate-10">{t(`catPrice_${cat}`)}</span>
+      <span className="text-xs text-n-slate-10">{t(`catPrice_${cat}`)}</span>
     </button>
   );
 }

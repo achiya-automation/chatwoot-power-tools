@@ -618,7 +618,9 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
    transform can't affect the panel. */
 .cwi-modal{max-height:90vh;overflow:auto;animation:cwiIn .2s ease-out}
 @keyframes cwiIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
-.cwi-prog-fill{height:100%;background:var(--color-n-brand, #6366f1);transition:width .2s}
+/* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D2\u05D9\u05E2 \u05DE\u05DE\u05D7\u05DC\u05E7\u05EA bg-n-brand \u05E9\u05DC Chatwoot (\u05D4\u05DB\u05D7\u05D5\u05DC \u05D4\u05E8\u05E9\u05DE\u05D9) \u2014 \u05DC\u05D0 \u05DE\u05DE\u05E9\u05EA\u05E0\u05D4:
+   --color-n-brand \u05DC\u05D0 \u05E7\u05D9\u05D9\u05DD \u05D1-CSS \u05D4\u05DE\u05E7\u05D5\u05DE\u05E4\u05DC \u05D5\u05D4-fallback \u05E6\u05D1\u05E2 \u05D0\u05EA \u05D4\u05E4\u05E1 \u05D1\u05D0\u05D9\u05E0\u05D3\u05D9\u05D2\u05D5 \u05D6\u05E8. */
+.cwi-prog-fill{height:100%;transition:width .2s}
 .cwi-tbl-cell{border-bottom:1px solid}
 .cwi-cs-panel{transition:opacity .2s ease-out}
 /* Background-import pill \u2014 fixed to the bottom start corner (dir-aware via
@@ -1527,7 +1529,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     xBtn.appendChild(icon("x", "size-4"));
     head.append(title, xBtn);
     const track = el("div", "h-1.5 w-full rounded-full bg-n-alpha-2 overflow-hidden");
-    const fill = el("div", "cwi-prog-fill");
+    const fill = el("div", "cwi-prog-fill bg-n-brand");
     fill.style.width = "0%";
     track.appendChild(fill);
     const detail = el("div", "text-xs text-n-slate-11");

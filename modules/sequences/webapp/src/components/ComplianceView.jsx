@@ -13,8 +13,7 @@ import {
   Save,
   Tag,
   Activity,
-  Smartphone,
-} from 'lucide-react';
+  Smartphone, Loader2 } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
 import Input from './ui/Input.jsx';
@@ -850,7 +849,7 @@ export default function ComplianceView({ accountId }) {
         <div className="mb-5">
           <Table>
             <THead>
-              <TR className="hover:bg-transparent">
+              <TR>
                 <TH>{t('colTemplate')}</TH>
                 <TH>{t('colLang')}</TH>
                 <TH>{t('colCategory')}</TH>
@@ -897,7 +896,7 @@ export default function ComplianceView({ accountId }) {
       ) : (
         <Table>
           <THead>
-            <TR className="hover:bg-transparent">
+            <TR>
               <TH>{t('colContact')}</TH>
               <TH>{t('colPhone')}</TH>
               <TH>{t('colReason')}</TH>
@@ -1075,7 +1074,12 @@ function ConsentByLabelModal({ open, onClose, accountId, onDone }) {
               placeholder={t('selectLabel')}
               ariaLabel={t('selectLabelAria')}
             />
-            {loadingLabels ? <p className="mt-1 text-xs text-n-slate-11">{t('loadingLabels')}</p> : null}
+            {loadingLabels ? (
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-n-slate-11">
+                <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                {t('loadingLabels')}
+              </p>
+            ) : null}
           </div>
 
           <div>
