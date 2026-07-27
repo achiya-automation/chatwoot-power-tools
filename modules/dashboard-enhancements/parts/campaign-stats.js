@@ -267,7 +267,7 @@
     return best || document.querySelector('div.overflow-auto.bg-n-surface-1') || document.body;
   }
 
-  var holder = null, frame = null, spinner = null, closeBtn = null, shown = false, loaded = false, loadedSolo = null;
+  var holder = null, frame = null, spinner = null, closeBtn = null, shown = false, loaded = false, loadedSolo = null, loadedAcc = null;
   function buildOverlay() {
     holder = document.createElement('div');
     holder.id = 'cwpt-report-overlay';
@@ -343,10 +343,10 @@
     var wantSolo = !!cid;
     // (Re)load only when switching between the two modes (solo detail vs. overview list); within a
     // mode we just postMessage, so switching campaigns doesn't flash the iframe.
-    if (!loaded || loadedSolo !== wantSolo) {
+    if (!loaded || loadedSolo !== wantSolo || loadedAcc !== accountId()) {
       if (spinner) spinner.style.display = '';
       frame.setAttribute('src', reportSrc(cid));
-      loaded = true; loadedSolo = wantSolo;
+      loaded = true; loadedSolo = wantSolo; loadedAcc = accountId();
     } else if (cid) {
       try { frame.contentWindow.postMessage({ type: 'drip-open-campaign', id: parseInt(cid, 10) }, window.location.origin); } catch (e) {}
     } else {
@@ -357,7 +357,18 @@
     positionOverlay();
     var want = cid ? String(cid) : 'all';
     if (crepFromUrl() !== want) {
-      try { history.pushState(history.state, '', urlWithCrep(want)); } catch (e) {}
+      try {
+        // מיזוג ה-state של Vue router + current/position עקביים (ראו sequences-nav)
+        var st = history.state || {};
+        var entry = {};
+        for (var k in st) entry[k] = st[k];
+        entry.current = urlWithCrep(want);
+        entry.back = st.current || entry.back || null;
+        entry.forward = null;
+        if (typeof st.position === 'number') entry.position = st.position + 1;
+        entry.replaced = false;
+        history.pushState(entry, '', urlWithCrep(want));
+      } catch (e) {}
     }
     try { closeBtn.focus(); } catch (e) {} // keyboard users land on the close control
   }
@@ -366,7 +377,13 @@
     shown = false;
     if (holder) holder.style.display = 'none';
     if (crepFromUrl()) {
-      try { history.replaceState(history.state, '', urlWithoutCrep()); } catch (e) {}
+      try {
+        var st2 = history.state || {};
+        var entry2 = {};
+        for (var k2 in st2) entry2[k2] = st2[k2];
+        entry2.current = urlWithoutCrep();
+        history.replaceState(entry2, '', urlWithoutCrep());
+      } catch (e) {}
     }
   }
   window.__cwptReportHide = hideReport; // let sequences-nav close this overlay before opening its panel

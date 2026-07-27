@@ -157,7 +157,11 @@
   setInterval(function () {
     var ctx = convoCtx();
     var btn = ensureButton();
-    if (!ctx) {
+    // פאנל תוסף פתוח (רצפים/דוח) מכסה את אזור התוכן — הפיל לא צף מעליו
+    var rep = document.getElementById('cwpt-report-overlay');
+    var overlayOpen = document.body.classList.contains('drip-active') ||
+      (rep && rep.style.display === 'block');
+    if (!ctx || overlayOpen) {
       if (btn.style.display !== 'none') { btn.style.display = 'none'; closePopover(); }
       lastKey = '';
       return;
