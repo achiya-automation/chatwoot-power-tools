@@ -10,12 +10,14 @@
  * גרשיים, ומגן הזרקת-נוסחאות (CWE-1236) על ערכים שמקורם בפרופיל וואטסאפ.
  */
 
-// messages.status: 0=נשלח 1=נמסר 2=נקרא 3=נכשל; ערך אחר = ממתין (ראו campaigns.js).
+// messages.status: 0=נשלח 1=נמסר 2=נקרא 3=נכשל; 4=דילוג מה-ledger (לא נעשה ניסיון שליחה
+// בכלל — הסיבה ב-error_title); כל ערך אחר = ממתין (ראו campaigns.js).
 export function statusKeyOf(status) {
   return status === 2 ? 'read'
     : status === 1 ? 'delivered'
       : status === 3 ? 'failed'
-        : status === 0 ? 'sent' : 'pending';
+        : status === 0 ? 'sent'
+          : status === 4 ? 'notsent' : 'pending';
 }
 
 export const STATUS_KEYS = ['read', 'delivered', 'sent', 'pending', 'failed', 'notsent'];
@@ -56,6 +58,14 @@ const ERROR_LABELS = {
     131056: 'יותר מדי הודעות בין שני המספרים האלה',
     470: 'חלון ההודעות (24 שעות) נסגר',
     100: 'בקשת API שגויה — בדקו את הפרמטרים',
+    // סיבות מקומיות שנרשמות ב-ledger ע"י הפאטצ' של Chatwoot — לא קודים של Meta.
+    // אלה המקרים שבהם השליחה נעצרה אצלנו ולא הגיעה בכלל ל-Meta.
+    no_phone: 'לא נשלח — לאיש הקשר אין מספר טלפון',
+    no_template_params: 'לא נשלח — לקמפיין לא הוגדרה תבנית',
+    liquid_blank: 'לא נשלח — שדה בהתאמה האישית של התבנית ריק אצל איש הקשר',
+    template_not_found: 'לא נשלח — התבנית לא נמצאה או אינה מאושרת בשפה שנבחרה',
+    send_failed: 'הבקשה ל-Meta נכשלה — הפרטים בלוג השרת',
+    no_attempt_record: 'לא נוצר ניסיון שליחה',
   },
   en: {
     131026: 'Not delivered — the number may not be on WhatsApp, may have blocked the business, or does not accept business messages',
@@ -77,14 +87,27 @@ const ERROR_LABELS = {
     131056: 'Too many messages between these two numbers',
     470: 'The messaging window (24 hours) has closed',
     100: 'Invalid API request — check the parameters',
+    // Local ledger reasons written by the Chatwoot patch — not Meta codes. These are
+    // the cases where the send stopped on our side and never reached Meta at all.
+    no_phone: 'Not sent — the contact has no phone number',
+    no_template_params: 'Not sent — the campaign has no template configured',
+    liquid_blank: 'Not sent — a template personalization field is empty for this contact',
+    template_not_found: 'Not sent — the template was not found or is not approved in the selected language',
+    send_failed: 'The request to Meta failed — see the server log for details',
+    no_attempt_record: 'No send attempt was created',
   },
 };
 
-/** "131049: raw meta text" → הסבר מתורגם; קוד לא מוכר → הטקסט הגולמי. */
+/**
+ * "131049: raw meta text" → הסבר מתורגם. גם מפתח מילולי מה-ledger ("no_phone") ממופה
+ * דרך אותה טבלה; קוד/מפתח לא מוכר → הטקסט הגולמי.
+ */
 export function errorLabel(raw, locale = 'he') {
   if (!raw) return '';
-  const code = Number((/^(\d+)/.exec(String(raw)) || [])[1]);
-  return ERROR_LABELS[locale === 'en' ? 'en' : 'he'][code] || String(raw);
+  const text = String(raw);
+  const digits = /^(\d+)/.exec(text);
+  const key = digits ? Number(digits[1]) : text;
+  return ERROR_LABELS[locale === 'en' ? 'en' : 'he'][key] || text;
 }
 
 // בריחת שדה: ציטוט + הכפלת גרשיים + גרש מוביל נגד תא שמתפרש כנוסחה ב-Excel/Sheets.
@@ -100,9 +123,11 @@ export function buildRows({ recipients = [], not_sent = [] } = {}) {
     contact_name: r.contact_name || '',
     phone: r.phone || '',
     statusKey: statusKeyOf(r.status),
-    error_title: r.status === 3 ? (r.error_title || '') : '',
-    attempts: r.attempt_count || 1,
-    sent_at: r.sent_at || '',
+    // status 4 נושא סיבת דילוג ולא שגיאת מסירה, אבל שתיהן חיות באותו שדה ומתורגמות יחד.
+    error_title: (r.status === 3 || r.status === 4) ? (r.error_title || '') : '',
+    // דילוג אינו ניסיון שליחה — 0, לא 1.
+    attempts: r.status === 4 ? 0 : (r.attempt_count || 1),
+    sent_at: r.status === 4 ? '' : (r.sent_at || ''),
     replied: !!r.replied,
     reply_content: r.reply_content || '',
     replied_at: r.replied_at || '',
@@ -110,7 +135,7 @@ export function buildRows({ recipients = [], not_sent = [] } = {}) {
   }));
   const missed = (not_sent || []).map((c) => ({
     contact_name: c.contact_name || '', phone: c.phone || '', statusKey: 'notsent',
-    error_title: '', attempts: 0, sent_at: '', replied: false, reply_content: '', replied_at: '',
+    error_title: c.reason || '', attempts: 0, sent_at: '', replied: false, reply_content: '', replied_at: '',
     conversation_display_id: null,
   }));
   return attempted.concat(missed);
@@ -146,7 +171,7 @@ export function toCsv(rows, { locale = 'he', origin = '', accountId } = {}) {
       row.contact_name,
       row.phone,
       L.status[row.statusKey],
-      row.statusKey === 'notsent' ? L.noAttempt : (row.error_title ? errorLabel(row.error_title, locale) : ''),
+      row.error_title ? errorLabel(row.error_title, locale) : (row.statusKey === 'notsent' ? L.noAttempt : ''),
       row.attempts,
       row.sent_at,
       row.replied ? L.yes : L.no,

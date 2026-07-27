@@ -4,6 +4,7 @@ import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
 import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo, normalizeCampaignPhone } from '../src/campaigns.js';
 import { DEFAULT_CAP, _resetHealthCache } from '../src/meta.js';
+import { buildRows, toCsv } from '../src/campaignCsv.js';
 import { handleAction } from '../src/store.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
@@ -192,7 +193,7 @@ test('getCampaignDetail: snapshot restores canonical names/phones and collapses 
 
   const d = await getCampaignDetail(query, 1, 22);
   assert.equal(d.audience_source, 'snapshot');
-  assert.deepEqual(d.funnel, { audience: 2, attempted: 1, sent: 1, delivered: 1, read: 1, failed: 0, pending: 0 });
+  assert.deepEqual(d.funnel, { audience: 2, attempted: 1, sent: 1, delivered: 1, read: 1, failed: 0, pending: 0, skipped: 0 });
   assert.equal(d.recipients.length, 1);
   assert.equal(d.recipients[0].contact_name, 'לקוחה מקורית');
   assert.equal(d.recipients[0].phone, '+972501234567');
@@ -228,7 +229,7 @@ test('getCampaignDetail: durable send ledger recovers an untagged echo and prese
     VALUES (1,24,30,'לקוח מקורי','0501234570','wamid-24',530,2401,3,'131049: failed')`);
 
   const d = await getCampaignDetail(query, 1, 24);
-  assert.deepEqual(d.funnel, { audience: 1, attempted: 1, sent: 0, delivered: 0, read: 0, failed: 1, pending: 0 });
+  assert.deepEqual(d.funnel, { audience: 1, attempted: 1, sent: 0, delivered: 0, read: 0, failed: 1, pending: 0, skipped: 0 });
   assert.equal(d.not_sent.length, 0);
   assert.equal(d.recipients[0].contact_name, 'לקוח מקורי');
   assert.equal(d.recipients[0].phone, '+972501234570');
@@ -265,6 +266,37 @@ test('listCampaigns: ledger and unmatched legacy retry collapse to one audience 
   assert.equal(summary.sent, 1);
   assert.equal(summary.read, 1);
   assert.equal(summary.failed, 0);
+});
+
+test('getCampaignDetail: ledger skip row (status 4) reports a reason and is not an attempt', async () => {
+  await seedCampaign({ id: 26, title: 'דילוג' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES
+    (41,1,'עם טלפון','0501234581'),
+    (42,1,'בלי טלפון',NULL)`);
+  await query(`INSERT INTO drip.campaign_audience_snapshots(account_id,campaign_id,contact_id,contact_name,phone) VALUES
+    (1,26,41,'עם טלפון','0501234581'),
+    (1,26,42,'בלי טלפון','')`);
+  // 41 was sent; 42 never was — the patch recorded why instead of dropping the row.
+  await query(`INSERT INTO drip.campaign_send_snapshots
+    (account_id,campaign_id,contact_id,contact_name,phone,source_id,status,error_title) VALUES
+    (1,26,41,'עם טלפון','0501234581','wamid-26',0,NULL),
+    (1,26,42,'בלי טלפון','','skip:26:42',4,'no_phone')`);
+
+  const d = await getCampaignDetail(query, 1, 26);
+  // The skip stays in the audience and out of "attempted" — it was never tried.
+  assert.deepEqual(d.funnel, { audience: 2, attempted: 1, sent: 1, delivered: 0, read: 0, failed: 0, pending: 1, skipped: 1 });
+  // Everyone is accounted for in one list, so not_sent has nothing left to report.
+  assert.deepEqual(d.not_sent, []);
+
+  const skipped = d.recipients.find((r) => r.contact_name === 'בלי טלפון');
+  assert.equal(skipped.status, 4);
+  assert.equal(skipped.error_title, 'no_phone');
+
+  const rows = buildRows(d);
+  const row = rows.find((r) => r.contact_name === 'בלי טלפון');
+  assert.equal(row.statusKey, 'notsent');
+  assert.equal(row.attempts, 0);
+  assert.match(toCsv([row], { locale: 'he' }), /אין מספר טלפון/);
 });
 
 test('normalizeCampaignPhone: local, international, JID, and blank values', () => {
