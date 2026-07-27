@@ -181,7 +181,7 @@ test('transient cap (131049) reschedules a retry instead of failing the enrollme
 // returned WITHOUT re-arming, so current_step stayed on the step AFTER the one that never
 // arrived. The lead was left standing past a message she never saw, and the moment she
 // replied she'd be served the continuation of a story she never heard the start of.
-// (banana-book, 2026-07-14: 293 leads past an undelivered step, 197 of them 3 steps ahead.)
+// (production, 2026-07-14: 293 leads past an undelivered step, 197 of them 3 steps ahead.)
 test('⭐ the cap failure that SUPPRESSES her still rewinds current_step to the failed step', async () => {
   const seq = (await query(
     `INSERT INTO drip.sequences(account_id,key,display_name) VALUES (1,'cap','רצף') RETURNING id`

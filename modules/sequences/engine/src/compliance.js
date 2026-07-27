@@ -35,7 +35,7 @@ const STRONG_PHRASES = [
   'אל תשלחו', 'אל תשלח', 'לא לשלוח', 'תפסיקו לשלוח', 'הפסיקו לשלוח',
   'תורידו אותי', 'תוריד אותי', 'הורידו אותי', 'תוציאו אותי', 'להוריד אותי',
 
-  // ⭐ הסירוב הישראלי הנפוץ ביותר — ולא היה כאן. נמדד בבננה בוק (14/07/2026):
+  // ⭐ הסירוב הישראלי הנפוץ ביותר — ולא היה כאן. נמדד בפרודקשן (14/07/2026):
   // 27 אנשים ביקשו להפסיק, המנוע זיהה 8. את 19 הנותרים הוא המשיך להפגיז — 34 הודעות
   // שיווק *אחרי* שסירבו. נופר סירבה שלוש פעמים ("כבר לא רלוונטי" · "בת המצווה כבר
   // התקיימה" · "לא רלוונטי") וקיבלה בתגובה הודעת "תודה שבחרתם בנו". לינור כתבה "לא
@@ -226,13 +226,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // ואינו נורה אף פעם. הבלם האמיתי מודד את המסירה *בפועל*: אם ההודעות על תבניות
   // נקיות מפסיקות להגיע (WABA שרוף, מדיה שבורה, פעולת מדיניות של מטא) — כל שליחה
   // נכשלת בלי שאף תבנית בודדת חוצה את הסף שלה, והחשבון נשאר "בריא" בעיני מטא בזמן
-  // שהוא הולם. checkDeliveryFloor עוצר את זה. נמדד בבננה בוק: מסירה תקינה = 91-98%.
+  // שהוא הולם. checkDeliveryFloor עוצר את זה. נמדד בפרודקשן: מסירה תקינה = 91-98%.
   min_delivery_rate:     70,   // אחוז הגעה מינימלי על מדגם תבניות נקיות
   min_delivery_sample:   20,   // אל תשפוט מסירה על מדגם קטן מזה
 
   // ── חלון הפתיחה לליד חדש (fresh opener) ─────────────────────────────────────
   // גם כשהחשבון עצור על RED, מותר לשלוח את *הפתיחה בלבד* לליד שנרשם ממש לאחרונה.
-  // ליד טרי הוא engagement איכותי (נמדד בבננה בוק: הפתיחה מוסרת ב-91%, לעומת 24%
+  // ליד טרי הוא engagement איכותי (נמדד בפרודקשן: הפתיחה מוסרת ב-91%, לעומת 24%
   // בתבניות מאוחרות שנשלחו לקהל קר) — הוא לא מה ששורף את המספר, ואף מסייע להתאוששות.
   // ליד שלא מקבל פתיחה בזמן = ליד אבוד. ⚠️ רק ליד שנרשם בתוך החלון הזה — לא קהל ישן
   // וקר (שהוא בדיוק מה ששרף את המספר). 0 = לכבות את ההחרגה לגמרי.
@@ -454,13 +454,22 @@ export async function loadTemplateHealth(pool, accountId) {
   return m;
 }
 
-/** התראה לדשבורד. אידמפוטנטית — התראה פתוחה זהה לא תיווצר פעמיים. */
-export async function raiseAlert(pool, accountId, level, code, message) {
+/**
+ * התראה לדשבורד. אידמפוטנטית — התראה פתוחה זהה לא תיווצר פעמיים.
+ *
+ * `code` הוא מפתח התרגום ו-`params` נושא את מה שמשתנה — ה-UI מרכיב את המשפט בשפת
+ * הנציג (ראה ALERTS ב-ComplianceView). `message` הוא ה-fallback: הוא נשמר כדי שהתראה
+ * שהקוד שלה עדיין לא מתורגם, או שנוצרה לפני מיגרציה 034, תמשיך להיות קריאה.
+ *
+ * @param {string} code   - מפתח התרגום. עבור התראות ייחודיות-לתבנית: `code:template_name`
+ * @param {object} params - ערכים להצבה בתרגום (template, count, limit, code, reason…)
+ */
+export async function raiseAlert(pool, accountId, level, code, message, params = {}) {
   try {
     await pool.query(
-      `INSERT INTO drip.alerts (account_id, level, code, message)
-       VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-      [accountId, level, code, String(message).slice(0, 500)]
+      `INSERT INTO drip.alerts (account_id, level, code, message, params)
+       VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+      [accountId, level, code, String(message).slice(0, 500), JSON.stringify(params || {})]
     );
   } catch (e) {
     console.error(`[drip] raiseAlert failed acct ${accountId}:`, e.message);
@@ -470,16 +479,21 @@ export async function raiseAlert(pool, accountId, level, code, message) {
 /**
  * עצירת חירום לחשבון. מטא סימנה בעיה ברמת המספר (RED / 368 / 133xxx) — כל שליחה
  * נוספת רק מקרבת להשעיה. עוצר, מתריע, ומחכה שאדם ישחרר ידנית (drip.resume_account).
+ *
+ * @param {string} reason - משפט קריא. fallback בלבד: ה-UI מעדיף code+params ומתרגם.
+ * @param {string} [code] - `quality_red` | `delivery_floor` | `meta_policy`
+ * @param {object} [params] - ערכים להצבה בתרגום
  */
-export async function haltAccount(pool, accountId, reason) {
+export async function haltAccount(pool, accountId, reason, code = null, params = {}) {
   await pool.query(
-    `INSERT INTO drip.account_health (account_id, halted, halt_reason, halted_at)
-     VALUES ($1, true, $2, now())
+    `INSERT INTO drip.account_health (account_id, halted, halt_reason, halt_code, halt_params, halted_at)
+     VALUES ($1, true, $2, $3, $4, now())
      ON CONFLICT (account_id) DO UPDATE
-       SET halted = true, halt_reason = $2, halted_at = now()`,
-    [accountId, reason]
+       SET halted = true, halt_reason = $2, halt_code = $3, halt_params = $4, halted_at = now()`,
+    [accountId, reason, code, JSON.stringify(params || {})]
   );
-  await raiseAlert(pool, accountId, 'critical', 'halted', `השליחה נעצרה אוטומטית: ${reason}`);
+  await raiseAlert(pool, accountId, 'critical', 'halted', `השליחה נעצרה אוטומטית: ${reason}`,
+    { reason, cause: code, ...params });
   console.error(`[drip] ACCOUNT ${accountId} HALTED — ${reason}`);
 }
 
@@ -501,7 +515,7 @@ export async function resumeAccount(pool, accountId, reason) {
       WHERE account_id = $1 AND acked_at IS NULL AND code IN ('halted', 'quality_red')`,
     [accountId]
   );
-  await raiseAlert(pool, accountId, 'info', 'resumed', reason);
+  await raiseAlert(pool, accountId, 'info', 'resumed', reason, { reason });
   console.log(`[drip] ACCOUNT ${accountId} RESUMED — ${reason}`);
 }
 
@@ -545,7 +559,8 @@ export async function checkDeliveryFloor(pool, accountId, settings = null) {
     await haltAccount(
       pool, accountId,
       `שיעור ההגעה צנח ל-${rate}% (${ok} מתוך ${n} היום, תבניות נקיות בלבד). השליחה ` +
-      `נעצרה אוטומטית — בדקו את המספר, המדיה והתבניות, ואז שחררו ידנית (drip.resume_account).`
+      `נעצרה אוטומטית — בדקו את המספר, המדיה והתבניות, ואז שחררו ידנית (drip.resume_account).`,
+      'delivery_floor', { rate, ok, total: n }
     );
   }
   return { rate, n, halted: true };
@@ -576,7 +591,7 @@ export async function suppressContact(pool, accountId, contactId, reason, detail
   // stopped lead never reaches canSend at all, and the open door it holds for her is one she
   // can never walk through. Deleting her `sequence` tag compounds it — the reconciler reads an
   // empty tag as an opt-out and would refuse to re-enroll her.
-  // Measured (banana-book, 2026-07-14): a lead with 4 cap failures — suppressed, written off
+  // Measured (production, 2026-07-14): a lead with 4 cap failures — suppressed, written off
   // as burned — was delivered AND read the moment she was sent from a clean number.
   if (reason !== 'saturated') {
     await pool.query(

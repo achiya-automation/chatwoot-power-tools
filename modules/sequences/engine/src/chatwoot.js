@@ -171,7 +171,7 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
      * This is the single highest-value path in the engine. Meta's per-user marketing cap
      * (131049) and the portfolio's 24h tier apply to TEMPLATES sent outside a service
      * window. A free-form message sent inside the window is neither — it is exempt from
-     * both. Measured on banana-book 2026-07-12: templates to leads who had replied landed
+     * both. Measured on production 2026-07-12: templates to leads who had replied landed
      * ~29%; the same content sent free-form inside their window is not rate-limited at all.
      *
      * The caller MUST confirm the window is open (compliance.inSession) — outside it

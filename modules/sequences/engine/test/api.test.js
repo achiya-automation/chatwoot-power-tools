@@ -232,16 +232,16 @@ test('createApp: /media + /health public, /drip-api requires a Chatwoot session'
 // מקור-אמת יחיד שממנו הצ'אט/הקמפיינים ממלאים אוטומטית את שדה ה-media_url של תבנית עם
 // media header, במקום לבחור מדיה בכל שליחה.
 test('save_template_media then template_media returns the map', async () => {
-  await handleAction(7, 'save_template_media', { template_name: 'bb_new_16', media_url: 'https://ex.com/a.jpg' });
+  await handleAction(7, 'save_template_media', { template_name: 'promo_new_16', media_url: 'https://ex.com/a.jpg' });
   const r = await handleAction(7, 'template_media', {});
-  assert.equal(r.data.bb_new_16, 'https://ex.com/a.jpg');
+  assert.equal(r.data.promo_new_16, 'https://ex.com/a.jpg');
 });
 
 test('save_template_media upserts — last write wins', async () => {
-  await handleAction(7, 'save_template_media', { template_name: 'bb_new_16', media_url: 'https://ex.com/a.jpg' });
-  await handleAction(7, 'save_template_media', { template_name: 'bb_new_16', media_url: 'https://ex.com/b.jpg' });
+  await handleAction(7, 'save_template_media', { template_name: 'promo_new_16', media_url: 'https://ex.com/a.jpg' });
+  await handleAction(7, 'save_template_media', { template_name: 'promo_new_16', media_url: 'https://ex.com/b.jpg' });
   const r = await handleAction(7, 'template_media', {});
-  assert.equal(r.data.bb_new_16, 'https://ex.com/b.jpg');
+  assert.equal(r.data.promo_new_16, 'https://ex.com/b.jpg');
 });
 
 test('template_media is scoped per account', async () => {

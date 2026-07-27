@@ -35,7 +35,7 @@ export function loadConfig(env = process.env) {
     // Worse: a Quick-Reply tap is an inbound message, i.e. the thing that RE-OPENS the window.
     // Stripping buttons from the lead who just replied removes the mechanism keeping her
     // window alive — so the hottest lead was the only one getting the worst message.
-    // (banana-book, 2026-07-14.)
+    // (production, 2026-07-14.)
     freeformInSession: String(env.FREEFORM_IN_SESSION || '').toLowerCase() === 'true',
     // Webhook that turns "Meta answered about a new lead" into a WhatsApp ping to the operator.
     // The URL's path IS the secret (n8n webhook, no credential). Empty = alerts off.

@@ -39,6 +39,7 @@ import {
 } from '../api/sequencesApi.js';
 import useT, { useLocale } from '../useT.js';
 import { translate } from '../i18n.js';
+import { alertText, haltText } from '../lib/alertText.js';
 
 /*
  * ComplianceView — שכבת הציות של מטא: בריאות המספר (tier/דירוג/עצירה), התראות פתוחות,
@@ -94,6 +95,24 @@ const M = {
     lv_critical: 'קריטי',
     lv_warning: 'אזהרה',
     lv_info: 'מידע',
+
+    // נוסח ההתראות לפי code (המנוע שולח code+params; ראה raiseAlert ב-compliance.js).
+    // מפתח חסר → נופלים ל-message הגולמי שהמנוע כתב.
+    al_auto_onboard_failed: 'החשבון לא חובר למנוע אוטומטית ({error}). הרצפים בו לא ישלחו כלום עד שזה ייפתר.',
+    al_whatsapp_inbox_not_chosen: 'לחשבון יש {count} מספרי וואטסאפ ולא נבחר מספר לרצפים. שום הודעה לא תישלח עד שתבחרו — בהגדרות ← מספר הוואטסאפ.',
+    al_no_whatsapp_channel: 'לחשבון יש רצף אבל אין ערוץ וואטסאפ מחובר. שום הודעה לא תישלח.',
+    al_quality_yellow: 'דירוג האיכות של המספר ירד ל-YELLOW. בדקו את שיעור הקריאה ואת איכות הרשימה.',
+    al_template_paused: 'התבנית "{template}" מושהית ע"י מטא. רצפים שמשתמשים בה ממתינים ויימשכו כשתחזור.',
+    al_template_degrading: 'התבנית "{template}" מתחילה להישרף (מעל {warnAt} כישלוני מסירה, הבלם ב-{limit}). כדאי ליצור לה עותק שריפה.',
+    al_template_burned: 'התבנית "{template}" הגיעה ל-{limit} כישלוני מסירה והשליחה בה נעצרה. צריך ליצור תאומה ולהחליף את השלב — הרצף תקוע כאן.',
+    al_unknown_meta_code: 'מטא החזירה קוד שאיננו מכירים ({code}): {title}. הליד לא נמחק — הוא מתקרר וינסה שוב.',
+    al_resumed: 'השליחה חודשה: {reason}',
+
+    // סיבות עצירה — משמשות גם בהתראת halted וגם בכרטיס בריאות המספר.
+    hz_quality_red: 'דירוג האיכות של המספר ירד ל-RED. המשך שליחה עלול להוביל להשעיית המספר.',
+    hz_delivery_floor: 'שיעור ההגעה צנח ל-{rate}% ({ok} מתוך {total} היום, תבניות נקיות בלבד). בדקו את המספר, המדיה והתבניות, ואז שחררו ידנית.',
+    hz_meta_policy: 'מטא החזירה קוד {code}: {title}',
+    haltedPrefix: 'השליחה נעצרה אוטומטית: ',
 
     // הסכמות
     consentTitle: 'כיסוי הסכמות',
@@ -232,6 +251,21 @@ const M = {
     lv_warning: 'Warning',
     lv_info: 'Info',
 
+    al_auto_onboard_failed: 'This account was not connected to the engine automatically ({error}). Its sequences will not send anything until this is resolved.',
+    al_whatsapp_inbox_not_chosen: 'This account has {count} WhatsApp numbers and none is selected for sequences. Nothing will send until you pick one — Settings → WhatsApp number.',
+    al_no_whatsapp_channel: 'This account has a sequence but no connected WhatsApp channel. Nothing will send.',
+    al_quality_yellow: "The number's quality rating dropped to YELLOW. Check your read rate and list quality.",
+    al_template_paused: 'Template "{template}" is paused by Meta. Sequences using it are waiting and will resume when it returns.',
+    al_template_degrading: 'Template "{template}" is starting to burn ({warnAt}+ delivery failures, cut-off at {limit}). Consider creating a burn copy for it.',
+    al_template_burned: 'Template "{template}" reached {limit} delivery failures and sending on it stopped. Create a twin and swap the step — the sequence is stuck here.',
+    al_unknown_meta_code: 'Meta returned a code we do not recognise ({code}): {title}. The lead was not dropped — it will cool off and retry.',
+    al_resumed: 'Sending resumed: {reason}',
+
+    hz_quality_red: "The number's quality rating dropped to RED. Continuing to send risks having the number disabled.",
+    hz_delivery_floor: 'Delivery dropped to {rate}% ({ok} of {total} today, clean templates only). Check the number, the media and the templates, then resume manually.',
+    hz_meta_policy: 'Meta returned code {code}: {title}',
+    haltedPrefix: 'Sending halted automatically: ',
+
     consentTitle: 'Consent coverage',
     consentCovered: '{n} of {total} contacts have a consent record',
     consentCta: '{n} contacts are enrolled in a sequence without a consent record — marketing to them is blocked.',
@@ -357,6 +391,10 @@ export default function ComplianceView({ accountId }) {
   // translate() נופל למפתח עצמו כשאין תרגום — כך ערך אֵנוּם חדש מהשרת (סטטוס/סיבה שלא
   // מוכרים ל-UI) מוצג כמו שהוא במקום להציג מפתח שבור.
   const tOr = (key, raw) => (t(key) === key ? raw : t(key));
+
+  // נוסח ההתראות ועצירות החשבון — ראה src/lib/alertText.js.
+  const halt = (code, params, raw) => haltText(t, code, params, raw);
+  const alert = (a) => alertText(t, a);
 
   const [data, setData] = useState(null);
   const [suppressed, setSuppressed] = useState([]);
@@ -549,8 +587,10 @@ export default function ComplianceView({ accountId }) {
               </span>
               <div className="min-w-0">
                 <p className="text-base font-semibold text-n-ruby-12">{t('haltedTitle')}</p>
-                {health.halt_reason ? (
-                  <p className="mt-1 text-sm font-medium text-n-ruby-11">{health.halt_reason}</p>
+                {health.halt_reason || health.halt_code ? (
+                  <p className="mt-1 text-sm font-medium text-n-ruby-11">
+                    {halt(health.halt_code, health.halt_params, health.halt_reason)}
+                  </p>
                 ) : null}
                 <p className="mt-1 text-sm text-n-slate-11">{t('haltedBody')}</p>
                 {health.halted_at ? (
@@ -696,7 +736,7 @@ export default function ComplianceView({ accountId }) {
                   <div className="flex min-w-0 items-start gap-2">
                     <Badge color={c}>{tOr(`lv_${a.level}`, a.level)}</Badge>
                     <div className="min-w-0">
-                      <p className="text-sm text-n-slate-12">{a.message}</p>
+                      <p className="text-sm text-n-slate-12">{alert(a)}</p>
                       <p className="mt-0.5 text-xs text-n-slate-10">
                         {a.code ? <span className="font-mono">{a.code}</span> : null}
                         {a.code && a.created_at ? ' · ' : null}
