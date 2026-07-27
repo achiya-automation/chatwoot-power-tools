@@ -52,15 +52,15 @@
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
   }
   var NAV_I18N = {
-    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר', compliance: 'ציות' },
-    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts', compliance: 'Compliance' },
+    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר', compliance: 'ציות', presence: 'נקרא/מקליד' },
+    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts', compliance: 'Compliance', presence: 'Read & Typing' },
   };
   function navLabels() { return NAV_I18N[dripLocale()] || NAV_I18N.en; }
   // With nav=side the web app hides its own tab bar, so a tab that is missing here is a tab
   // the user cannot reach at all. 'compliance' surfaces Meta's quality rating, template
   // status, opt-outs and consent coverage — the screen an operator needs BEFORE a send goes
   // wrong, so it must be one click away.
-  var TAB_KEYS = ['overview', 'sequences', 'contacts', 'compliance'];
+  var TAB_KEYS = ['overview', 'sequences', 'contacts', 'compliance', 'presence'];
   // Panel tabs that live OUTSIDE this group's sub-list (own top-level nav items in sibling
   // part-modules) but still open the same inline panel and must survive refresh/back-forward.
   var EXTRA_TABS = ['templates', 'journeys'];
@@ -148,7 +148,7 @@
   function dripFromState() {
     try {
       var cur = history.state && history.state.current;
-      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts|compliance|templates|journeys)\b/);
+      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts|compliance|presence|templates|journeys)\b/);
       return m ? m[1] : null;
     } catch (e) { return null; }
   }
