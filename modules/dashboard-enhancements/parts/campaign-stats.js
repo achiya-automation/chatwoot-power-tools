@@ -276,7 +276,8 @@
     // variable that doesn't exist in Chatwoot's compiled CSS → hard-coded WHITE flash in
     // dark mode while the iframe loaded.)
     holder.className = 'bg-n-background';
-    holder.style.cssText = 'position:fixed;z-index:40;display:none;';
+    // z-30 — מתחת ל-aside (z-40): תפריטי הסיידבר נצבעים מעל ה-overlay (ראו sequences-nav)
+    holder.style.cssText = 'position:fixed;z-index:30;display:none;';
     frame = document.createElement('iframe');
     frame.title = t('overview');
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
