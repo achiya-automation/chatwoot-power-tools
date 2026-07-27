@@ -135,7 +135,7 @@ export default function Modal({
 
         {/* פעולות */}
         {footer ? (
-          <div className="flex items-center justify-between w-full gap-3 shrink-0 [&>*]:w-full">
+          <div className="flex items-center justify-end gap-3 shrink-0">
             {footer}
           </div>
         ) : null}

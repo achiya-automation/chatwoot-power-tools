@@ -153,7 +153,11 @@
     } catch (e) { return null; }
   }
 
-  var holder = null, frame = null, spinner = null, shown = false, loaded = false, curTab = 'overview', restored = false, restoreGuard = false;
+  var holder = null, frame = null, spinner = null, shown = false, loaded = false, loadedAcc = null, curTab = 'overview', restored = false, restoreGuard = false;
+  function pingSiblings() {
+    var pings = window.__cwptNavPing || [];
+    for (var p = 0; p < pings.length; p++) { try { pings[p](); } catch (e) {} }
+  }
   // Native slider semantics (SidebarGroup.vue expandedItem): the group starts collapsed and
   // is expanded either manually (header click) or automatically when a sub-item becomes
   // active. Closing the panel collapses it back — nothing stays open "just because".
@@ -260,12 +264,15 @@
     curTab = tab;
     if (window.__cwptReportHide) { try { window.__cwptReportHide(); } catch (e) {} } // close campaign-stats overlay if open
     if (!holder) build();
-    if (!loaded) {
-      var src = APP + '/?embed=1&nav=side&account_id=' + encodeURIComponent(accountId()) +
+    var acc = accountId();
+    if (!loaded || loadedAcc !== acc) {
+      var src = APP + '/?embed=1&nav=side&account_id=' + encodeURIComponent(acc) +
                 '&tab=' + tab + '&theme=' + (isDark() ? 'dark' : 'light') +
                 '&locale=' + dripLocale();
+      if (spinner) spinner.style.display = '';
       frame.setAttribute('src', src);
       loaded = true;
+      loadedAcc = acc;
     } else {
       try { frame.contentWindow.postMessage({ type: 'drip-nav', tab: tab }, location.origin); } catch (e) {}
     }
@@ -284,8 +291,21 @@
     // history entries. _pushState bypasses the interceptor (which would otherwise hide the
     // panel we just showed).
     if (dripFromUrl() !== tab) {
-      try { _pushState({ drip: tab }, '', urlWithDrip(tab)); } catch (e) {}
+      try {
+        var st = history.state || {};
+        var entry = {};
+        for (var k in st) entry[k] = st[k];
+        entry.drip = tab;
+        entry.current = urlWithDrip(tab);
+        entry.back = st.current || entry.back || null;
+        entry.forward = null;
+        if (typeof st.position === 'number') entry.position = st.position + 1;
+        entry.replaced = false;
+        entry.scroll = null;
+        _pushState(entry, '', urlWithDrip(tab));
+      } catch (e) {}
     }
+    pingSiblings();
   }
   function hide() {
     if (!shown) return;
@@ -300,8 +320,15 @@
     // _replaceState bypasses the interceptor (prevents recursion — the interceptor itself
     // calls hide()).
     if (dripFromUrl()) {
-      try { _replaceState(history.state, '', urlWithoutDrip()); } catch (e) {}
+      try {
+        var st = history.state || {};
+        var entry = {};
+        for (var k in st) if (k !== 'drip') entry[k] = st[k];
+        entry.current = urlWithoutDrip();
+        _replaceState(entry, '', urlWithoutDrip());
+      } catch (e) {}
     }
+    pingSiblings();
   }
   window.__cwptSeqHide = hide; // let campaign-stats close this panel before opening its overlay
   window.__dripShowPanel = show; window.__dripHidePanel = hide; // hook for templates-nav.js / journeys-nav.js (separate part modules, same window)
