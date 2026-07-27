@@ -170,7 +170,10 @@
     // (The previous inline `rgb(var(--n-background))` referenced a CSS variable that does
     // not exist in Chatwoot's compiled CSS → transparent holder → white flash in dark mode.)
     holder.className = 'bg-n-background';
-    holder.style.cssText = 'position:fixed;z-index:40;display:none;';
+    // z-30: מתחת ל-aside של הסיידבר (relative z-40) — כך popover-ים נייטיביים שנשפכים
+    // מהסיידבר אל אזור התוכן (בורר החשבונות, תפריט הפרופיל) נצבעים מעל הפאנל, בדיוק
+    // כמו שהם נצבעים מעל תוכן רגיל. z-40 שווה-ערך + מאוחר יותר ב-DOM חתך אותם.
+    holder.style.cssText = 'position:fixed;z-index:30;display:none;';
     frame = document.createElement('iframe');
     frame.title = navLabels().title;
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
