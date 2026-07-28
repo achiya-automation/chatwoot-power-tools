@@ -778,17 +778,25 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           // A paused template lifts in 3h, a daily cap in 24h, an account halt when a
           // human clears it. Re-arm and check again; never burn the lead over a wait.
           //
-          // template_burned — התבנית הגיעה לתקציב הכישלונות. זה לא נפתר מעצמו: צריך ליצור
-          // תאומה ולהחליף. מתריעים (אידמפוטנטי) ומחזיקים את הליד יום, כדי שהתור לא יסתובב
-          // סרק — הוא ימשיך מעצמו ברגע שהשלב יצביע על תבנית טרייה.
+          // template_burned — התבנית מיצתה את תקציב הכישלונות בחלון הנע. עותק שריפה
+          // שנשרף = עשה את תפקידו (ספג רוויות) ונח; תבנית נקייה שנשרפת = דליפת חסומות
+          // או קצב גבוה מדי. בשני המקרים הבלם משתחרר לבד כשהחלון מתפנה — מתריעים
+          // (אידמפוטנטי, נוסח לפי סוג התבנית) ומחזיקים את הליד יום.
           // saturated — מטא חסמה את הנמענת. התקרה "מסתגלת עם הזמן", ותגובה שלה מבטלת אותה
           // מיידית (סורק ה-inbound מקדים אותה בחזרה). עד אז — לא רודפים.
           if (verdict.reason === 'template_burned') {
+            const isBurnCopy = /burn/i.test(step.template_name || '');
             await compliance.raiseAlert(
-              pool, accountId, 'error', `template_burned:${step.template_name}`,
-              `🔴 התבנית "${step.template_name}" הגיעה ל-${cSettings.max_template_failures} כישלוני מסירה ` +
-              `והשליחה בה נעצרה. צריך ליצור תאומה ולהחליף את השלב עכשיו — הרצף תקוע כאן.`,
-              { template: step.template_name, limit: cSettings.max_template_failures }
+              pool, accountId, isBurnCopy ? 'warn' : 'error', `template_burned:${step.template_name}`,
+              isBurnCopy
+                ? `🟡 עותק השריפה "${step.template_name}" ספג את מכסת הכישלונות (${cSettings.max_template_failures} ` +
+                  `בחלון ${compliance.BURN_WINDOW_DAYS} ימים) ונח — זה תפקידו. הנמענות הרוויות בשלב ימתינו וישוחררו ` +
+                  `לבד כשהחלון הנע יתפנה; נמענות נקיות ממשיכות כרגיל. אין צורך ליצור תבנית.`
+                : `🔴 התבנית "${step.template_name}" הגיעה ל-${cSettings.max_template_failures} כישלוני מסירה ` +
+                  `בחלון ${compliance.BURN_WINDOW_DAYS} ימים והשליחה בה נעצרה לנמענות בסיכון (נקיות ממשיכות). ` +
+                  `היא תשתחרר לבד עם התפנות החלון — אבל תבנית נקייה לא אמורה להישרף: בדקו דליפת חסומות וקצב כניסה לשלב.`,
+              { template: step.template_name, limit: cSettings.max_template_failures,
+                window: compliance.BURN_WINDOW_DAYS, burnCopy: isBurnCopy }
             );
           }
           const waitMs =
