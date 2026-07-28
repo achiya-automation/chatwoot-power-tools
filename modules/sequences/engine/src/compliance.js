@@ -428,12 +428,17 @@ export async function loadContactStates(pool, accountId, contactIds) {
 
 /**
  * מפת "<name>|<lang>" → שורת template_health, **בתוספת `failures`** — מספר המסירות
- * שנכשלו בתבנית הזו מאז ומעולם. זה המונה שעליו עובד `max_template_failures`.
+ * שנכשלו בתבנית הזו בחלון נע של `BURN_WINDOW_DAYS` ימים. זה המונה שעליו עובד
+ * `max_template_failures`.
  *
- * למה לספור מ-sent_messages ולא לשמור עמודה: התאומה (`_v3`) היא שם חדש, ולכן המונה שלה
- * מתאפס מעצמו — בדיוק כמו אצל מטא. עמודה נפרדת הייתה דורשת איפוס ידני בכל החלפה.
+ * חלון נע ולא all-time: מוניטין תבנית אצל מטא הוא "איכות אחרונה", לא היסטורית — תבנית
+ * שנחה מתאוששת (נמדד: 2-5 ימי מנוחה → 79% מסירה). ספירת אבד-עולם חסמה תבנית לנצח,
+ * והאיפוס היחיד היה שם חדש = רוטציית תבניות סדרתית = דפוס הספאם שמטא מסמנת. החלון
+ * משחרר את הבלם מעצמו אחרי מנוחה: אפס תבניות חדשות, אפס התערבות ידנית.
  * ⚠️ `quality_score` של מטא מחזיר UNKNOWN לתמיד בנפחים האלה — הוא אינו אזהרה מוקדמת.
  */
+export const BURN_WINDOW_DAYS = 7; // מעל זמן ההתאוששות הנמדד; מיושר עם הצינון המדורג של הליד (3-12 ימים)
+
 export async function loadTemplateHealth(pool, accountId) {
   const { rows } = await pool.query(
     `SELECT th.*, COALESCE(f.failures, 0)::int AS failures
@@ -442,9 +447,10 @@ export async function loadTemplateHealth(pool, accountId) {
               SELECT template_name, count(*) AS failures
                 FROM drip.sent_messages
                WHERE account_id = $1 AND delivery_status = 'failed'
+                 AND sent_at >= now() - make_interval(days => $2)
                GROUP BY template_name
             ) f ON f.template_name = th.template_name
-      WHERE th.account_id = $1`, [accountId]
+      WHERE th.account_id = $1`, [accountId, BURN_WINDOW_DAYS]
   );
   const m = new Map();
   for (const r of rows) {
