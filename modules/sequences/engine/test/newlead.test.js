@@ -23,12 +23,15 @@ test('⭐ ליד חדש עובר — התרחיש הבסיסי', () => {
   assert.deepEqual(canSend(base), { ok: true });
 });
 
-test('⭐⭐ ליד חדש עובר גם כשהתבנית מעל הבלם — הבלם הוא לחסומים בלבד', () => {
+test('⭐⭐ ליד חדש עובר מעל הבלם הרגיל, אבל לא מעל מדרגת החירום הקשיחה', () => {
   // זה הבאג שהיה הורג את הלקוח: הזנב הרווי שורף תבנית → הבלם נסגר →
   // וליד חדש, ששווה 91%, לא מקבל כלום. הבלם חייב לחול רק על מי שכבר נחסם.
-  const burned = { status: 'APPROVED', failures: 50 };
+  const burned = { status: 'APPROVED', failures: 40 };
   assert.deepEqual(canSend({ ...base, template: burned }), { ok: true });
-  assert.deepEqual(canSend({ ...base, template: { status: 'APPROVED', failures: 999 } }), { ok: true });
+  assert.equal(
+    canSend({ ...base, template: { status: 'APPROVED', failures: 48 } }).reason,
+    'template_burned'
+  );
 });
 
 test('🔴 בלי blanket_consent — כל ליד חדש נדחה. זה המתג שמשתק לקוח.', () => {
@@ -58,9 +61,16 @@ test('⭐ תבנית לא ידועה = fail-open — חוסר ידע לא משת
   assert.deepEqual(canSend({ ...base, template: null }), { ok: true });
 });
 
-test('⭐ ליד חדש שכבר נחסם פעם — עובר, עד 4 ניסיונות', () => {
+test('⭐ ליד שכבר נחסם עובר רק אחרי מדרגת הצינון המתאימה', () => {
   for (const n of [1, 2, 3]) {
-    assert.equal(canSend({ ...base, contact: { ...NEW_LEAD, cap_failures: n } }).ok, true, `${n} חסימות`);
+    assert.equal(canSend({
+      ...base,
+      contact: {
+        ...NEW_LEAD,
+        cap_failures: n,
+        last_cap_failure_at: '2026-01-01T00:00:00Z',
+      },
+    }).ok, true, `${n} חסימות אחרי מנוחה`);
   }
   // ב-4 — נעצר (defer, לא drop: תגובה תפשיר אותו)
   const v = canSend({ ...base, contact: { ...NEW_LEAD, cap_failures: 4 } });
