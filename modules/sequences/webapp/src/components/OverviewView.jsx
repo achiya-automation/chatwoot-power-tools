@@ -49,6 +49,9 @@ const M = {
     waitingHint: 'מטא עוד לא אישרה',
     burnPool: 'לידים שחזרו',
     burnPoolHint: 'לידים שוואטסאפ כבר חסמה בעבר — קיבלו עותק מתכלה והתעוררו. הצלחה, לא חסימה',
+    burnAbsorbed: 'נספגו',
+    burnRowLabel: 'מאגר השריפה',
+    burnRowHint: 'עותקים מתכלים ללידים חסומים — כישלון כאן מגן על התבנית הנקייה',
     arrivalRate: 'שיעור הגעה',
     successRate: 'לא נחסמו',
     ofDecided: 'ממה שהוכרע',
@@ -126,6 +129,9 @@ const M = {
     waitingHint: 'Meta has not confirmed yet',
     burnPool: 'Revived',
     burnPoolHint: 'Leads Meta had already capped — got a disposable copy and woke up. A win, not a block',
+    burnAbsorbed: 'absorbed',
+    burnRowLabel: 'Burn pool',
+    burnRowHint: 'disposable copies for capped leads — a failure here protects the clean template',
     arrivalRate: 'Arrival rate',
     successRate: 'Not blocked',
     ofDecided: 'of decided',
@@ -368,10 +374,13 @@ function DeliveryCard({ stats }) {
     inSequence: stats.bySource?.inSequence || empty,
   };
 
+  // ⭐ הסיבות בקהל הנקי בלבד — כמו הדונאט. הגרסה הישנה סכמה את כל הכישלונות כולל
+  // מאגר השריפה: "נחסמו 7" בדונאט ליד "תקרת שיווק: 24" בשורת הסיבות, על אותו מסך.
+  // (?? fallback לשדות הישנים — עמידות לפער גרסאות רגעי בין המנוע ל-webapp בפריסה.)
   const reasons = [
-    { label: tr('reasonCap'), n: t.block_cap || 0 },
-    { label: tr('reasonInvalid'), n: t.block_invalid || 0 },
-    { label: tr('reasonOptout'), n: t.block_optout || 0 },
+    { label: tr('reasonCap'), n: t.block_cap_clean ?? t.block_cap ?? 0 },
+    { label: tr('reasonInvalid'), n: t.block_invalid_clean ?? t.block_invalid ?? 0 },
+    { label: tr('reasonOptout'), n: t.block_optout_clean ?? t.block_optout ?? 0 },
   ].filter((r) => r.n > 0);
   // שגיאות שליחה שלנו — קטגוריה נפרדת מהחסימות, עם קריאה לפעולה ("לתקן")
   const sendErrors = [
@@ -408,8 +417,12 @@ function DeliveryCard({ stats }) {
               <LegendRow cls="text-n-teal-9" label={tr('arrived')} value={String(cleanArrived)} />
               <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')} value={String(cleanBlocked)} />
               {(burnArrived + burnBlocked) > 0 ? (
+                // ⭐ שני המספרים, לא רק ההצלחות: בלי "נספגו" נעלמו 13 שליחות מהמסך
+                // והסכום לא הסתדר מול "נשלחו". ספיגה היא תפקידו של העותק — לא חסימה.
                 <LegendRow cls="text-n-teal-9" label={tr('burnPool')} hint={tr('burnPoolHint')}
-                           value={`${burnArrived}`} />
+                           value={burnBlocked > 0
+                             ? `${burnArrived} ${tr('arrived')} · ${burnBlocked} ${tr('burnAbsorbed')}`
+                             : `${burnArrived}`} />
               ) : null}
               {sendError > 0 ? (
                 <LegendRow cls="text-n-amber-9" label={tr('sendError')} hint={tr('sendErrorHint')}
@@ -440,10 +453,27 @@ function DeliveryCard({ stats }) {
           שתי בעיות שונות לגמרי, ומספר אחד מסתיר את שתיהן — ליד חדש שנחסם בהודעה
           הראשונה בחייו הגיע רווי מעסקים אחרים (בעיית מקור לידים), וחסימה בהמשך הרצף
           היא משהו שאנחנו עשינו. שורת אחוזים מספיקה: אין כאן צורך בגרף. */}
-      {sent > 0 && (bySrc.newLead.sent > 0 || bySrc.inSequence.sent > 0) ? (
+      {sent > 0 && (bySrc.newLead.sent > 0 || bySrc.inSequence.sent > 0 || Number(t.burn_sent) > 0) ? (
         <div className="mt-4 space-y-2 border-t border-n-weak pt-3">
           <SourceRow label={tr('srcNew')} hint={tr('srcNewHint')} src={bySrc.newLead} tr={tr} />
           <SourceRow label={tr('srcSeq')} hint={tr('srcSeqHint')} src={bySrc.inSequence} tr={tr} />
+          {/* ⭐ השורה שסוגרת את החשבון: שתי השורות למעלה הן הקהל הנקי בלבד (ה-backend
+              מסנן burn), וההפרש מול "נשלחו" ישב עד עכשיו בשום מקום. מעומעם בכוונה —
+              ספיגה היא שגרה, לא אזעקה. */}
+          {Number(t.burn_sent) > 0 ? (
+            <div className="flex items-baseline justify-between gap-2 text-xs">
+              <span className="truncate text-n-slate-10">
+                {tr('burnRowLabel')}<span> · {tr('burnRowHint')}</span>
+              </span>
+              <span className="shrink-0 whitespace-nowrap tabular-nums text-n-slate-11">
+                {tr('mSent')} <b className="font-semibold text-n-slate-12">{Number(t.burn_sent) || 0}</b>
+                <span className="text-n-slate-10"> · </span>
+                {tr('arrived')} <b className="font-semibold text-n-teal-11">{burnArrived}</b>
+                <span className="text-n-slate-10"> · </span>
+                {tr('burnAbsorbed')} <b className="font-semibold text-n-slate-11">{burnBlocked}</b>
+              </span>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -478,15 +508,21 @@ function DeliveryCard({ stats }) {
       {stats.byTemplate && stats.byTemplate.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-n-slate-11">
           <span className="text-n-slate-10">{tr('failedMessages')}</span>
-          {stats.byTemplate.map((x) => (
-            <span key={x.template} className="font-mono">
-              {x.template}{' '}
-              {/* אדום = חסימת מטא, כתום = שגיאה שלנו. שם התבנית עם המספר הדומיננטי. */}
-              <span className={x.blocked >= x.send_error ? 'text-n-ruby-11' : 'text-n-amber-11'}>
-                ({x.failed})
+          {stats.byTemplate.map((x) => {
+            // עותק שריפה שנכשל עושה את תפקידו — מעומעם, לא אדום. אדום נשמר לחסימת
+            // מטא על תבנית נקייה (בעיה אמיתית), כתום לשגיאת שליחה שלנו (לתקן).
+            const isBurnTpl = /burn/i.test(x.template);
+            return (
+              <span key={x.template} className="font-mono"
+                    title={isBurnTpl ? tr('burnRowHint') : undefined}>
+                {x.template}{' '}
+                <span className={isBurnTpl ? 'text-n-slate-10'
+                  : x.blocked >= x.send_error ? 'text-n-ruby-11' : 'text-n-amber-11'}>
+                  ({x.failed})
+                </span>
               </span>
-            </span>
-          ))}
+            );
+          })}
         </div>
       ) : null}
 
