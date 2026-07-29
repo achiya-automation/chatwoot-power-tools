@@ -355,6 +355,29 @@ test('canSend: תבנית מעל התקציב נעצרת לנמענת מסוכנ
   assert.deepEqual(canSend({ ...base, template: null }), { ok: true });
 });
 
+test('canSend: המדרגה הקשיחה — תבנית על סף הקריסה נחה לכולם, גם לנמענת נקייה', () => {
+  // העקומה הנמדדת קורסת ב-50+ (⇒18% לכולם). הסף הרגיל (40) משאיר נקיות לשלוח —
+  // נכון בדרך כלל, אבל חסימות-ראשונות ממשיכות לצבור, ותבנית שחצתה את נקודת
+  // הקריסה נחסמת גם אצל הלקוחות הטובים. המדרגה הקשיחה עוצרת ממש לפני.
+  const nearDeath = { ...base.template, failures: 48 };
+
+  // נמענת נקייה לגמרי — ובכל זאת נעצרת: מגינים על התבנית, לא על השליחה הבודדת.
+  const v = canSend({ ...base, template: nearDeath });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'template_burned');
+  assert.equal(v.action, 'defer');           // הליד מחכה שהחלון הנע יתפנה — לא נזרק
+
+  // מתחת למדרגה הקשיחה — הנקייה עדיין עוברת (ההתנהגות הקיימת של הסף הרגיל).
+  assert.deepEqual(canSend({ ...base, template: { ...base.template, failures: 47 } }), { ok: true });
+
+  // חלון שירות פתוח גובר גם על המדרגה הקשיחה: נמסר ב-100% ומרפא את התבנית.
+  assert.equal(canSend({ ...base, template: nearDeath, inSession: true }).ok, true);
+
+  // הסף הקשיח מכוונן פר-חשבון כמו כל הגדרת ציות.
+  const s = { ...DEFAULT_SETTINGS, max_template_failures_hard: 60 };
+  assert.deepEqual(canSend({ ...base, settings: s, template: nearDeath }), { ok: true });
+});
+
 test('canSend: cap_failures מעל הסף נדחה, לא מוסר', () => {
   const v = canSend({ ...base, contact: { ...base.contact, cap_failures: 2 } });
   assert.equal(v.ok, false);
