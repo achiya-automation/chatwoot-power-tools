@@ -373,8 +373,12 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   // ── שעות שקט ────────────────────────────────────────────────────────────
   // אחרי הפטור של החלון הפתוח (מענה לשיחה חיה יוצא גם בלילה) ולפני המכסות.
   // defer — הליד נשאר במקומו ויוצא בפתיחת החלון.
+  // isFreshOpener פטור, מאותו נימוק כמו הפטור שלו מעצירת חשבון: ליד שנרשם ממש
+  // עכשיו מצפה להודעה ממש עכשיו — רגע ההרשמה הוא רגע המסירה הטוב ביותר (נמדד:
+  // 91%), ושליחות לילה כאלה נמסרות יפה (הליד עצמו ער ופעיל — הוא הרגע נרשם).
+  // שעות השקט נועדו לשלבי ההמשך שרודפים אחרי קהל ישן — לא לרגע ההיכרות.
   const qs = Number(s.quiet_start_hour), qe = Number(s.quiet_end_hour);
-  if (Number.isFinite(qs) && Number.isFinite(qe) && qs !== qe) {
+  if (Number.isFinite(qs) && Number.isFinite(qe) && qs !== qe && !isFreshOpener) {
     const hour = Number(new Intl.DateTimeFormat('en-GB', {
       hour: 'numeric', hour12: false, timeZone: s.quiet_tz || 'Asia/Jerusalem',
     }).format(now));
