@@ -38,9 +38,17 @@
   // route's nav item → two items look active at once. A CSS override + a class on <body>
   // disables the native highlight (immune to Vue — it doesn't fight over a class Vue itself
   // manages).
+  // Second rule: Chatwoot's conversation Contact/Copilot side panels are z-40 flex items
+  // inside <main>, and the route stays mounted under the open panel (URL only gains ?drip=),
+  // so whenever the holder sits at or below z-40 they paint ABOVE it and stay stuck on
+  // screen (seen when moving from an open conversation to templates/sequences/journeys).
+  // While the panel is open, drop in-main z-40 layers to 0: the aside and its popovers live
+  // outside <main>, and ninja-keys carries z-9999 with no .z-40 class, so both are
+  // untouched. hide() removes drip-active and everything returns.
   (function () {
     var st = document.createElement('style');
-    st.textContent = 'body.drip-active a[href*="/accounts/"].router-link-active.bg-n-alpha-2{background-color:transparent !important;}';
+    st.textContent = 'body.drip-active a[href*="/accounts/"].router-link-active.bg-n-alpha-2{background-color:transparent !important;}' +
+      'body.drip-active main .z-40{z-index:0 !important;}';
     (document.head || document.documentElement).appendChild(st);
   })();
   var APP = ADDONS_BASE; // same-origin (single route /chatwoot-addons/*) — zero CORS/CSP
