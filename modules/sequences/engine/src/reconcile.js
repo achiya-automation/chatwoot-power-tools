@@ -754,6 +754,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           sentToday: cSentToday.get(e.contact_id) || 0,
           inSession: session,
           isFreshOpener,
+          now,
         });
 
         if (!verdict.ok) {
