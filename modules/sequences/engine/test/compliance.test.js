@@ -423,6 +423,39 @@ test('canSend: saturation_release_days=0 מכבה את השחרור — חניי
   assert.equal(v.reason, 'saturated');
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-07-29 — שעות שקט לשיווק (נצפה חי: שליחות ב-01:00-03:00)
+// כבוי בברירת המחדל (שעון אמיתי היה שובר CI לילי); מודלק פר-חשבון במיגרציה 037.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const QUIET = { ...DEFAULT_SETTINGS, quiet_start_hour: 21, quiet_end_hour: 8 };
+const NIGHT_IL = new Date('2026-07-12T23:30:00Z');   // 02:30 בישראל (קיץ, UTC+3)
+const EVENING_IL = new Date('2026-07-12T19:00:00Z'); // 22:00 בישראל
+const NOON_IL = new Date('2026-07-12T09:00:00Z');    // 12:00 בישראל
+
+test('canSend: שיווק בשעות השקט נדחה — בלילה ובערב, ועובר בצהריים', () => {
+  for (const now of [NIGHT_IL, EVENING_IL]) {
+    const v = canSend({ ...base, settings: QUIET, now });
+    assert.equal(v.ok, false);
+    assert.equal(v.reason, 'quiet_hours');
+    assert.equal(v.action, 'defer');   // הליד נשאר במקומו ויוצא בבוקר
+  }
+  assert.deepEqual(canSend({ ...base, settings: QUIET, now: NOON_IL }), { ok: true });
+});
+
+test('canSend: חלון שירות פתוח יוצא גם בלילה — מענה לשיחה חיה הוא שירות, לא שיווק', () => {
+  const v = canSend({ ...base, settings: QUIET, now: NIGHT_IL, inSession: true });
+  assert.equal(v.ok, true);
+});
+
+test('canSend: UTILITY אינה כפופה לשעות השקט — עדכון הזמנה מגיע גם בלילה', () => {
+  assert.deepEqual(canSend({ ...base, settings: QUIET, now: NIGHT_IL, category: 'UTILITY', contact: {} }), { ok: true });
+});
+
+test('canSend: ברירת המחדל כבויה — בלי הדלקה מפורשת אין דחיית לילה', () => {
+  assert.deepEqual(canSend({ ...base, now: NIGHT_IL }), { ok: true });
+});
+
 test('canSend: שחרור-מנוחה אינו עוקף opt-out — מי שביקשה להסיר לא חוזרת לעולם', () => {
   const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100,
                                           suppressed_at: daysAgo(90), suppressed_reason: 'keyword',

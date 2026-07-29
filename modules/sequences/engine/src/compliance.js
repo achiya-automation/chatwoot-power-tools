@@ -248,6 +248,21 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // דטרמיניסטי של 0-9 ימים לפי contact_id, כדי שקוהורט שלם שנחסם באותו שבוע לא
   // ישתחרר באותו בוקר וישרוף את עותקי ה-burn בבת אחת. 0 = כבוי (חניה לצמיתות).
   saturation_release_days: 21,
+
+  // ── שעות שקט לשיווק ─────────────────────────────────────────────────────────
+  // שלבים עם delay יחסי ובלי send_hour יוצאים בכל שעה — נצפו שליחות שיווק
+  // ב-01:00-03:00. זה לא עניין מסירה (לילה דווקא נמסר יפה) אלא ציות ותדמית:
+  // אף עסק לא רוצה שהודעת השיווק שלו תעיר לקוחה ב-2 בלילה. defer בלבד — הליד
+  // נשאר due ויוצא בטיק הראשון אחרי פתיחת החלון. חלון שירות פתוח פטור (מענה
+  // לשיחה חיה הוא שירות, לא שיווק).
+  //
+  // start == end ⇒ כבוי. ברירת המחדל כבויה ובמתכוון: השעה תלויה בשעון אמיתי,
+  // וברירת-מחדל דלוקה הייתה הופכת כל טסט ו-CI שרצים בלילה-ישראל לנכשלים
+  // (18 אתרי reconcileAccount עם new Date() בטסטים). ההדלקה נעשית פר-חשבון
+  // ב-drip.compliance — מיגרציה 037 מדליקה 21→8 לכל החשבונות הקיימים.
+  quiet_start_hour: 0,                // מהשעה הזו (כולל) — שקט
+  quiet_end_hour:   0,                // עד השעה הזו (לא כולל) — שקט
+  quiet_tz:         'Asia/Jerusalem',
 });
 
 /**
@@ -270,7 +285,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
  */
 export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETTINGS,
                           health = {}, template = null, sentToday = 0, inSession = false,
-                          isFreshOpener = false }) {
+                          isFreshOpener = false, now = new Date() }) {
   const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
 
   // ── חוסם הכל — פרט לחלון שירות פתוח ───────────────────────────────────────
@@ -304,7 +319,7 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   // באותו יום, אבל קוהורט שנחסם יחד נמרח על פני ~10 ימים.
   const releaseDays = Number(s.saturation_release_days || 0);
   const restedEnough = releaseDays > 0 && !!contact.last_cap_failure_at &&
-    (Date.now() - new Date(contact.last_cap_failure_at).getTime()) / 86400000
+    (now.getTime() - new Date(contact.last_cap_failure_at).getTime()) / 86400000
       >= releaseDays + (Number(contact.contact_id) || 0) % 10;
 
   if (contact.suppressed_at) {
@@ -336,6 +351,18 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   // מהמכסה האישית *ומ*מגבלת ה-24h של הפורטפוליו. מטא, per-user-limits:
   // "Marketing messages sent within this window do not count towards the limit."
   if (inSession) return { ok: true, reason: 'in_session' };
+
+  // ── שעות שקט ────────────────────────────────────────────────────────────
+  // אחרי הפטור של החלון הפתוח (מענה לשיחה חיה יוצא גם בלילה) ולפני המכסות.
+  // defer — הליד נשאר במקומו ויוצא בפתיחת החלון.
+  const qs = Number(s.quiet_start_hour), qe = Number(s.quiet_end_hour);
+  if (Number.isFinite(qs) && Number.isFinite(qe) && qs !== qe) {
+    const hour = Number(new Intl.DateTimeFormat('en-GB', {
+      hour: 'numeric', hour12: false, timeZone: s.quiet_tz || 'Asia/Jerusalem',
+    }).format(now));
+    const quiet = qs > qe ? (hour >= qs || hour < qe) : (hour >= qs && hour < qe);
+    if (quiet) return { ok: false, reason: 'quiet_hours', action: 'defer' };
+  }
 
   // ── מכסות שיווק ─────────────────────────────────────────────────────────
   // ההסכמה נבדקת בשתי רמות, ודי באחת מהן:
