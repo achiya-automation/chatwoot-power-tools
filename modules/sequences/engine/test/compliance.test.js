@@ -332,9 +332,10 @@ test('canSend: תגובה מבטלת רוויה — חלון פתוח עוקף �
   assert.equal(optOut.action, 'drop');
 });
 
-test('canSend: תבנית מעל התקציב נעצרת לנמענת מסוכנת — ולעולם לא לנמענת נקייה', () => {
+test('canSend: הסף הרגיל עוצר נמענת מסוכנת אך משאיר נקייה עד למדרגה הקשיחה', () => {
   const burned = { ...base.template, failures: 40 };
-  const risky  = { ...base.contact, cap_failures: 1 };   // מטא כבר חסמה אותה פעם
+  const risky  = { ...base.contact, cap_failures: 1,
+                   last_cap_failure_at: '2026-01-01T00:00:00Z' };
 
   const v = canSend({ ...base, template: burned, contact: risky });
   assert.equal(v.ok, false);
@@ -353,6 +354,12 @@ test('canSend: תבנית מעל התקציב נעצרת לנמענת מסוכנ
 
   // תבנית שאין עליה מידע — fail-open. חוסר ידע לא משתק לקוח.
   assert.deepEqual(canSend({ ...base, template: null }), { ok: true });
+});
+
+test('canSend: המדרגה הקשיחה עוצרת גם נמענת נקייה לפני קריסת התבנית', () => {
+  const v = canSend({ ...base, template: { ...base.template, failures: 48 } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'template_burned');
 });
 
 test('canSend: cap_failures מעל הסף נדחה, לא מוסר', () => {
@@ -383,7 +390,7 @@ test('canSend: רוויה עם חסימה טרייה נשארת חנויה — �
 });
 
 test('canSend: רוויה שנחה מעבר לסף משתחררת לניסיון בודד', () => {
-  // contact_id=100 ⇒ פיזור 0 ⇒ הסף הוא saturation_release_days בדיוק (ברירת מחדל 21).
+  // cap=5 נוחת במדרגת 30 יום. release_days נמוך יותר לעולם לא מקצר אותה.
   const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100,
                                           suppressed_at: daysAgo(40),
                                           suppressed_reason: 'saturated',
@@ -393,11 +400,47 @@ test('canSend: רוויה שנחה מעבר לסף משתחררת לניסיון
 });
 
 test('canSend: הפיזור לפי contact_id דוחה קוהורט שלם מלהשתחרר באותו יום', () => {
-  // אותה מנוחה (25 ימים): id שהפיזור שלו 0 משוחרר, id שהפיזור שלו 9 עדיין ממתין.
+  // cap=2 ⇒ מדרגת 10 ימים, ולכן מדיניות השחרור 21+פיזור היא הגורם המכריע.
   const rested = { ...base.contact, suppressed_at: daysAgo(25), suppressed_reason: 'saturated',
-                   cap_failures: 5, last_cap_failure_at: daysAgo(25) };
+                   cap_failures: 2, last_cap_failure_at: daysAgo(25) };
   assert.equal(canSend({ ...base, contact: { ...rested, contact_id: 100 } }).ok, true);   // 25 ≥ 21+0
   assert.equal(canSend({ ...base, contact: { ...rested, contact_id: 109 } }).ok, false);  // 25 < 21+9
+});
+
+test('canSend: backlog או UPDATE ידני אינם יכולים לקצר את סולם הצינון', () => {
+  const now = new Date('2026-07-29T12:00:00Z');
+  const contact = {
+    ...base.contact,
+    cap_failures: 1,
+    last_cap_failure_at: '2026-07-23T12:00:00Z', // 6 ימים; המדרגה הראשונה היא 7
+  };
+  const early = canSend({ ...base, contact, now });
+  assert.equal(early.ok, false);
+  assert.equal(early.reason, 'cap_cooldown');
+  assert.equal(new Date(early.retryAt).toISOString(), '2026-07-30T12:00:00.000Z');
+
+  assert.equal(canSend({
+    ...base,
+    contact: { ...contact, last_cap_failure_at: '2026-07-22T12:00:00Z' },
+    now,
+  }).ok, true);
+});
+
+test('canSend: release_days=15 לא עוקף מדרגת 30 יום של cap=5', () => {
+  const settings = { ...DEFAULT_SETTINGS, max_cap_failures: 5, saturation_release_days: 15 };
+  const contact = {
+    ...base.contact,
+    contact_id: 100,
+    cap_failures: 5,
+    suppressed_at: daysAgo(20),
+    suppressed_reason: 'saturated',
+    last_cap_failure_at: daysAgo(20),
+  };
+  assert.equal(canSend({ ...base, settings, contact }).ok, false);
+  assert.equal(canSend({
+    ...base, settings,
+    contact: { ...contact, suppressed_at: daysAgo(31), last_cap_failure_at: daysAgo(31) },
+  }).ok, true);
 });
 
 test('canSend: שחרור-המנוחה חל גם על הגנת העומק (cap_failures ≥ max בלי suppressed)', () => {

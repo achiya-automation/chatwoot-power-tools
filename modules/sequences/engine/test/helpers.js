@@ -32,6 +32,11 @@ export async function setupDb(pool) {
   await pool.query(`CREATE TABLE IF NOT EXISTS public.messages (
     id int, conversation_id int, account_id int, message_type int, content text,
     status int, content_attributes json, source_id text, created_at timestamp)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.campaigns (
+    id int PRIMARY KEY, display_id int, account_id int, inbox_id int, title text,
+    message text, campaign_type int, campaign_status int,
+    audience jsonb DEFAULT '[]'::jsonb, template_params jsonb DEFAULT '{}'::jsonb,
+    scheduled_at timestamp, created_at timestamp)`);
   await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS contact_inbox_id int');
   await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS inbox_id int');
   await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS campaign_id int');
@@ -52,6 +57,8 @@ export async function setupDb(pool) {
     message_templates_last_updated timestamp)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.contact_inboxes (
     id int PRIMARY KEY, contact_id int, inbox_id int, source_id text)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.labels (
+    id int PRIMARY KEY, account_id int, title text)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.tags (
     id int PRIMARY KEY, name text)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.taggings (
