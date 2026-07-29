@@ -237,6 +237,17 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // ליד שלא מקבל פתיחה בזמן = ליד אבוד. ⚠️ רק ליד שנרשם בתוך החלון הזה — לא קהל ישן
   // וקר (שהוא בדיוק מה ששרף את המספר). 0 = לכבות את ההחרגה לגמרי.
   fresh_opener_hours:    48,
+
+  // ── שחרור-מנוחה לנמענת רוויה (saturation rest release) ──────────────────────
+  // מטא: התקרה הפר-נמענת "מסתגלת אוטומטית עם הזמן" — כלומר היא משתחררת אחרי מנוחה.
+  // נמדד אצלנו (45 יום, n=2,398 שליחות שבאו אחרי 131049): ניסיון במרווח של פחות
+  // מ-4 ימים מהחסימה האחרונה נמסר ב-8-15%; 4-7 ימים — 41%; 7 ימים ומעלה — 61%.
+  // לכן נמענת שסומנה saturated אינה חנויה לנצח: אחרי המנוחה הזו מותר ניסיון בודד.
+  // כישלון נוסף מאפס את שעון המנוחה ומטפס בסולם הצינון (ראה reconcile), כך שנמענת
+  // שמטא ממשיכה לשמור עליה מקבלת ניסיון אחד ומרווח — לא הפגזה. לסף מתווסף פיזור
+  // דטרמיניסטי של 0-9 ימים לפי contact_id, כדי שקוהורט שלם שנחסם באותו שבוע לא
+  // ישתחרר באותו בוקר וישרוף את עותקי ה-burn בבת אחת. 0 = כבוי (חניה לצמיתות).
+  saturation_release_days: 21,
 });
 
 /**
@@ -286,6 +297,16 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
 
   // ── חוסם את איש הקשר ────────────────────────────────────────────────────
   const marketing = isMarketing(category);
+
+  // כמה זמן הנמענת נחה מאז ה-131049 האחרון שלה? השחרור דורש *ראיה* למנוחה —
+  // חותמת שקיימת וישנה מספיק. אין חותמת ⇒ אין ראיה ⇒ ההתנהגות הישנה (חנייה),
+  // fail-closed. הפיזור לפי contact_id דטרמיניסטי: אותה נמענת משתחררת תמיד
+  // באותו יום, אבל קוהורט שנחסם יחד נמרח על פני ~10 ימים.
+  const releaseDays = Number(s.saturation_release_days || 0);
+  const restedEnough = releaseDays > 0 && !!contact.last_cap_failure_at &&
+    (Date.now() - new Date(contact.last_cap_failure_at).getTime()) / 86400000
+      >= releaseDays + (Number(contact.contact_id) || 0) % 10;
+
   if (contact.suppressed_at) {
     const scope = contact.suppressed_scope || 'marketing';
     if (scope === 'all' || marketing) {
@@ -298,7 +319,10 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
       if (!capBased) {
         return { ok: false, reason: 'suppressed', action: 'drop', detail: contact.suppressed_reason || '' };
       }
-      if (!inSession) {
+      // אחרי המנוחה המדודה התקרה של מטא כבר הסתגלה — ניסיון בודד משתחרר. הניתוב
+      // למאגר השריפה עדיין חל (cap_failures>0), כך שגם אם הניסיון ייכשל, הכישלון
+      // ייספג בעותק ה-burn ולא בתבנית הנקייה — וישעון המנוחה יתאפס ויטפס בסולם.
+      if (!inSession && !restedEnough) {
         return { ok: false, reason: 'saturated', action: 'defer', detail: contact.suppressed_reason || '' };
       }
     }
@@ -347,8 +371,9 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   }
 
   // הגנות עומק — הכתיבה עצמה נעשית ב-reconcileDeliveries, אבל אם מחזור אחד פספס,
-  // השער לא ישלח בכל זאת. רוויה = דחייה, לא הסרה (ראה ההערה למעלה).
-  if (Number(contact.cap_failures || 0) >= Number(s.max_cap_failures)) {
+  // השער לא ישלח בכל זאת. רוויה = דחייה, לא הסרה (ראה ההערה למעלה) — וגם כאן
+  // שחרור-המנוחה חל, מאותו נימוק בדיוק כמו בענף ה-suppressed למעלה.
+  if (Number(contact.cap_failures || 0) >= Number(s.max_cap_failures) && !restedEnough) {
     return { ok: false, reason: 'saturated', action: 'defer' };
   }
   if (Number(contact.unengaged_streak || 0) >= Number(s.max_unengaged)) {
