@@ -362,6 +362,75 @@ test('canSend: cap_failures מעל הסף נדחה, לא מוסר', () => {
   assert.equal(v.action, 'defer');
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-07-29 — שחרור-מנוחה לנמענת רוויה (נמדד: 45 יום, n=2,398)
+// מרווח <4 ימים אחרי 131049 נמסר ב-8-15% · 4-7 ימים — 41% · 7+ ימים — 61%.
+// התקרה של מטא "מסתגלת אוטומטית" — מנוחה ארוכה משחררת אותה, וחנייה לצמיתות
+// זורקת לידים שחזרו להיות ברי-השגה.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+
+test('canSend: רוויה עם חסימה טרייה נשארת חנויה — המנוחה טרם הבשילה', () => {
+  const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100,
+                                          suppressed_at: daysAgo(2),
+                                          suppressed_reason: 'saturated',
+                                          cap_failures: 5,
+                                          last_cap_failure_at: daysAgo(2) } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'saturated');
+  assert.equal(v.action, 'defer');
+});
+
+test('canSend: רוויה שנחה מעבר לסף משתחררת לניסיון בודד', () => {
+  // contact_id=100 ⇒ פיזור 0 ⇒ הסף הוא saturation_release_days בדיוק (ברירת מחדל 21).
+  const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100,
+                                          suppressed_at: daysAgo(40),
+                                          suppressed_reason: 'saturated',
+                                          cap_failures: 5,
+                                          last_cap_failure_at: daysAgo(40) } });
+  assert.equal(v.ok, true);
+});
+
+test('canSend: הפיזור לפי contact_id דוחה קוהורט שלם מלהשתחרר באותו יום', () => {
+  // אותה מנוחה (25 ימים): id שהפיזור שלו 0 משוחרר, id שהפיזור שלו 9 עדיין ממתין.
+  const rested = { ...base.contact, suppressed_at: daysAgo(25), suppressed_reason: 'saturated',
+                   cap_failures: 5, last_cap_failure_at: daysAgo(25) };
+  assert.equal(canSend({ ...base, contact: { ...rested, contact_id: 100 } }).ok, true);   // 25 ≥ 21+0
+  assert.equal(canSend({ ...base, contact: { ...rested, contact_id: 109 } }).ok, false);  // 25 < 21+9
+});
+
+test('canSend: שחרור-המנוחה חל גם על הגנת העומק (cap_failures ≥ max בלי suppressed)', () => {
+  const c = { ...base.contact, contact_id: 100, cap_failures: 2 };
+  assert.equal(canSend({ ...base, contact: { ...c, last_cap_failure_at: daysAgo(1) } }).ok, false);
+  assert.equal(canSend({ ...base, contact: { ...c, last_cap_failure_at: daysAgo(40) } }).ok, true);
+});
+
+test('canSend: אין חותמת = אין ראיה למנוחה = ההתנהגות הישנה (חנייה) — fail-closed', () => {
+  const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100, cap_failures: 5,
+                                          suppressed_at: daysAgo(60), suppressed_reason: 'saturated' } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'saturated');
+});
+
+test('canSend: saturation_release_days=0 מכבה את השחרור — חנייה לצמיתות כמו קודם', () => {
+  const settings = { ...DEFAULT_SETTINGS, saturation_release_days: 0 };
+  const v = canSend({ ...base, settings,
+                      contact: { ...base.contact, contact_id: 100, cap_failures: 5,
+                                 suppressed_at: daysAgo(90), suppressed_reason: 'saturated',
+                                 last_cap_failure_at: daysAgo(90) } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'saturated');
+});
+
+test('canSend: שחרור-מנוחה אינו עוקף opt-out — מי שביקשה להסיר לא חוזרת לעולם', () => {
+  const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100,
+                                          suppressed_at: daysAgo(90), suppressed_reason: 'keyword',
+                                          last_cap_failure_at: daysAgo(90) } });
+  assert.equal(v.ok, false);
+  assert.equal(v.action, 'drop');
+});
+
 test('scanInbound: תגובה ישנה אינה מאפסת את מונה החסימות (נמדד: 13/13 נכשלו)', () => {
   // הרגרסיה: cap_failures התאפס בכל תגובה. תגובה מלפני שבועות אינה מרפה את התקרה של
   // מטא — רק חלון פתוח מרפה אותה. 13 לידים שהמונה שלהם אופס כך נשלחו כ"נקיים" וחזרו

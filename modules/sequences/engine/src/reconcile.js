@@ -1243,20 +1243,29 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
       // also burns the template for everyone else.
       case 'cap': {
         // 130472 = "המספר בניסוי של מטא" — A/B זמני של מטא, לא תקרת שיווק מהקצב שלנו.
-        // חולף תוך יום-יומיים ואינו מושפע מריטריי, אז צינון של 3 ימים (כמו 131049) מעכב
+        // חולף תוך יום-יומיים ואינו מושפע מריטריי, אז צינון של ימים (כמו 131049) מעכב
         // ליד חדש לחינם. ניסיון חוזר מהיר (6ש׳), ובלי להעלות cap_failures — הליד נקי, לא
         // רווי, ואסור שינותב למאגר השריפה בגלל גחמה של מטא.
         if (code === '130472') {
           await rearm(row.enrollment_id, row.step_order, 6);
           continue;
         }
+        // סולם הצינון — נמדד, לא מנוחש (45 יום, n=2,398 שליחות שבאו אחרי 131049):
+        // ניסיון במרווח <4 ימים נמסר ב-8-15% (הסולם הישן 3→6→9 נחת עם המדרגה
+        // הראשונה בדיוק בבור הזה), 4-7 ימים — 41%, 7+ ימים — 61%. לכן המדרגה
+        // הראשונה היא 7, והזנב מתארך עד 45 במקום חניה לצמיתות — נמענת שמטא שומרת
+        // עליה שוב ושוב מקבלת ניסיון בודד ומרווח, לא הפגזה (ראה שחרור-המנוחה ב-canSend).
+        const CAP_COOLDOWN_DAYS = [7, 10, 14, 21, 30, 45];
         let failures = 1;
         if (row.contact_id) {
+          // last_cap_failure_at הוא שעון המנוחה של שחרור-הרוויה (canSend): כל 131049
+          // מאפס אותו. ההיסטוריה המלאה נשארת ב-sent_messages — החותמת רק חוסכת JOIN.
           const st = (await pool.query(
-            `INSERT INTO drip.contact_state (account_id, contact_id, cap_failures)
-             VALUES ($1, $2, 1)
+            `INSERT INTO drip.contact_state (account_id, contact_id, cap_failures, last_cap_failure_at)
+             VALUES ($1, $2, 1, now())
              ON CONFLICT (account_id, contact_id) DO UPDATE
-               SET cap_failures = drip.contact_state.cap_failures + 1, updated_at = now()
+               SET cap_failures = drip.contact_state.cap_failures + 1,
+                   last_cap_failure_at = now(), updated_at = now()
              RETURNING cap_failures`,
             [accountId, row.contact_id]
           )).rows[0];
@@ -1274,7 +1283,8 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
             // כאילו נמסרה. ואז, כשהנמענת אכן מגיבה והחלון נפתח, היא מקבלת את ההמשך של סיפור
             // שלא שמעה את תחילתו — הפוך בדיוק מהכוונה שמעל. נמדד בבננה בוק (14/07/2026):
             // 293 לידים עמדו אחרי הודעות שלא קיבלו, 197 מהן שלושה שלבים קדימה.
-            await rearm(row.enrollment_id, row.step_order, 24 * Math.min(3 * failures, 12));
+            await rearm(row.enrollment_id, row.step_order,
+                        24 * CAP_COOLDOWN_DAYS[Math.min(failures, CAP_COOLDOWN_DAYS.length) - 1]);
             continue;
           }
         }
@@ -1293,10 +1303,11 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
         // for up to 24 hours" — the retry loop MANUFACTURES the very block it is fighting.
         // (35% of this account's sends were such retries.)
         //
-        // So: an escalating cooldown on the SAME step (3 → 6 → 9 … capped at 12 days), the
-        // lead stays active, and the only stop is contact-level saturation above. If she ever
-        // replies, the window opens and she gets everything she missed.
-        const cooldownDays = Math.min(3 * failures, 12);
+        // So: an escalating cooldown on the SAME step (7 → 10 → 14 → 21 → 30 → 45 days,
+        // measured — see CAP_COOLDOWN_DAYS above), the lead stays active, and contact-level
+        // saturation above only stretches the spacing further. If she ever replies, the
+        // window opens and she gets everything she missed.
+        const cooldownDays = CAP_COOLDOWN_DAYS[Math.min(failures, CAP_COOLDOWN_DAYS.length) - 1];
         await rearm(row.enrollment_id, row.step_order, 24 * cooldownDays);
         continue;
       }
