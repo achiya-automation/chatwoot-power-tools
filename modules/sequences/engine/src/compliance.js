@@ -226,9 +226,17 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // ואינו נורה אף פעם. הבלם האמיתי מודד את המסירה *בפועל*: אם ההודעות על תבניות
   // נקיות מפסיקות להגיע (WABA שרוף, מדיה שבורה, פעולת מדיניות של מטא) — כל שליחה
   // נכשלת בלי שאף תבנית בודדת חוצה את הסף שלה, והחשבון נשאר "בריא" בעיני מטא בזמן
-  // שהוא הולם. checkDeliveryFloor עוצר את זה. נמדד בבננה בוק: מסירה תקינה = 91-98%.
-  min_delivery_rate:     70,   // אחוז הגעה מינימלי על מדגם תבניות נקיות
-  min_delivery_sample:   20,   // אל תשפוט מסירה על מדגם קטן מזה
+  // שהוא הולם. checkDeliveryFloor עוצר את זה.
+  //
+  // ⭐ הסף מכויל להבחין בין קריסה לרעש (נלמד מעצירת-שווא, 29/07/2026):
+  // הבייסליין הבריא לקהל נקי הוא 60-84% — לא 91-98% — כי חלק מהנמענות מגיעות
+  // רוויות מעסקים אחרים, וה-131049 הראשון של ליד בלתי-ניתן לחיזוי בהגדרה. ביום
+  // חלש על מדגם קטן 55% זה רעש בינומי רגיל (קורה כל שבוע), בעוד קריסה אמיתית
+  // (WABA מת) נראית כמו 0-20%. סף 70 עצר יום חלש; סף 45 מפריד את ההתפלגויות:
+  // כמעט בלתי-אפשרי סטטיסטית ביום תקין, ומיידי כשמשהו באמת נשבר. העצירה משתחררת
+  // אוטומטית כשהשיעור מתאושש או כשמתחיל יום חדש (ראה checkDeliveryFloor).
+  min_delivery_rate:     45,   // רצפת קריסה, לא "יום חלש" — ראה כיול למעלה
+  min_delivery_sample:   30,   // אל תשפוט מסירה על מדגם קטן מזה
 
   // ── חלון הפתיחה לליד חדש (fresh opener) ─────────────────────────────────────
   // גם כשהחשבון עצור על RED, מותר לשלוח את *הפתיחה בלבד* לליד שנרשם ממש לאחרונה.
@@ -578,32 +586,61 @@ export async function checkDeliveryFloor(pool, accountId, settings = null) {
   // (אם קיימת). חשבון חדש בלי שורה נופל ל-DEFAULT — כך הבלם מובנה אוטומטית לכולם.
   const s = { ...DEFAULT_SETTINGS, ...(settings || await loadSettings(pool, accountId)) };
 
-  // מסירה על תבניות נקיות בלבד היום. מאגר השריפה מעוצב להיכשל — לכלול אותו כאן זה
-  // בדיוק "המכנה המזוהם" שהפך רשימה תקינה לשרופה פעמיים. NOT LIKE '%burn%' מנקה.
+  // מקור האמת: delivery_status של המנוע — לא JOIN ל-public.messages. מחיקת תיבה
+  // מוחקת בקסקייד את שורות messages, וה-JOIN מפיל חסימות מהמדגם בשקט (אותו באג
+  // שתוקן ב-delivery_stats). מוחרגות מהמדגם:
+  //   • מאגר השריפה — מעוצב להיכשל; לכלול אותו זה "המכנה המזוהם".
+  //   • הודעה ראשונה-בחיים — ליד שמגיע רווי מעסקים אחרים הוא רעש מקור-לידים,
+  //     לא בריאות המספר. נמדד בעצירת-השווא של 29/07/2026: כל 9 הכשלים "הנקיים"
+  //     של היום היו ה-131049 הראשון של הליד — אפס אות על המספר עצמו.
   const { rows } = await pool.query(
-    `SELECT count(*) FILTER (WHERE m.status IN (1,2)) AS ok,
-            count(*) FILTER (WHERE m.status = 3)     AS bad
-       FROM drip.sent_messages sm
-       JOIN messages m ON m.id = sm.message_id
-      WHERE sm.account_id = $1
-        AND sm.sent_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Jerusalem') AT TIME ZONE 'Asia/Jerusalem'
-        AND sm.template_name NOT LIKE '%burn%'`,
+    `WITH s AS (
+       SELECT sm.sent_at, COALESCE(sm.delivery_status, 'pending') AS ds,
+              (sm.template_name LIKE '%burn%') AS is_burn,
+              row_number() OVER (PARTITION BY sm.contact_id ORDER BY sm.sent_at, sm.id) = 1
+                AS first_ever
+         FROM drip.sent_messages sm
+        WHERE sm.account_id = $1
+     )
+     SELECT count(*) FILTER (WHERE ds IN ('delivered','read')) AS ok,
+            count(*) FILTER (WHERE ds = 'failed')              AS bad
+       FROM s
+      WHERE sent_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Jerusalem') AT TIME ZONE 'Asia/Jerusalem'
+        AND NOT is_burn AND NOT first_ever`,
     [accountId]
   );
   const ok = Number(rows[0]?.ok || 0), bad = Number(rows[0]?.bad || 0);
   const n = ok + bad;
-  if (n < (s.min_delivery_sample || 20)) return null;   // מדגם קטן מדי — לא שופטים
+
+  // עצירה של הבלם הזה משתחררת לבד ברגע שהתנאי חולף — אחרת נוצר מבוי סתום:
+  // עצור ⇒ אין שליחות ⇒ המדגם היומי לא גדל (וביום חדש מתאפס) ⇒ עצור לנצח.
+  // משחררים רק עצירות שהבלם הזה יצר (לפי נוסח הסיבה) — עצירת RED של מטא נשארת.
+  const isFloorHalt = (r) => /שיעור ההגעה/.test(String(r || ''));
+  const maybeResume = async (why) => {
+    const h = await loadHealth(pool, accountId);
+    if (h.halted && isFloorHalt(h.halt_reason)) await resumeAccount(pool, accountId, why);
+  };
+
+  if (n < (s.min_delivery_sample || 30)) {
+    await maybeResume('בלם הרצפה שוחרר — המדגם היומי קטן מכדי לשפוט (יום חדש). השליחה חודשה אוטומטית.');
+    return null;   // מדגם קטן מדי — לא שופטים
+  }
 
   const rate = Math.round((100 * ok) / n);
-  if (rate >= (s.min_delivery_rate || 70)) return { rate, n, halted: false };
+  if (rate >= (s.min_delivery_rate || 45)) {
+    await maybeResume(`שיעור ההגעה התאושש ל-${rate}% (${ok} מתוך ${n}) — השליחה חודשה אוטומטית.`);
+    return { rate, n, halted: false };
+  }
 
   // המסירה צנחה. עוצר — אם לא כבר עצור, כדי לא להציף את הדשבורד באותה התראה כל tick.
   const h = await loadHealth(pool, accountId);
   if (!h.halted) {
     await haltAccount(
       pool, accountId,
-      `שיעור ההגעה צנח ל-${rate}% (${ok} מתוך ${n} היום, תבניות נקיות בלבד). השליחה ` +
-      `נעצרה אוטומטית — בדקו את המספר, המדיה והתבניות, ואז שחררו ידנית (drip.resume_account).`
+      // ponytail: בשושלת הזו ל-haltAccount חתימה בת 3 ארגומנטים — הטקסט הוא החוזה,
+      // וה-auto-resume מזהה עצירת-רצפה לפי "שיעור ההגעה" שבו.
+      `שיעור ההגעה צנח ל-${rate}% (${ok} מתוך ${n} היום, נמענות מוכרות על תבניות נקיות). ` +
+      `השליחה נעצרה אוטומטית — בדקו את המספר, המדיה והתבניות. תשתחרר לבד כשהשיעור יתאושש.`
     );
   }
   return { rate, n, halted: true };
