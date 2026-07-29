@@ -479,6 +479,13 @@ test('canSend: ברירת המחדל כבויה — בלי הדלקה מפורש
   assert.deepEqual(canSend({ ...base, now: NIGHT_IL }), { ok: true });
 });
 
+test('canSend: פתיחה לליד טרי יוצאת גם בשעות השקט — רגע ההרשמה הוא רגע המסירה', () => {
+  // אותו נימוק כמו הפטור מעצירת חשבון: ליד שנרשם עכשיו מצפה להודעה עכשיו.
+  // שעות השקט נועדו לשלבי ההמשך, לא לרגע ההיכרות.
+  const v = canSend({ ...base, settings: QUIET, now: NIGHT_IL, isFreshOpener: true });
+  assert.equal(v.ok, true);
+});
+
 test('canSend: שחרור-מנוחה אינו עוקף opt-out — מי שביקשה להסיר לא חוזרת לעולם', () => {
   const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100,
                                           suppressed_at: daysAgo(90), suppressed_reason: 'keyword',
