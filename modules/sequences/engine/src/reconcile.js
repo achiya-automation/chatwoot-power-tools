@@ -296,6 +296,54 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   // לכן: קודם מי שהחלון שלה פתוח, אחר כך מי שנקייה מחסימות, ורק אז השאר. בתוך כל שכבה —
   // הכי מאחרים בלוח הזמנים ראשונים, כך שהקצב שהוגדר ברצף נשמר.
   // זה לא משנה *מי* יקבל, רק את הסדר בתוך הטיק — ובזכותו התקציב לא נבזבז על חסומות.
+
+  // ── WINDOW PULL — הקדמת השלב הבא אל תוך חלון שירות פתוח ─────────────────────
+  // התיעדוף שלמעלה עוזר רק למי שכבר בשלה (next_send_at <= now). אבל הנכס האמיתי
+  // נפתח כשנמענת מגיבה: 24 שעות שבהן המסירה ~100% (נמדד כאן: 195/196), ההודעה
+  // פטורה מהתקרה הפר-נמענית של מטא, והכישלון-שלא-קרה גם לא שורף את התבנית. שלב
+  // שמתוזמן לעוד יומיים מפספס את החלון — נמדד: 88 מ-184 חלונות (48%) שנפתחו
+  // ב-30 יום התבזבזו כך. בשביל נמענת רוויה (cap>=5, שחרור 0) זה חמור כפליים:
+  // "חלון שירות משחרר רוויה" הוא נתיב היציאה היחיד שלה, אבל הוא נבדק רק כשהיא
+  // במקרה בשלה בזמן שהחלון פתוח.
+  //
+  // המשיכה סוגרת את הפער: השלב הבא — אותה תבנית, אותו סדר, אותם תנאים — מוקדם
+  // אל תוך החלון. רק התזמון זז, וכל השערים ממשיכים לחול: שבת/שקט מעצבים את רגע
+  // השליחה בפועל (isNoSendNow דוחה ל-quietWindowEnd, שעדיין בתוך חלון של 24ש׳),
+  // send_condition מוערך ברגע השליחה, ו-canSend עובר במלואו (opt-out נשאר drop
+  // גם בחלון). +שעה אחת: מרווח אנושי אחרי התגובה — אותו דפוס כמו שלב "replied"
+  // ברצף עצמו — שגם מונע משיכה-חוזרת באותו טיק.
+  //
+  // שלב אחד לכל חלון: ה-NOT EXISTS דורש שלא נשלח כלום מאז ההודעה הנכנסת; אחרי
+  // שליחה, רק תגובה *חדשה* (last_inbound_at מתקדם) פותחת משיכה נוספת. התנאי
+  // next_send_at > last_inbound+24h מושך רק שלב שהיה מפספס את החלון לגמרי —
+  // שלב שכבר נופל בתוך החלון נשלח ממילא, ומשיכתו רק הייתה נלחמת בדחיות השקט.
+  // 20 שעות ולא 24: שוליים כדי שהשליחה עצמה (אחרי +1h וסוף-שקט) תיפול בחלון חי.
+  const cSettings = await compliance.loadSettings(pool, accountId);
+  if (cSettings.window_pull_enabled) {
+    const pulled = await q(
+      `UPDATE drip.enrollments e
+          SET next_send_at = $2::timestamptz + interval '1 hour'
+         FROM drip.contact_state cs, drip.sequences sq
+        WHERE e.account_id = $1
+          AND e.status     = 'active'
+          AND sq.id        = e.sequence_id
+          AND sq.send_enabled
+          AND cs.account_id = e.account_id AND cs.contact_id = e.contact_id
+          AND cs.last_inbound_at > $2::timestamptz - interval '20 hours'
+          AND e.next_send_at     > cs.last_inbound_at + interval '24 hours'
+          AND (cs.suppressed_at IS NULL OR cs.suppressed_reason = 'saturated')
+          AND NOT EXISTS (SELECT 1 FROM drip.sent_messages sm
+                          WHERE sm.account_id = e.account_id
+                            AND sm.contact_id = e.contact_id
+                            AND sm.sent_at   >= cs.last_inbound_at)
+        RETURNING e.id`,
+      [accountId, now]
+    );
+    if (pulled.length) {
+      console.log(`[drip] window-pull acct ${accountId}: ${pulled.length} step(s) pulled into open service window`);
+    }
+  }
+
   const dueIds = (await q(
     `SELECT e.id FROM drip.enrollments e
        LEFT JOIN drip.sequences s ON s.id = e.sequence_id
@@ -361,7 +409,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   // Loaded once, outside the per-enrollment loop: the same settings/health/template map
   // govern every send in this cycle, and re-reading them per lead would be N round-trips
   // for identical rows. Contact state IS per-lead, so it is fetched as one batched read.
-  const cSettings  = await compliance.loadSettings(pool, accountId);
+  // (cSettings already loaded above, before the window-pull.)
   const cHealth    = await compliance.loadHealth(pool, accountId);
   const cTemplates = await compliance.loadTemplateHealth(pool, accountId);
 
