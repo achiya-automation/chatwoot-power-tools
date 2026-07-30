@@ -45,3 +45,11 @@ test('restores + on bare foreign numbers (Excel strips it)', () => {
   assert.equal(normalizePhone(''), null);
   assert.equal(normalizePhone('12345678'), null); // 8 digits — too short for anything
 });
+
+// מגדלי דוד incident: a 10-digit cell (Israeli mobile typed with one digit too many)
+// was "restored" to +5252446876 — a Mexican-looking number a campaign would happily
+// message. No 5X country code produces a 10-digit E.164, so this shape is never foreign.
+test('bare 10-digit starting with 5 is a broken Israeli mobile, not a foreign number', () => {
+  assert.equal(normalizePhone('5252446876'), null);
+  assert.equal(normalizePhone('5444419830'), null);
+});
