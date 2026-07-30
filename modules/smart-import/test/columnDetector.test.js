@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectColumns, SYSTEM_FIELDS } from '../lib/columnDetector.js';
+import { detectColumns, SYSTEM_FIELDS, isHeaderEchoRow } from '../lib/columnDetector.js';
 import { buildContactPayload } from '../lib/fieldMapper.js';
 
 const f = (res, header) => res.find((r) => r.header === header).field;
@@ -140,4 +140,36 @@ test('validateMapping ignores empty columns and non-validated fields', () => {
     { index: 1, field: 'identifier' }, // identifier accepts any string
   ];
   assert.deepEqual(validateMapping(['מייל', 'הערה'], rows, mapping), []);
+});
+
+// מגדלי דוד incident: a file glued from several lists carries each list's header line
+// in the middle of the data, and that line imported as a contact literally named
+// "שם פרטי". A header echo = some mapped cell IS a field label, with no phone/email
+// evidence anywhere in the row.
+test('recognizes מספר נייד / טלפון נייד as phone headers', () => {
+  const res = detectColumns(['מספר נייד', 'שם מלא'], []);
+  assert.equal(f(res, 'מספר נייד'), 'phone_number');
+  const res2 = detectColumns(['טלפון נייד', 'שם'], []);
+  assert.equal(f(res2, 'טלפון נייד'), 'phone_number');
+});
+
+test('flags a mid-file header row from a glued-on second list', () => {
+  const mapping = [
+    { index: 0, field: 'phone_number' },
+    { index: 1, field: 'name' },
+    { index: 2, field: null },
+  ];
+  assert.equal(isHeaderEchoRow(['יציאה', 'שם פרטי', 'קומה'], mapping), true);
+  assert.equal(isHeaderEchoRow(['מספר נייד', 'שם מלא', ''], mapping), true);
+});
+
+test('does not flag real data rows as header echoes', () => {
+  const mapping = [
+    { index: 0, field: 'phone_number' },
+    { index: 1, field: 'name' },
+  ];
+  assert.equal(isHeaderEchoRow(['050-1234567', 'ישראלי', ''], mapping), false);
+  assert.equal(isHeaderEchoRow(['', 'מלבאואר', ''], mapping), false);        // phoneless partner row stays
+  assert.equal(isHeaderEchoRow(['', 'שם טוב', ''], mapping), false);          // real surname, not the label "שם"
+  assert.equal(isHeaderEchoRow(['0501234567', 'שם פרטי', ''], mapping), false); // a valid phone wins — data, not header
 });

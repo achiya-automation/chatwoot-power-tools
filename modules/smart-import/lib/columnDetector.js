@@ -13,7 +13,7 @@ const SYNONYMS = {
   name: ['שם', 'שם מלא', 'שם איש קשר', 'איש קשר', 'name', 'full name', 'fullname', 'contact name', 'contact'],
   // 'phonenumber'/'emailaddress' cover snake_case exports (phone_number, email_address):
   // normHeader strips underscores, so the joined form is what actually gets compared.
-  phone_number: ['טלפון', 'נייד', 'פלאפון', 'פל', 'סלולרי', 'סלולארי', 'מספר טלפון', 'מספר', 'וואטסאפ', 'whatsapp', 'phone', 'mobile', 'cell', 'cellphone', 'tel', 'telephone', 'phone number', 'phonenumber', 'msisdn'],
+  phone_number: ['טלפון', 'נייד', 'מספר נייד', 'טלפון נייד', 'פלאפון', 'פל', 'סלולרי', 'סלולארי', 'מספר טלפון', 'מספר', 'וואטסאפ', 'whatsapp', 'phone', 'mobile', 'cell', 'cellphone', 'tel', 'telephone', 'phone number', 'phonenumber', 'msisdn'],
   email: ['אימייל', 'מייל', 'דוא"ל', 'דואל', 'כתובת מייל', 'email', 'e-mail', 'mail', 'email address', 'emailaddress'],
   // ⚠️ ID-number headers must be recognized here: Israeli IDs are 9 digits, which
   // normalizePhone happily turns into +972XXXXXXXXX — so an unrecognized ת"ז column
@@ -87,6 +87,27 @@ export function validateMapping(headers, rows, mapping) {
     }
   }
   return blockers;
+}
+
+// A file pasted together from several lists carries each list's header line in the
+// middle of the data, and such a line imports as a fake contact literally named
+// "שם פרטי" (the מגדלי דוד incident). A row is a header echo when some mapped cell IS
+// a field label — and nothing anywhere in the row is a usable phone or email.
+const ALL_SYNONYMS = new Set(
+  Object.values(SYNONYMS).flat().map((s) => normHeader(s)),
+);
+const EMAILISH = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+export function isHeaderEchoRow(cells, mapping) {
+  for (const raw of cells) {
+    const v = String(raw ?? '').trim();
+    if (v && (normalizePhone(v) || EMAILISH.test(v))) return false; // real data wins
+  }
+  return mapping.some(({ index, field }) => {
+    if (!field) return false;
+    const v = String(cells[index] ?? '').trim();
+    return v !== '' && ALL_SYNONYMS.has(stripFiller(normHeader(v)));
+  });
 }
 
 export function detectColumns(headers, sampleRows) {

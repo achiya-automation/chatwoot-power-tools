@@ -1,5 +1,5 @@
 import { readFileToTable } from '../lib/xlsxReader.js';
-import { detectColumns, SYSTEM_FIELDS, validateMapping } from '../lib/columnDetector.js';
+import { detectColumns, SYSTEM_FIELDS, validateMapping, isHeaderEchoRow } from '../lib/columnDetector.js';
 import { buildContactPayload } from '../lib/fieldMapper.js';
 import { createImportJob } from '../lib/importRunner.js';
 import { createApiClient } from '../lib/apiClient.js';
@@ -62,6 +62,8 @@ const I18N = {
     stopImport: 'עצירת הייבוא',
     bgHint: 'אפשר להמשיך לעבוד בינתיים — רק אל תסגרו את הטאב עד לסיום',
     dupInFile: 'כפולים בקובץ (ימוזגו)',
+    headerEchoSkipped: (rows) =>
+      `שורות כותרת בתוך הקובץ זוהו ודולגו (שורות: ${rows}) — נראה שהקובץ מורכב מכמה רשימות שהודבקו יחד. הן לא ייובאו כאנשי קשר.`,
     // mapping sanity blocker — {header} column mapped to {field} but values don't fit
     badMapping: (header, fieldLabel, bad, total) =>
       `העמודה "${header}" ממופה לשדה "${fieldLabel}", אבל ${bad} מתוך ${total} מהערכים בה אינם מתאימים לשדה הזה. חזרו לשלב המיפוי ובחרו שדה אחר (או "התעלם").`,
@@ -109,6 +111,8 @@ const I18N = {
     stopImport: 'Stop import',
     bgHint: 'You can keep working — just don\'t close this tab until it finishes',
     dupInFile: 'duplicates in file (will be merged)',
+    headerEchoSkipped: (rows) =>
+      `Header rows inside the file were detected and skipped (rows: ${rows}) — the file looks like several lists pasted together. They will not be imported as contacts.`,
     badMapping: (header, fieldLabel, bad, total) =>
       `The "${header}" column is mapped to "${fieldLabel}", but ${bad} of ${total} of its values don't fit that field. Go back to the mapping step and pick another field (or "Ignore").`,
     topError: 'Most common error',
@@ -765,10 +769,19 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       return;
     }
 
-    const contacts = state.table.rows.map((row, idx) => ({
-      ...buildContactPayload(row, state.mapping, state.customMap),
-      __row: idx + 2,
-    }));
+    // A pasted-together file carries the header line of each glued list in the middle
+    // of the data; without this filter such a line becomes a contact named "שם פרטי".
+    const headerEchoRows = [];
+    const contacts = state.table.rows
+      .map((row, idx) => ({
+        ...buildContactPayload(row, state.mapping, state.customMap),
+        __row: idx + 2,
+      }))
+      .filter((c, idx) => {
+        if (!isHeaderEchoRow(state.table.rows[idx], state.mapping)) return true;
+        headerEchoRows.push(c.__row);
+        return false;
+      });
     state.contacts = contacts;
     const N = contacts.length;
 
@@ -794,11 +807,23 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
         (dupes ? ` · ${dupes} ${t('dupInFile')}` : '')
       : t('dedupFailed');
 
+    modal.append(headerEchoNotice(headerEchoRows));
     modal.append(phoneWarning(contacts));
     modal.append(
       previewTable(contacts.slice(0, 10)),
       footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t('importVerb')} ${N} ${t('contactsWord')}` }),
     );
+  }
+
+  // Skipped internal header rows deserve a word in the preview: the user should know
+  // the tool recognized the glued-lists shape, and which rows it left out.
+  function headerEchoNotice(rows) {
+    if (!rows.length) return document.createDocumentFragment();
+    const box = el('div', 'mt-3 rounded-lg border border-n-amber-6 bg-n-amber-2 px-3 py-2');
+    const title = el('div', 'text-sm font-medium text-n-amber-11');
+    title.textContent = t('headerEchoSkipped')(rows.join(', '));
+    box.appendChild(title);
+    return box;
   }
 
   // A contact with no usable phone imports and labels without a murmur, and is then
