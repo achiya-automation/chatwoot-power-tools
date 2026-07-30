@@ -8,6 +8,7 @@ import { notifyNewLeads } from './notify.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 import { pollTemplateStatuses } from './templates.js';
+import { maybeCreateReplacements, adoptApprovedReplacements } from './replace.js';
 import { reconcileJourneys } from './journeys.js';
 import { tickPresence } from './presence.js';
 import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
@@ -162,6 +163,16 @@ async function tick() {
       // Live tier + quality rating from Meta (cached ~30m). Fails safe: a Graph outage can
       // only keep the last known cap, never raise it. A RED quality rating halts the account.
       const { cap: tierCap } = await refreshHealth(pool, reads, a.account_id, now, { compliance });
+
+      // החלפת-תבנית אוטומטית בריאה (replace.js): אימוץ עותקים שמטא אישרה, ואז
+      // יצירה לתבניות שחצו את סף השחיקה. אחרי refreshHealth בכוונה — האימוץ קורא
+      // את template_health הטרי. Fail-open: תקלה כאן לא עוצרת את הטיק.
+      try {
+        await adoptApprovedReplacements(pool, a.account_id, now);
+        await maybeCreateReplacements(pool, reads, a.account_id, now);
+      } catch (e) {
+        console.error(`[tpl-replace] acct ${a.account_id} (non-fatal):`, e.message);
+      }
 
       // בלם המסירה: מה ש-refreshHealth (דירוג מטא) לא רואה בנפחים נמוכים — צניחת
       // מסירה *בפועל* על תבניות נקיות. עוצר את החשבון לפני שהנזק מתרחב. מובנה ורב-דיירי,
