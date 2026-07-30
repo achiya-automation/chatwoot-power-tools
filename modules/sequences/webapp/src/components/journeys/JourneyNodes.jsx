@@ -11,6 +11,7 @@ import {
   Webhook,
   UserRound,
   Paperclip,
+  ArrowDown,
 } from 'lucide-react';
 import useT, { useLocale } from '../../useT.js';
 import { dirFor } from '../../i18n.js';
@@ -130,7 +131,7 @@ function Snippet({ text, fallback }) {
 
 function KeyChip({ children }) {
   return (
-    <span className="inline-flex max-w-full items-center truncate rounded bg-n-alpha-2 px-1.5 py-0.5 font-mono text-[10px] text-n-slate-11">
+    <span className="inline-flex max-w-full items-center truncate rounded bg-n-alpha-2 px-1.5 py-0.5 font-mono text-xxs text-n-slate-11">
       {children}
     </span>
   );
@@ -166,7 +167,7 @@ function NodeShell({ type, selected, handles = 'both', children }) {
       {handles === 'condition' ? (
         <>
           {/* LTR row so the labels sit under the fixed 25%/75% handle positions */}
-          <div dir="ltr" className="flex justify-between px-6 pb-1.5 text-[10px] font-medium">
+          <div dir="ltr" className="flex justify-between px-6 pb-1.5 text-xxs font-medium">
             <span className="text-n-teal-11">{t('yes')}</span>
             <span className="text-n-ruby-11">{t('no')}</span>
           </div>
@@ -195,7 +196,7 @@ function MessageNode({ data, selected }) {
     <NodeShell type="message" selected={selected}>
       <Snippet text={data?.text} fallback={t('empty')} />
       {data?.mediaUrl ? (
-        <span className="inline-flex items-center gap-1 text-[10px] text-n-slate-10">
+        <span className="inline-flex items-center gap-1 text-xxs text-n-slate-10">
           <Paperclip size={10} aria-hidden="true" />
           {String(data.mediaUrl).slice(0, 40)}
         </span>
@@ -225,7 +226,7 @@ function ButtonsNode({ data, selected }) {
       <div className="-mx-2.5 flex flex-col">
         {options.map((o, i) => (
           <div key={o.id || i} className="relative flex items-center px-2.5 py-0.5">
-            <span className="w-full truncate rounded bg-n-alpha-2 px-1.5 py-0.5 text-[11px] text-n-slate-11">
+            <span className="w-full truncate rounded bg-n-alpha-2 px-1.5 py-0.5 text-xs text-n-slate-11">
               {String(o.title || '').trim() || `${i + 1}`}
             </span>
             {o.id != null ? (
@@ -241,7 +242,7 @@ function ButtonsNode({ data, selected }) {
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-1">
-        <span className="text-[10px] text-n-slate-10">{t('defaultOut')} ↓</span>
+        <span className="inline-flex items-center gap-0.5 text-xxs text-n-slate-10">{t('defaultOut')} <ArrowDown size={10} aria-hidden="true" /></span>
         {data?.saveTo?.key ? <KeyChip>{data.saveTo.key}</KeyChip> : null}
       </div>
     </NodeShell>
@@ -259,7 +260,7 @@ function TemplateNode({ data, selected }) {
         <p className="m-0 text-xs italic text-n-slate-10">{t('noTemplate')}</p>
       )}
       {nParams ? (
-        <span className="text-[10px] text-n-slate-10">{t('tplParams', { n: nParams })}</span>
+        <span className="text-xxs text-n-slate-10">{t('tplParams', { n: nParams })}</span>
       ) : null}
     </NodeShell>
   );

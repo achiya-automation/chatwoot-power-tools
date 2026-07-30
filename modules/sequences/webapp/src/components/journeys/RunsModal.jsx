@@ -110,7 +110,7 @@ export default function RunsModal({ open, onClose, journey, accountId }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={t('title', { name: journey?.name || '' })} size="lg">
+    <Modal open={open} onClose={onClose} title={t('title', { name: journey?.name || '' })} size="wide-lg">
       {error ? (
         <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
           <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -125,7 +125,7 @@ export default function RunsModal({ open, onClose, journey, accountId }) {
       ) : (
         <Table>
           <THead>
-            <TR className="hover:bg-transparent">
+            <TR>
               <TH>{t('colConv')}</TH>
               <TH>{t('colStatus')}</TH>
               <TH>{t('colAnswers')}</TH>
@@ -147,7 +147,7 @@ export default function RunsModal({ open, onClose, journey, accountId }) {
                         {t(`st_${run.status}`) === `st_${run.status}` ? run.status : t(`st_${run.status}`)}
                       </Badge>
                       {run.last_error ? (
-                        <span className="text-[10px] text-n-ruby-11">{run.last_error}</span>
+                        <span className="text-xxs text-n-ruby-11">{run.last_error}</span>
                       ) : null}
                     </div>
                   </TD>
@@ -155,7 +155,7 @@ export default function RunsModal({ open, onClose, journey, accountId }) {
                     {answers ? (
                       <pre
                         dir="ltr"
-                        className="m-0 max-h-28 max-w-xs overflow-auto whitespace-pre-wrap rounded-lg bg-n-alpha-2 p-2 font-mono text-[11px] leading-snug text-n-slate-11"
+                        className="m-0 max-h-28 max-w-xs overflow-auto whitespace-pre-wrap rounded-lg bg-n-alpha-2 p-2 font-mono text-xs leading-snug text-n-slate-11"
                       >
                         {JSON.stringify(answers, null, 1)}
                       </pre>

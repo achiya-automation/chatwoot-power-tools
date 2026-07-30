@@ -33,9 +33,10 @@ export default function Switch({
       disabled={disabled}
       onClick={handleToggle}
       className={[
-        'relative inline-flex items-center shrink-0 h-5 w-9 rounded-full',
+        // זהה ל-Switch.vue של המקור: track h-4 w-7, פוקוס ring, תנועת צבע 200ms
+        'group relative h-4 w-7 rounded-full flex-shrink-0 select-none',
         'transition-colors duration-200 ease-in-out',
-        'focus-visible:outline-2 focus-visible:outline-n-brand focus-visible:outline-offset-2',
+        'focus:outline-none focus:ring-1 focus:ring-n-brand focus:ring-offset-2 focus:ring-offset-n-slate-2',
         'disabled:opacity-50 disabled:cursor-not-allowed',
         checked ? 'bg-n-brand' : 'bg-n-slate-6',
         className,
@@ -43,15 +44,17 @@ export default function Switch({
         .filter(Boolean)
         .join(' ')}
     >
-      {/* ה-thumb: ב-RTL "on" => זז שמאלה, "off" => ימינה */}
+      {/* thumb — h-3 w-3 bg-n-background (מתכהה בדארק כמו במקור), תנועה קפיצית +
+          מתיחה קלה בלחיצה (group-active) — הקלאסים מהמקור אחד-לאחד */}
       <span
         className={[
-          'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm',
-          'transition-transform duration-200 ease-in-out',
-          'absolute top-0.5',
-          checked ? 'ltr:left-[18px] rtl:right-[18px]' : 'ltr:left-0.5 rtl:right-0.5',
+          'absolute top-1/2 -translate-y-1/2 ltr:left-0.5 rtl:right-0.5',
+          'transition-transform duration-[350ms] ease-[cubic-bezier(0.34,1.56,0.64,1)]',
+          checked ? 'ltr:translate-x-3 rtl:-translate-x-3' : 'translate-x-0',
         ].join(' ')}
-      />
+      >
+        <span className="block h-3 w-3 rounded-full bg-n-background shadow-md transition-[width] duration-[180ms] ease-in-out group-active:w-[18px]" />
+      </span>
     </button>
   );
 

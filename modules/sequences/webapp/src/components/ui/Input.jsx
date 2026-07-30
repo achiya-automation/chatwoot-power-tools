@@ -32,13 +32,16 @@ const Input = React.forwardRef(function Input(
   const generatedId = useId();
   const inputId = id || generatedId;
 
+  // Input.vue הנייטיבי: outline בלבד (בלי ring/border), רקע alpha-black2, מעבר 500ms
   const inputClasses = [
-    'w-full bg-n-alpha-2 border border-n-weak rounded-lg px-3 h-10',
+    'block w-full bg-n-alpha-black2 border-none rounded-lg px-3 h-10',
+    'outline outline-1 outline-offset-[-1px]',
     'text-sm text-n-slate-12 placeholder:text-n-slate-10',
-    'outline-none transition-colors duration-150',
-    'focus:border-n-brand focus:ring-1 focus:ring-n-brand/40',
+    'transition-all duration-500 ease-in-out',
     'disabled:opacity-50 disabled:cursor-not-allowed',
-    error ? 'border-n-ruby-9 focus:border-n-ruby-9 focus:ring-n-ruby-9/30' : '',
+    error
+      ? 'outline-n-ruby-8 hover:outline-n-ruby-9 focus:outline-n-ruby-9'
+      : 'outline-n-weak hover:outline-n-slate-6 focus:outline-n-brand',
     className,
   ]
     .filter(Boolean)
@@ -58,7 +61,7 @@ const Input = React.forwardRef(function Input(
       {hint && !error ? (
         <p className="mt-1 text-xs text-n-slate-11">{hint}</p>
       ) : null}
-      {error ? <p className="mt-1 text-xs text-n-ruby-11">{error}</p> : null}
+      {error ? <p className="mt-1 text-label-small text-n-ruby-9">{error}</p> : null}
     </div>
   );
 });

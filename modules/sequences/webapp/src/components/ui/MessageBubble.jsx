@@ -1,3 +1,4 @@
+import { Image, Video, FileText } from 'lucide-react';
 import { useMemo } from 'react';
 import useT, { useLocale } from '../../useT.js';
 import { translate } from '../../i18n.js';
@@ -76,7 +77,7 @@ function buildSegments(body, params, examples) {
 }
 
 const MEDIA_HDR = { IMAGE: 'mediaImage', VIDEO: 'mediaVideo', DOCUMENT: 'mediaDocument' };
-const MEDIA_ICON = { IMAGE: '📷', VIDEO: '🎬', DOCUMENT: '📄' };
+const MEDIA_ICON = { IMAGE: Image, VIDEO: Video, DOCUMENT: FileText };
 function headerMediaFmt(template) {
   const f = String(template?.header_format || '').toUpperCase();
   return MEDIA_HDR[f] ? f : null;
@@ -109,7 +110,7 @@ export default function MessageBubble({ template, params = [], mediaUrl = '', cl
           />
         ) : (
           <div className="mb-2 flex items-center gap-1.5 rounded-md bg-n-alpha-2 px-2 py-3 text-xs text-n-slate-11">
-            <span aria-hidden="true">{MEDIA_ICON[headerMediaFmt(template)]}</span>
+            {(() => { const MediaIcon = MEDIA_ICON[headerMediaFmt(template)]; return MediaIcon ? <MediaIcon size={14} aria-hidden="true" className="shrink-0" /> : null; })()}
             {t(MEDIA_HDR[headerMediaFmt(template)])} {t('inHeader')}
             {mediaUrl ? '' : ` ${t('linkWillBeSet')}`}
           </div>

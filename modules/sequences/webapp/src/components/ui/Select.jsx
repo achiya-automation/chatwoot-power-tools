@@ -36,11 +36,12 @@ const Select = React.forwardRef(function Select(
           ref={ref}
           id={selectId}
           className={[
-            'w-full appearance-none bg-n-alpha-2 border border-n-weak rounded-lg',
+            // select/Select.vue הנייטיבי: outline בלבד על bg-n-surface-1
+            'w-full appearance-none bg-n-surface-1 border-none rounded-lg',
+            'outline outline-1 -outline-offset-1 outline-n-weak hover:outline-n-slate-6 focus:outline-n-blue-9',
             'ps-3 pe-9 h-10 text-sm text-n-slate-12',
-            'outline-none transition-colors duration-150',
-            'focus:border-n-brand focus:ring-1 focus:ring-n-brand/40',
-            'disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer',
+            'transition-all duration-200',
+            'disabled:bg-n-slate-2 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer',
             className,
           ]
             .filter(Boolean)
@@ -57,7 +58,7 @@ const Select = React.forwardRef(function Select(
         <ChevronDown
           size={16}
           aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 -translate-y-1/2 end-3 text-n-slate-10"
+          className="pointer-events-none absolute top-1/2 -translate-y-1/2 end-3 text-n-slate-11"
         />
       </div>
     </div>

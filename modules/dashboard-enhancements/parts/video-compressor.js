@@ -180,7 +180,7 @@
     if (!card) {
       card = document.createElement('div');
       card.dir = dripLocale() === 'he' ? 'rtl' : 'ltr';
-      card.className = 'bg-n-solid-1 border border-n-weak rounded-xl shadow-lg px-4 py-3'; // Chatwoot's card style (adapts to light/dark)
+      card.className = 'bg-n-solid-2 outline-1 outline outline-n-container -outline-offset-1 rounded-xl shadow-lg px-4 py-3'; // Chatwoot's card style (adapts to light/dark)
       card.style.cssText = 'position:fixed;bottom:88px;left:50%;transform:translateX(-50%);z-index:99999;min-width:250px;max-width:90vw;direction:' + (dripLocale() === 'he' ? 'rtl' : 'ltr') + ';';
       document.body.appendChild(card);
     }
@@ -207,7 +207,7 @@
     var head = el('div', 'flex items-center justify-between gap-3 mb-2');
     var title = el('span', 'flex items-center gap-1.5 text-sm font-medium text-n-slate-12');
     title.innerHTML = '<span class="i-ph-video-camera flex-shrink-0"></span>' + t('videoCompressed');
-    var close = el('button', 'inline-flex items-center justify-center h-6 w-6 rounded-lg text-n-slate-11 hover:bg-n-alpha-2');
+    var close = el('button', 'inline-flex items-center justify-center h-6 w-6 rounded-lg text-n-slate-12 hover:enabled:bg-n-alpha-2 focus-visible:bg-n-alpha-2 outline-transparent active:enabled:scale-[0.97] transition-all duration-100 ease-out');
     close.type = 'button'; close.title = t('close'); close.innerHTML = '<span class="i-ph-x flex-shrink-0"></span>';
     close.addEventListener('click', clearToast);
     head.appendChild(title); head.appendChild(close);

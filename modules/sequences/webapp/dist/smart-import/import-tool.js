@@ -106,6 +106,7 @@ var __cwImport = (() => {
       return d.length === 9 || d.length === 8 ? "+972" + d : null;
     }
     if (d.length === 9) return "+972" + d;
+    if (d.length === 10 && d.startsWith("5")) return null;
     if (d.length >= 10 && d.length <= 15) return "+" + d;
     return null;
   }
@@ -129,7 +130,7 @@ var __cwImport = (() => {
     name: ["\u05E9\u05DD", "\u05E9\u05DD \u05DE\u05DC\u05D0", "\u05E9\u05DD \u05D0\u05D9\u05E9 \u05E7\u05E9\u05E8", "\u05D0\u05D9\u05E9 \u05E7\u05E9\u05E8", "name", "full name", "fullname", "contact name", "contact"],
     // 'phonenumber'/'emailaddress' cover snake_case exports (phone_number, email_address):
     // normHeader strips underscores, so the joined form is what actually gets compared.
-    phone_number: ["\u05D8\u05DC\u05E4\u05D5\u05DF", "\u05E0\u05D9\u05D9\u05D3", "\u05E4\u05DC\u05D0\u05E4\u05D5\u05DF", "\u05E4\u05DC", "\u05E1\u05DC\u05D5\u05DC\u05E8\u05D9", "\u05E1\u05DC\u05D5\u05DC\u05D0\u05E8\u05D9", "\u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF", "\u05DE\u05E1\u05E4\u05E8", "\u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4", "whatsapp", "phone", "mobile", "cell", "cellphone", "tel", "telephone", "phone number", "phonenumber", "msisdn"],
+    phone_number: ["\u05D8\u05DC\u05E4\u05D5\u05DF", "\u05E0\u05D9\u05D9\u05D3", "\u05DE\u05E1\u05E4\u05E8 \u05E0\u05D9\u05D9\u05D3", "\u05D8\u05DC\u05E4\u05D5\u05DF \u05E0\u05D9\u05D9\u05D3", "\u05E4\u05DC\u05D0\u05E4\u05D5\u05DF", "\u05E4\u05DC", "\u05E1\u05DC\u05D5\u05DC\u05E8\u05D9", "\u05E1\u05DC\u05D5\u05DC\u05D0\u05E8\u05D9", "\u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF", "\u05DE\u05E1\u05E4\u05E8", "\u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4", "whatsapp", "phone", "mobile", "cell", "cellphone", "tel", "telephone", "phone number", "phonenumber", "msisdn"],
     email: ["\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC", "\u05DE\u05D9\u05D9\u05DC", '\u05D3\u05D5\u05D0"\u05DC', "\u05D3\u05D5\u05D0\u05DC", "\u05DB\u05EA\u05D5\u05D1\u05EA \u05DE\u05D9\u05D9\u05DC", "email", "e-mail", "mail", "email address", "emailaddress"],
     // ⚠️ ID-number headers must be recognized here: Israeli IDs are 9 digits, which
     // normalizePhone happily turns into +972XXXXXXXXX — so an unrecognized ת"ז column
@@ -189,6 +190,21 @@ var __cwImport = (() => {
       }
     }
     return blockers;
+  }
+  var ALL_SYNONYMS = new Set(
+    Object.values(SYNONYMS).flat().map((s) => normHeader(s))
+  );
+  var EMAILISH = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  function isHeaderEchoRow(cells, mapping) {
+    for (const raw of cells) {
+      const v = String(raw ?? "").trim();
+      if (v && (normalizePhone(v) || EMAILISH.test(v))) return false;
+    }
+    return mapping.some(({ index, field }) => {
+      if (!field) return false;
+      const v = String(cells[index] ?? "").trim();
+      return v !== "" && ALL_SYNONYMS.has(stripFiller(normHeader(v)));
+    });
   }
   function detectColumns(headers, sampleRows) {
     const taken = /* @__PURE__ */ new Set();
@@ -633,7 +649,9 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
    transform can't affect the panel. */
 .cwi-modal{max-height:90vh;overflow:auto;animation:cwiIn .2s ease-out}
 @keyframes cwiIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
-.cwi-prog-fill{height:100%;background:var(--color-n-brand, #6366f1);transition:width .2s}
+/* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D2\u05D9\u05E2 \u05DE\u05DE\u05D7\u05DC\u05E7\u05EA bg-n-brand \u05E9\u05DC Chatwoot (\u05D4\u05DB\u05D7\u05D5\u05DC \u05D4\u05E8\u05E9\u05DE\u05D9) \u2014 \u05DC\u05D0 \u05DE\u05DE\u05E9\u05EA\u05E0\u05D4:
+   --color-n-brand \u05DC\u05D0 \u05E7\u05D9\u05D9\u05DD \u05D1-CSS \u05D4\u05DE\u05E7\u05D5\u05DE\u05E4\u05DC \u05D5\u05D4-fallback \u05E6\u05D1\u05E2 \u05D0\u05EA \u05D4\u05E4\u05E1 \u05D1\u05D0\u05D9\u05E0\u05D3\u05D9\u05D2\u05D5 \u05D6\u05E8. */
+.cwi-prog-fill{height:100%;transition:width .2s}
 .cwi-tbl-cell{border-bottom:1px solid}
 .cwi-cs-panel{transition:opacity .2s ease-out}
 /* Background-import pill \u2014 fixed to the bottom start corner (dir-aware via
@@ -726,6 +744,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       stopImport: "\u05E2\u05E6\u05D9\u05E8\u05EA \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0",
       bgHint: "\u05D0\u05E4\u05E9\u05E8 \u05DC\u05D4\u05DE\u05E9\u05D9\u05DA \u05DC\u05E2\u05D1\u05D5\u05D3 \u05D1\u05D9\u05E0\u05EA\u05D9\u05D9\u05DD \u2014 \u05E8\u05E7 \u05D0\u05DC \u05EA\u05E1\u05D2\u05E8\u05D5 \u05D0\u05EA \u05D4\u05D8\u05D0\u05D1 \u05E2\u05D3 \u05DC\u05E1\u05D9\u05D5\u05DD",
       dupInFile: "\u05DB\u05E4\u05D5\u05DC\u05D9\u05DD \u05D1\u05E7\u05D5\u05D1\u05E5 (\u05D9\u05DE\u05D5\u05D6\u05D2\u05D5)",
+      headerEchoSkipped: (rows) => `\u05E9\u05D5\u05E8\u05D5\u05EA \u05DB\u05D5\u05EA\u05E8\u05EA \u05D1\u05EA\u05D5\u05DA \u05D4\u05E7\u05D5\u05D1\u05E5 \u05D6\u05D5\u05D4\u05D5 \u05D5\u05D3\u05D5\u05DC\u05D2\u05D5 (\u05E9\u05D5\u05E8\u05D5\u05EA: ${rows}) \u2014 \u05E0\u05E8\u05D0\u05D4 \u05E9\u05D4\u05E7\u05D5\u05D1\u05E5 \u05DE\u05D5\u05E8\u05DB\u05D1 \u05DE\u05DB\u05DE\u05D4 \u05E8\u05E9\u05D9\u05DE\u05D5\u05EA \u05E9\u05D4\u05D5\u05D3\u05D1\u05E7\u05D5 \u05D9\u05D7\u05D3. \u05D4\u05DF \u05DC\u05D0 \u05D9\u05D9\u05D5\u05D1\u05D0\u05D5 \u05DB\u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8.`,
       // mapping sanity blocker — {header} column mapped to {field} but values don't fit
       badMapping: (header2, fieldLabel, bad, total) => `\u05D4\u05E2\u05DE\u05D5\u05D3\u05D4 "${header2}" \u05DE\u05DE\u05D5\u05E4\u05D4 \u05DC\u05E9\u05D3\u05D4 "${fieldLabel}", \u05D0\u05D1\u05DC ${bad} \u05DE\u05EA\u05D5\u05DA ${total} \u05DE\u05D4\u05E2\u05E8\u05DB\u05D9\u05DD \u05D1\u05D4 \u05D0\u05D9\u05E0\u05DD \u05DE\u05EA\u05D0\u05D9\u05DE\u05D9\u05DD \u05DC\u05E9\u05D3\u05D4 \u05D4\u05D6\u05D4. \u05D7\u05D6\u05E8\u05D5 \u05DC\u05E9\u05DC\u05D1 \u05D4\u05DE\u05D9\u05E4\u05D5\u05D9 \u05D5\u05D1\u05D7\u05E8\u05D5 \u05E9\u05D3\u05D4 \u05D0\u05D7\u05E8 (\u05D0\u05D5 "\u05D4\u05EA\u05E2\u05DC\u05DD").`,
       topError: "\u05D4\u05E1\u05D9\u05D1\u05D4 \u05D4\u05E0\u05E4\u05D5\u05E6\u05D4",
@@ -809,6 +828,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       stopImport: "Stop import",
       bgHint: "You can keep working \u2014 just don't close this tab until it finishes",
       dupInFile: "duplicates in file (will be merged)",
+      headerEchoSkipped: (rows) => `Header rows inside the file were detected and skipped (rows: ${rows}) \u2014 the file looks like several lists pasted together. They will not be imported as contacts.`,
       badMapping: (header2, fieldLabel, bad, total) => `The "${header2}" column is mapped to "${fieldLabel}", but ${bad} of ${total} of its values don't fit that field. Go back to the mapping step and pick another field (or "Ignore").`,
       topError: "Most common error",
       alreadyRunning: "A previous import is still running in the background \u2014 wait for it to finish",
@@ -1420,10 +1440,15 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         modal.appendChild(footer({ onBack: stepLabel }));
         return;
       }
+      const headerEchoRows = [];
       const contacts = state.table.rows.map((row, idx) => ({
         ...buildContactPayload(row, state.mapping, state.customMap),
         __row: idx + 2
-      }));
+      })).filter((c, idx) => {
+        if (!isHeaderEchoRow(state.table.rows[idx], state.mapping)) return true;
+        headerEchoRows.push(c.__row);
+        return false;
+      });
       state.contacts = contacts;
       const N = contacts.length;
       let dedupOk = true;
@@ -1442,11 +1467,20 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       const existing = contacts.filter((c) => c.__match).length;
       const created = N - existing - dupes;
       status.textContent = dedupOk ? `${t("readyToImport")} ${N} \xB7 ${created} ${t("newWord")} \xB7 ${existing} ${t("existingWillUpdate")}` + (dupes ? ` \xB7 ${dupes} ${t("dupInFile")}` : "") : t("dedupFailed");
+      modal.append(headerEchoNotice(headerEchoRows));
       modal.append(phoneWarning(contacts));
       modal.append(
         previewTable(contacts.slice(0, 10)),
         footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t("importVerb")} ${N} ${t("contactsWord")}` })
       );
+    }
+    function headerEchoNotice(rows) {
+      if (!rows.length) return document.createDocumentFragment();
+      const box = el("div", "mt-3 rounded-lg border border-n-amber-6 bg-n-amber-2 px-3 py-2");
+      const title = el("div", "text-sm font-medium text-n-amber-11");
+      title.textContent = t("headerEchoSkipped")(rows.join(", "));
+      box.appendChild(title);
+      return box;
     }
     function phoneWarning(contacts) {
       const noPhone = contacts.filter((c) => !c.phone_number);
@@ -1578,7 +1612,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     xBtn.appendChild(icon("x", "size-4"));
     head.append(title, xBtn);
     const track = el("div", "h-1.5 w-full rounded-full bg-n-alpha-2 overflow-hidden");
-    const fill = el("div", "cwi-prog-fill");
+    const fill = el("div", "cwi-prog-fill bg-n-brand");
     fill.style.width = "0%";
     track.appendChild(fill);
     const detail = el("div", "text-xs text-n-slate-11");

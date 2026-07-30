@@ -50,7 +50,13 @@ export function alertText(t, a) {
     return why ? `${t('haltedPrefix')}${why}` : (a.message || '');
   }
 
-  const key = `al_${base}`;
+  // תבנית עם עותק שריפה מקבלת עצה *הפוכה* מתבנית בלעדיו ("אין צורך ליצור תבנית" מול
+  // "צרו עותק") — לכן מפתח נפרד ולא משפט מסועף. ואריאנט שאין לו תרגום נופל ל-message
+  // הגולמי, לא למפתח הבסיס: הבסיס היה נותן לנציג את העצה הלא-נכונה.
+  const variantKey =
+    (base === 'template_burned'    && p.burnCopy)    ? 'al_template_burned_copy' :
+    (base === 'template_degrading' && p.hasBurnCopy) ? 'al_template_degrading_copy' : null;
+  const key = variantKey || `al_${base}`;
   const s = t(key, p);
   return s === key ? (a.message || '') : s;
 }

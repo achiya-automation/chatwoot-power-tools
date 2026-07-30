@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Tag, AlertCircle, Users, Send } from 'lucide-react';
+import { Tag, AlertCircle, Users, Send, Loader2 } from 'lucide-react';
 import Modal from './ui/Modal.jsx';
 import Button from './ui/Button.jsx';
 import Dropdown from './ui/Dropdown.jsx';
@@ -185,8 +185,15 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
               placeholder={t('selectLabelPlaceholder')}
               ariaLabel={t('selectLabelAria')}
             />
-            <p className="mt-1 text-xs text-n-slate-11">
-              {loadingLabels ? t('loadingLabels') : t('labelHint')}
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-n-slate-11">
+              {loadingLabels ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                  {t('loadingLabels')}
+                </>
+              ) : (
+                t('labelHint')
+              )}
             </p>
           </div>
 

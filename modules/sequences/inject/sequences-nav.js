@@ -60,15 +60,15 @@
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
   }
   var NAV_I18N = {
-    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר', compliance: 'ציות' },
-    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts', compliance: 'Compliance' },
+    he: { title: 'רצפי WhatsApp', overview: 'סקירה', sequences: 'רצפים', contacts: 'אנשי קשר', compliance: 'ציות', presence: 'נקרא/מקליד' },
+    en: { title: 'WhatsApp Sequences', overview: 'Overview', sequences: 'Sequences', contacts: 'Contacts', compliance: 'Compliance', presence: 'Read & Typing' },
   };
   function navLabels() { return NAV_I18N[dripLocale()] || NAV_I18N.en; }
   // With nav=side the web app hides its own tab bar, so a tab that is missing here is a tab
   // the user cannot reach at all. 'compliance' surfaces Meta's quality rating, template
   // status, opt-outs and consent coverage — the screen an operator needs BEFORE a send goes
   // wrong, so it must be one click away.
-  var TAB_KEYS = ['overview', 'sequences', 'contacts', 'compliance'];
+  var TAB_KEYS = ['overview', 'sequences', 'contacts', 'compliance', 'presence'];
   // Panel tabs that live OUTSIDE this group's sub-list (own top-level nav items in sibling
   // part-modules) but still open the same inline panel and must survive refresh/back-forward.
   var EXTRA_TABS = ['templates', 'journeys'];
@@ -156,12 +156,16 @@
   function dripFromState() {
     try {
       var cur = history.state && history.state.current;
-      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts|compliance|templates|journeys)\b/);
+      var m = cur && String(cur).match(/[?&]drip=(overview|sequences|contacts|compliance|presence|templates|journeys)\b/);
       return m ? m[1] : null;
     } catch (e) { return null; }
   }
 
-  var holder = null, frame = null, spinner = null, shown = false, loaded = false, curTab = 'overview', restored = false, restoreGuard = false;
+  var holder = null, frame = null, spinner = null, shown = false, loaded = false, loadedAcc = null, curTab = 'overview', restored = false, restoreGuard = false;
+  function pingSiblings() {
+    var pings = window.__cwptNavPing || [];
+    for (var p = 0; p < pings.length; p++) { try { pings[p](); } catch (e) {} }
+  }
   // Native slider semantics (SidebarGroup.vue expandedItem): the group starts collapsed and
   // is expanded either manually (header click) or automatically when a sub-item becomes
   // active. Closing the panel collapses it back — nothing stays open "just because".
@@ -174,7 +178,10 @@
     // (The previous inline `rgb(var(--n-background))` referenced a CSS variable that does
     // not exist in Chatwoot's compiled CSS → transparent holder → white flash in dark mode.)
     holder.className = 'bg-n-background';
-    holder.style.cssText = 'position:fixed;z-index:40;display:none;';
+    // z-30: מתחת ל-aside של הסיידבר (relative z-40) — כך popover-ים נייטיביים שנשפכים
+    // מהסיידבר אל אזור התוכן (בורר החשבונות, תפריט הפרופיל) נצבעים מעל הפאנל, בדיוק
+    // כמו שהם נצבעים מעל תוכן רגיל. z-40 שווה-ערך + מאוחר יותר ב-DOM חתך אותם.
+    holder.style.cssText = 'position:fixed;z-index:30;display:none;';
     frame = document.createElement('iframe');
     frame.title = navLabels().title;
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
@@ -184,7 +191,7 @@
     spinner.className = 'flex items-center justify-center text-n-brand';
     spinner.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
     spinner.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
     holder.appendChild(frame);
     holder.appendChild(spinner);
     frame.addEventListener('load', function () { spinner.style.display = 'none'; });
@@ -240,7 +247,7 @@
 
     // chevron: native shows it ONLY while expanded (v-show="isExpanded", i-lucide-chevron-up)
     var chev = item.querySelector('[data-drip-chev]');
-    if (chev) chev.style.display = groupExpanded ? 'inline-flex' : 'none';
+    if (chev) chev.style.display = groupExpanded ? '' : 'none';
 
     // header: has-active-child → text-n-slate-12 font-medium (no bg), else idle slate-11.
     // The label <span class="truncate"> carries its own weight class (text-body-main idle /
@@ -250,12 +257,14 @@
     if (hdr) {
       var span = hdr.querySelector('span.truncate');
       if (active) {
+        // native has-active-child: text-n-slate-12 font-medium בלבד — בלי hover-bg
         hdr.classList.add('text-n-slate-12', 'font-medium');
-        hdr.classList.remove('text-n-slate-11');
-        if (span) { span.classList.remove('text-body-main'); span.classList.add('font-medium', 'text-sm'); }
+        hdr.classList.remove('text-n-slate-11', 'hover:bg-n-alpha-2');
+        // ה-span שומר text-body-main גם בפעיל (isActive=false לקבוצה עם ילדים במקור)
+        if (span) { span.classList.add('text-body-main', 'font-medium', 'text-sm'); }
       } else {
         hdr.classList.remove('text-n-slate-12', 'font-medium');
-        hdr.classList.add('text-n-slate-11');
+        hdr.classList.add('text-n-slate-11', 'hover:bg-n-alpha-2');
         if (span) { span.classList.add('text-body-main'); span.classList.remove('font-medium', 'text-sm'); }
       }
     }
@@ -266,12 +275,15 @@
     curTab = tab;
     if (window.__cwptReportHide) { try { window.__cwptReportHide(); } catch (e) {} } // close campaign-stats overlay if open
     if (!holder) build();
-    if (!loaded) {
-      var src = APP + '/?embed=1&nav=side&account_id=' + encodeURIComponent(accountId()) +
+    var acc = accountId();
+    if (!loaded || loadedAcc !== acc) {
+      var src = APP + '/?embed=1&nav=side&account_id=' + encodeURIComponent(acc) +
                 '&tab=' + tab + '&theme=' + (isDark() ? 'dark' : 'light') +
                 '&locale=' + dripLocale();
+      if (spinner) spinner.style.display = '';
       frame.setAttribute('src', src);
       loaded = true;
+      loadedAcc = acc;
     } else {
       try { frame.contentWindow.postMessage({ type: 'drip-nav', tab: tab }, location.origin); } catch (e) {}
     }
@@ -290,8 +302,21 @@
     // history entries. _pushState bypasses the interceptor (which would otherwise hide the
     // panel we just showed).
     if (dripFromUrl() !== tab) {
-      try { _pushState({ drip: tab }, '', urlWithDrip(tab)); } catch (e) {}
+      try {
+        var st = history.state || {};
+        var entry = {};
+        for (var k in st) entry[k] = st[k];
+        entry.drip = tab;
+        entry.current = urlWithDrip(tab);
+        entry.back = st.current || entry.back || null;
+        entry.forward = null;
+        if (typeof st.position === 'number') entry.position = st.position + 1;
+        entry.replaced = false;
+        entry.scroll = null;
+        _pushState(entry, '', urlWithDrip(tab));
+      } catch (e) {}
     }
+    pingSiblings();
   }
   function hide() {
     if (!shown) return;
@@ -306,8 +331,15 @@
     // _replaceState bypasses the interceptor (prevents recursion — the interceptor itself
     // calls hide()).
     if (dripFromUrl()) {
-      try { _replaceState(history.state, '', urlWithoutDrip()); } catch (e) {}
+      try {
+        var st = history.state || {};
+        var entry = {};
+        for (var k in st) if (k !== 'drip') entry[k] = st[k];
+        entry.current = urlWithoutDrip();
+        _replaceState(entry, '', urlWithoutDrip());
+      } catch (e) {}
     }
+    pingSiblings();
   }
   window.__cwptSeqHide = hide; // let campaign-stats close this panel before opening its overlay
   window.__dripShowPanel = show; window.__dripHidePanel = hide; // hook for templates-nav.js / journeys-nav.js (separate part modules, same window)
@@ -396,7 +428,7 @@
     } else {
       pop.style.left = Math.round(railRect.right + 8) + 'px';
     }
-    var popH = pop.offsetHeight || 200;
+    var popH = pop.offsetHeight || 300;
     var top = trgRect.top + popH > window.innerHeight - 20
       ? Math.max(20, window.innerHeight - popH - 20)
       : trgRect.top;
@@ -417,7 +449,7 @@
     var hdr = clone.querySelector('[role="button"]') || clone.firstElementChild;
     if (hdr) {
       hdr.setAttribute('title', navLabels().title);
-      hdr.removeAttribute('name'); hdr.removeAttribute('href');
+      hdr.setAttribute('name', 'WhatsAppSequences'); hdr.removeAttribute('href');
       hdr.style.cursor = 'pointer';
       hdr.setAttribute('data-drip-hdr', '');
       hdr.classList.remove('text-n-slate-12', 'bg-n-alpha-2', 'font-medium');
@@ -473,6 +505,9 @@
       a.className = A_CLASS;
       a.style.cursor = 'pointer';
       a.setAttribute('title', label);
+      a.setAttribute('role', 'button');
+      a.setAttribute('tabindex', '0');
+      a.setAttribute('draggable', 'false');
       var d = document.createElement('div');
       d.className = LBL_CLASS;
       d.textContent = label;
@@ -502,7 +537,7 @@
     wrap.appendChild(btn);
     li.appendChild(wrap);
     // native collapsed groups open their children in a popover on hover
-    wrap.addEventListener('mouseenter', function () { clearTimeout(popCloseTimer); openPopover(btn); });
+    wrap.addEventListener('mouseenter', function () { if (resizeDrag) return; clearTimeout(popCloseTimer); openPopover(btn); });
     wrap.addEventListener('mouseleave', function () { scheduleClosePopover(200); });
     return li;
   }
@@ -584,6 +619,15 @@
   document.addEventListener('touchend', endResizeDrag, true);
   window.addEventListener('blur', endResizeDrag);
 
+  // keyboard: Enter/Space על פריטים שלנו מתנהגים כקליק (הצאצאים tabbable — role=button)
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!e.target.closest) return;
+    var nav = document.getElementById('drip-nav-item');
+    var el = e.target.closest('[data-drip-tab], [data-drip-hdr]');
+    if (el && nav && nav.contains(el)) { e.preventDefault(); el.click(); }
+  }, true);
+
   // event delegation — immune to Vue re-renders
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
@@ -599,7 +643,7 @@
         // native collapsed click → first accessible child (handleCollapsedClick); the
         // popover (hover) is the way to reach a specific tab
         closePopover();
-        show(activeSub() || 'overview');
+        show('overview');
       } else {
         toggle();
       }
@@ -610,6 +654,12 @@
     if (pop && !pop.contains(e.target)) closePopover();
     var link = e.target.closest('a[href*="/accounts/"]');
     if (link && !(nav && nav.contains(link))) hide();
+    // native expandedItem approximation: פתיחת קבוצה נייטיבית סוגרת קבוצה שנפתחה ידנית
+    var natHdr = e.target.closest('div[role="button"][name]');
+    if (natHdr && nav && !nav.contains(natHdr) && groupExpanded && !activeSub()) {
+      groupExpanded = false;
+      renderNav();
+    }
   }, true);
   ['pushState', 'replaceState'].forEach(function (k) {
     var o = history[k]; history[k] = function () { if (!restoreGuard) hide(); return o.apply(this, arguments); };

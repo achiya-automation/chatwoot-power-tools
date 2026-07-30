@@ -75,7 +75,7 @@
       if (!btn) {
         btn = document.createElement('button');
         btn.id = 'cwi-open-btn';
-        btn.className = 'cwi-open inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-n-brand text-white text-sm font-medium hover:brightness-110 outline outline-1 outline-transparent';
+        btn.className = 'cwi-open inline-flex items-center justify-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline disabled:opacity-50 h-8 px-3 text-sm bg-n-brand text-white hover:enabled:brightness-110 focus-visible:brightness-110 outline-transparent active:enabled:scale-[0.97]';
         btn.addEventListener('click', function (e) { e.preventDefault(); openImport(); });
         host.insertBefore(btn, host.firstChild); // first child = sits with the native header actions
       }
@@ -86,7 +86,7 @@
       var loc = dripLocale();
       if (btn.__cwiLocale !== loc) {
         btn.__cwiLocale = loc;
-        btn.innerHTML = '<span class="i-lucide-upload"></span><span>' + t('smartImport') + '</span>';
+        btn.innerHTML = '<span class="i-lucide-upload size-4 flex-shrink-0"></span><span class="min-w-0 truncate">' + t('smartImport') + '</span>';
       }
     } catch (e) { /* never break Chatwoot */ }
   }

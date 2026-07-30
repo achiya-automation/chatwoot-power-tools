@@ -1,4 +1,4 @@
-import { Check, CheckCheck, Clock, AlertCircle } from 'lucide-react';
+import { Check, CheckCheck, Clock, AlertCircle, Image, Video, FileText } from 'lucide-react';
 import useT from '../../useT.js';
 
 /*
@@ -38,7 +38,7 @@ const M = {
 };
 
 const MEDIA_HDR = { IMAGE: 'mediaImage', VIDEO: 'mediaVideo', DOCUMENT: 'mediaDocument' };
-const MEDIA_ICON = { IMAGE: '📷', VIDEO: '🎬', DOCUMENT: '📄' };
+const MEDIA_ICON = { IMAGE: Image, VIDEO: Video, DOCUMENT: FileText };
 
 function mediaFormat(template) {
   const f = String(template?.header_format || '').toUpperCase();
@@ -85,7 +85,7 @@ export default function ChatBubble({ text = '', template = null, mediaUrl = '', 
           />
         ) : (
           <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-n-alpha-2 px-2.5 py-3 text-xs text-n-slate-11">
-            <span aria-hidden="true">{MEDIA_ICON[fmt]}</span>
+            {MEDIA_ICON[fmt] ? (() => { const MediaIcon = MEDIA_ICON[fmt]; return <MediaIcon size={14} aria-hidden="true" className="shrink-0" />; })() : null}
             {t(MEDIA_HDR[fmt])} {t('inHeader')}{mediaUrl ? '' : ` ${t('linkWillBeSet')}`}
           </div>
         )
