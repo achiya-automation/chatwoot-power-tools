@@ -933,6 +933,11 @@ export async function reconcileEngagement(pool, accountId, now = new Date(), set
 export async function marketingSentToday(pool, accountId, contactIds, now = new Date()) {
   const ids = (contactIds || []).filter(Number.isFinite);
   if (!ids.length) return new Map();
+  // ⚠️ שגיאות 132xxx (אי-התאמת פרמטרים / תבנית לא מוכרת בזמן שליחה) הן תקלת
+  // תשתית שלנו — שום דבר לא הגיע לנמענת, אז הן לא "לחץ שיווקי" ולא נספרות
+  // במכסה היומית שלה. נלמד 30/07: עותק טרי שנשלח לפני שה-cache של Chatwoot
+  // הסתנכרן נפל על 132000, והכשל חסם את הנמענת ליממה על לא-כלום.
+  // כשלי תקרה אמיתיים (131049) כן נספרים — זה כל הלקח של 29/07.
   const { rows } = await pool.query(
     `SELECT contact_id, count(*)::int AS n
        FROM drip.sent_messages
@@ -941,6 +946,7 @@ export async function marketingSentToday(pool, accountId, contactIds, now = new 
         AND sent_at    > $3::timestamptz - interval '24 hours'
         AND in_session = false
         AND upper(COALESCE(category, 'MARKETING')) = 'MARKETING'
+        AND (error_code IS NULL OR error_code NOT LIKE '132%')
       GROUP BY contact_id`,
     [accountId, ids, now]
   );
@@ -983,7 +989,8 @@ export async function checkLiveSendBudget(db, {
         WHERE account_id = $1 AND contact_id = $2
           AND sent_at > $3::timestamptz - interval '24 hours'
           AND in_session = false
-          AND upper(COALESCE(category, 'MARKETING')) = 'MARKETING'`,
+          AND upper(COALESCE(category, 'MARKETING')) = 'MARKETING'
+          AND (error_code IS NULL OR error_code NOT LIKE '132%')`,
       [accountId, contactId, now]
     )).rows[0]?.n || 0);
     if (attempts >= Number(s.max_marketing_per_day)) {

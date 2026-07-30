@@ -122,6 +122,15 @@ export async function maybeCreateReplacements(pool, reads, accountId, now = new 
       await compliance.raiseAlert(pool, accountId, 'warn', 'template_replace_created',
         `תבנית "${w.name}" נשחקה (${w.fails} כשלים/7 ימים). נוצר עותק זהה "${newName}" ` +
         `+ עותק שריפה — יאומץ אוטומטית ברגע שמטא תאשר.`);
+      // מזרז את סנכרון התבניות של Chatwoot: מיישן את חותמת ה-cache כדי שה-scheduler
+      // שלו ירענן בקרוב — תנאי 3 של האימוץ ממתין בדיוק לזה.
+      await q(
+        `UPDATE public.channel_whatsapp cw
+            SET message_templates_last_updated = now() - interval '2 days'
+           FROM public.inboxes i
+          WHERE cw.id = i.channel_id AND i.account_id = $1`,
+        [accountId]
+      );
       console.log(`[tpl-replace] acct ${accountId}: created ${newName} + ${newBurn} (worn: ${w.name}, ${w.fails} fails/7d)`);
       made.push({ old: w.name, next: newName, burn: newBurn });
     } catch (e) {
@@ -142,12 +151,23 @@ export async function maybeCreateReplacements(pool, reads, accountId, now = new 
 }
 
 /**
- * שלב ב' — אימוץ. רק כששתי התבניות (עותק + burn) מאושרות ב-template_health,
- * כל השלבים שהצביעו על התבנית הישנה עוברים לעותק הטרי — אותו תוכן, אותו סדר,
+ * שלב ב' — אימוץ. שלושה תנאים, כולם חובה:
+ *   1+2. שתי התבניות (עותק + burn) מאושרות אצל מטא (template_health).
+ *   3.   ה-cache של Chatwoot מכיר אותן — המנוע שולח *דרך* Chatwoot, ש-בונה את
+ *        ה-payload מהעותק המסונכרן שלו. נלמד בדם 30/07: שלב שהוסב לפני שה-cache
+ *        התעדכן שלח 132000 (אי-התאמת פרמטרים) על כל הודעה — התבנית הייתה תקינה
+ *        אצל מטא אבל זרה ל-Chatwoot. עד שהסנכרון קורה, התבנית הישנה ממשיכה.
+ * רק אז כל השלבים שהצביעו על הישנה עוברים לעותק הטרי — אותו תוכן, אותו סדר,
  * אותו תזמון; רק שם התבנית מתחלף.
  */
 export async function adoptApprovedReplacements(pool, accountId, now = new Date()) {
   const q = (t, p) => pool.query(t, p).then((r) => r.rows);
+
+  const inChatwootCache = (nameCol) => `EXISTS (
+        SELECT 1 FROM public.inboxes i
+        JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
+        WHERE i.account_id = $1
+          AND cw.message_templates @> jsonb_build_array(jsonb_build_object('name', ${nameCol})))`;
 
   const ready = await q(
     `SELECT tr.id, tr.old_name, tr.new_name, tr.new_burn
@@ -158,7 +178,9 @@ export async function adoptApprovedReplacements(pool, accountId, now = new Date(
                        AND th.status = 'APPROVED')
         AND (tr.new_burn IS NULL OR EXISTS (SELECT 1 FROM drip.template_health th
                      WHERE th.account_id = $1 AND th.template_name = tr.new_burn
-                       AND th.status = 'APPROVED'))`,
+                       AND th.status = 'APPROVED'))
+        AND ${inChatwootCache('tr.new_name')}
+        AND (tr.new_burn IS NULL OR ${inChatwootCache('tr.new_burn')})`,
     [accountId]
   );
 

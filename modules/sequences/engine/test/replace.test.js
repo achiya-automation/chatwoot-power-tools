@@ -137,7 +137,12 @@ test('אימוץ רק כששני העותקים APPROVED — ואז השלב מ�
   // ה-burn עוד ממתין ⇒ אין אימוץ
   assert.equal((await adoptApprovedReplacements(pool, 1, NOW)).length, 0);
   await query(`UPDATE drip.template_health SET status='APPROVED' WHERE template_name='tp_a_burn1'`);
-  // עכשיו שניהם מאושרים ⇒ אימוץ
+  // שניהם מאושרים אצל מטא — אבל ה-cache של Chatwoot עוד לא מכיר ⇒ עדיין אין אימוץ
+  // (שליחה לפני סנכרון = 132000 על כל הודעה; נלמד 30/07)
+  assert.equal((await adoptApprovedReplacements(pool, 1, NOW)).length, 0);
+  await query(`INSERT INTO public.channel_whatsapp(id, message_templates) VALUES (77, '[{"name":"tp_a_v2"},{"name":"tp_a_burn1"}]'::jsonb)`);
+  await query(`INSERT INTO public.inboxes(id, account_id, channel_type, channel_id) VALUES (770, 1, 'Channel::Whatsapp', 77)`);
+  // עכשיו גם Chatwoot מכיר ⇒ אימוץ
   assert.equal((await adoptApprovedReplacements(pool, 1, NOW)).length, 1);
   const step = (await query(`SELECT template_name, template_burn FROM drip.sequence_steps WHERE sequence_id=$1`, [seq]))[0];
   assert.equal(step.template_name, 'tp_a_v2');
