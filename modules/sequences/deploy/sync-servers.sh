@@ -35,6 +35,12 @@
 #
 set -euo pipefail
 
+# AppleDouble (._*) files must never reach the servers (30.07: they rode a deploy into the
+# cwpt-engine image). Two mechanisms, two guards: COPYFILE_DISABLE stops macOS tar from
+# emitting them as metadata sidecars, and --exclude='._*' on the tar calls below stops real
+# ._ files lying on the local disk (unzip/SMB/AirDrop leftovers) from being archived.
+export COPYFILE_DISABLE=1
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SEQ="$REPO_ROOT/modules/sequences"
 PATCH_SRC="$SEQ/deploy/chatwoot-initializers/whatsapp_campaign_conversations.rb"
@@ -170,12 +176,12 @@ deploy_engine() {
   local tgz; tgz="$(mktemp -t cwpt).tgz"
 
   if [[ "$layout" == modular ]]; then
-    tar --exclude=node_modules --exclude=.preview -czf "$tgz" -C "$REPO_ROOT" modules docker-compose.addons.yml
+    tar --exclude=node_modules --exclude=.preview --exclude='._*' -czf "$tgz" -C "$REPO_ROOT" modules docker-compose.addons.yml
     scp -q "$tgz" "$server:/tmp/cwpt-sync.tgz"
     ssh "$server" "sudo rm -rf /opt/chatwoot/chatwoot-power-tools/modules /opt/chatwoot/chatwoot-power-tools/docker-compose.addons.yml \
       && sudo tar -C /opt/chatwoot/chatwoot-power-tools -xzf /tmp/cwpt-sync.tgz modules docker-compose.addons.yml 2>/dev/null; rm -f /tmp/cwpt-sync.tgz"
   else
-    tar --exclude=node_modules -czf "$tgz" -C "$SEQ" engine/src engine/migrations webapp/dist
+    tar --exclude=node_modules --exclude='._*' -czf "$tgz" -C "$SEQ" engine/src engine/migrations webapp/dist
     scp -q "$tgz" "$server:/tmp/cwpt-sync.tgz"
     ssh "$server" "sudo rm -rf /opt/chatwoot/engine/src /opt/chatwoot/webapp/dist \
       && sudo tar -C /opt/chatwoot -xzf /tmp/cwpt-sync.tgz 2>/dev/null; rm -f /tmp/cwpt-sync.tgz"
