@@ -365,7 +365,7 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
       ) : (
         <Table>
           <THead>
-            <TR className="hover:bg-transparent">
+            <TR>
               <TH>{t('colName')}</TH>
               <TH>{t('colLang')}</TH>
               <TH>{t('colCategory')}</TH>

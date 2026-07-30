@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, AlertTriangle, Layers, Loader2, X, RotateCcw, CheckCircle2, XCircle, Circle, ChevronDown } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Layers, Loader2, X, RotateCcw, CheckCircle2, XCircle, Circle, ChevronDown, Clock, Image, Video, FileText } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Dropdown from './ui/Dropdown.jsx';
 import Button from './ui/Button.jsx';
@@ -619,7 +619,7 @@ function StepTimeline({ steps, history, templates, contactName, currentStep, sta
         const tmpl = tmplByName.get(s.template) || null;
         const previewText = renderPreview(tmpl?.body || '', s.params, contactName);
         const bodyText = (wasSent && sent?.content) ? sent.content : previewText;
-        const mediaIcon = ({ IMAGE: '📷 ', VIDEO: '🎬 ', DOCUMENT: '📄 ' })[String(tmpl?.header_format || '').toUpperCase()] || '';
+        const MediaIcon = ({ IMAGE: Image, VIDEO: Video, DOCUMENT: FileText })[String(tmpl?.header_format || '').toUpperCase()] || null;
 
         // meta של הבועה (זמן + חיווי). שלב שטרם נשלח מציג את התאריך+שעה המחושב (fmtWhen),
         // ובהיעדר חישוב (אין רישום פעיל) נופל-לאחור ל"כעבור X".
@@ -651,13 +651,21 @@ function StepTimeline({ steps, history, templates, contactName, currentStep, sta
                     <span className={`text-sm ${isCurrent || wasSent ? 'font-medium text-n-slate-12' : 'text-n-slate-11'}`}>
                       {t('messageN', { n })}
                     </span>
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${pill.c}`}>{pill.t}</span>
+                    <span className={`rounded-full px-1.5 py-0.5 text-xxs font-medium ${pill.c}`}>{pill.t}</span>
                   </span>
                   {!isOpen ? (
-                    <span className="mt-1 block truncate text-xs text-n-slate-10">
-                      {!wasSent && meta.status === 'scheduled' && meta.time
-                        ? `🕐 ${meta.time}`
-                        : `${mediaIcon}${bodyText || t('templateNamed', { name: s.template })}`}
+                    <span className="mt-1 flex items-center gap-1 truncate text-xs text-n-slate-10">
+                      {!wasSent && meta.status === 'scheduled' && meta.time ? (
+                        <>
+                          <Clock size={12} aria-hidden="true" className="shrink-0" />
+                          <span className="truncate">{meta.time}</span>
+                        </>
+                      ) : (
+                        <>
+                          {MediaIcon ? <MediaIcon size={12} aria-hidden="true" className="shrink-0" /> : null}
+                          <span className="truncate">{bodyText || t('templateNamed', { name: s.template })}</span>
+                        </>
+                      )}
                     </span>
                   ) : null}
                 </span>
@@ -676,7 +684,7 @@ function StepTimeline({ steps, history, templates, contactName, currentStep, sta
                     <p className="text-xs italic text-n-slate-10">{t('templateNotFound', { name: s.template })}</p>
                   )}
                   {failed ? (
-                    <p className="mt-1.5 text-[11px] text-n-ruby-11">
+                    <p className="mt-1.5 text-xs text-n-ruby-11">
                       {deliveryErrorLabel(sent?.error_code, sent?.error_title)}
                     </p>
                   ) : null}

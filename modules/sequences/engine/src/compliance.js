@@ -195,6 +195,15 @@ export const inSession = (contact, now = new Date()) => {
   return now.getTime() - new Date(t).getTime() < SESSION_MS;
 };
 
+// One source of truth for recipient backoff. The previous implementation kept this
+// ladder in reconcile.js while canSend used a separate, shorter "release" threshold.
+// A manual/backlog reschedule could therefore pull a contact forward past the backoff.
+export const CAP_COOLDOWN_DAYS = Object.freeze([7, 10, 14, 21, 30, 45]);
+export const capCooldownDays = (failures) =>
+  CAP_COOLDOWN_DAYS[
+    Math.min(Math.max(Number(failures) || 1, 1), CAP_COOLDOWN_DAYS.length) - 1
+  ];
+
 /** ברירות המחדל של הגדרות הציות — חשבון בלי שורה ב-drip.compliance מקבל אותן. */
 export const DEFAULT_SETTINGS = Object.freeze({
   require_consent:       true,
@@ -221,14 +230,19 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // 40 = אחרי שהשחיקה אמיתית, לפני הקריסה, ובקצב רוטציה של פעם בחודש בערך.
   max_template_failures: 40,
 
+  // מדרגה קשיחה: גם קהל נקי נעצר רגע לפני נקודת הקריסה שנמדדה ב-50+ כשלים.
+  // המדרגה הרגילה ממשיכה לעצור רק קהל מסוכן; זו רשת ביטחון לכל התבנית.
+  max_template_failures_hard: 48,
+
   // ── בלם המסירה (delivery floor) ────────────────────────────────────────────
   // halt_on_red מסתמך על דירוג האיכות של מטא — שבנפחים האלה מחזיר UNKNOWN לנצח
   // ואינו נורה אף פעם. הבלם האמיתי מודד את המסירה *בפועל*: אם ההודעות על תבניות
   // נקיות מפסיקות להגיע (WABA שרוף, מדיה שבורה, פעולת מדיניות של מטא) — כל שליחה
   // נכשלת בלי שאף תבנית בודדת חוצה את הסף שלה, והחשבון נשאר "בריא" בעיני מטא בזמן
-  // שהוא הולם. checkDeliveryFloor עוצר את זה. נמדד בפרודקשן: מסירה תקינה = 91-98%.
-  min_delivery_rate:     70,   // אחוז הגעה מינימלי על מדגם תבניות נקיות
-  min_delivery_sample:   20,   // אל תשפוט מסירה על מדגם קטן מזה
+  // שהוא הולם. checkDeliveryFloor עוצר את זה. הסף הוא רצפת קריסה, לא "יום חלש":
+  // הבייסליין הבריא בפועל הוא 60-84%, בעוד קריסה אמיתית נראית כ-0-20%.
+  min_delivery_rate:     45,
+  min_delivery_sample:   30,
 
   // ── חלון הפתיחה לליד חדש (fresh opener) ─────────────────────────────────────
   // גם כשהחשבון עצור על RED, מותר לשלוח את *הפתיחה בלבד* לליד שנרשם ממש לאחרונה.
@@ -237,6 +251,31 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // ליד שלא מקבל פתיחה בזמן = ליד אבוד. ⚠️ רק ליד שנרשם בתוך החלון הזה — לא קהל ישן
   // וקר (שהוא בדיוק מה ששרף את המספר). 0 = לכבות את ההחרגה לגמרי.
   fresh_opener_hours:    48,
+
+  // ── שחרור-מנוחה לנמענת רוויה (saturation rest release) ──────────────────────
+  // מטא: התקרה הפר-נמענת "מסתגלת אוטומטית עם הזמן" — כלומר היא משתחררת אחרי מנוחה.
+  // נמדד אצלנו (45 יום, n=2,398 שליחות שבאו אחרי 131049): ניסיון במרווח של פחות
+  // מ-4 ימים מהחסימה האחרונה נמסר ב-8-15%; 4-7 ימים — 41%; 7 ימים ומעלה — 61%.
+  // לכן נמענת שסומנה saturated אינה חנויה לנצח: אחרי המנוחה הזו מותר ניסיון בודד.
+  // כישלון נוסף מאפס את שעון המנוחה ומטפס בסולם הצינון (ראה reconcile), כך שנמענת
+  // שמטא ממשיכה לשמור עליה מקבלת ניסיון אחד ומרווח — לא הפגזה. לסף מתווסף פיזור
+  // דטרמיניסטי של 0-9 ימים לפי contact_id, כדי שקוהורט שלם שנחסם באותו שבוע לא
+  // ישתחרר באותו בוקר וישרוף את עותקי ה-burn בבת אחת. 0 = כבוי (חניה לצמיתות).
+  saturation_release_days: 21,
+
+  // שעות שקט לשיווק. start == end משאיר את ההגנה כבויה כברירת מחדל; חשבונות
+  // קיימים מקבלים את הערכים שלהם ממיגרציה/שורת compliance.
+  quiet_start_hour: 0,
+  quiet_end_hour:   0,
+  quiet_tz:         'Asia/Jerusalem',
+
+  // ── שחרור-בחלון לתקועים (window-retry) ──────────────────────────────────────
+  // הודעה נכנסת פותחת חלון שירות של 24h שבו המסירה ~100% ופטורה מהתקרה של מטא.
+  // כשהדגל דולק, reconcile מקדים אל תוך החלון *רק* ניסיון-חוזר תקוע — ליד עם
+  // cap_failures>0 שההודעה שלו כבר נשלחה בזמן שהרצף קבע ונחסמה (הודעה מאחרת,
+  // לא מוקדמת). ⛔ לתזמון של הרצף עצמו לא נוגעים: ליד שנמסר לו (cap=0) שולח את
+  // השלב הבא בדיוק בזמנו. כבוי כברירת מחדל — הדלקה רק בהסכמת בעל החשבון.
+  window_pull_enabled: false,
 });
 
 /**
@@ -259,7 +298,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
  */
 export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETTINGS,
                           health = {}, template = null, sentToday = 0, inSession = false,
-                          isFreshOpener = false }) {
+                          isFreshOpener = false, now = new Date() }) {
   const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
 
   // ── חוסם הכל — פרט לחלון שירות פתוח ───────────────────────────────────────
@@ -286,6 +325,33 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
 
   // ── חוסם את איש הקשר ────────────────────────────────────────────────────
   const marketing = isMarketing(category);
+
+  // כמה זמן הנמענת נחה מאז ה-131049 האחרון שלה? השחרור דורש *ראיה* למנוחה —
+  // חותמת שקיימת וישנה מספיק. אין חותמת ⇒ אין ראיה ⇒ ההתנהגות הישנה (חנייה),
+  // fail-closed. הפיזור לפי contact_id דטרמיניסטי: אותה נמענת משתחררת תמיד
+  // באותו יום, אבל קוהורט שנחסם יחד נמרח על פני ~10 ימים.
+  const capFailures = Number(contact.cap_failures || 0);
+  const lastCapMs = contact.last_cap_failure_at
+    ? new Date(contact.last_cap_failure_at).getTime()
+    : NaN;
+  const restDays = Number.isFinite(lastCapMs)
+    ? Math.max(0, (now.getTime() - lastCapMs) / 86400000)
+    : -1;
+  const stagedCooldown = capFailures > 0 ? capCooldownDays(capFailures) : 0;
+  const cooldownReady = capFailures === 0
+    || (restDays >= stagedCooldown);
+
+  // Saturated contacts (cap >= max) need both the staged backoff and the explicit
+  // release policy. A low release_days value must never shorten the 30/45-day rung.
+  const releaseDays = Number(s.saturation_release_days || 0);
+  const saturatedReleaseAfter = Math.max(
+    stagedCooldown,
+    releaseDays + (Number(contact.contact_id) || 0) % 10
+  );
+  const restedEnough = capFailures > 0
+    && releaseDays > 0
+    && restDays >= saturatedReleaseAfter;
+
   if (contact.suppressed_at) {
     const scope = contact.suppressed_scope || 'marketing';
     if (scope === 'all' || marketing) {
@@ -298,7 +364,10 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
       if (!capBased) {
         return { ok: false, reason: 'suppressed', action: 'drop', detail: contact.suppressed_reason || '' };
       }
-      if (!inSession) {
+      // אחרי המנוחה המדודה התקרה של מטא כבר הסתגלה — ניסיון בודד משתחרר. הניתוב
+      // למאגר השריפה עדיין חל (cap_failures>0), כך שגם אם הניסיון ייכשל, הכישלון
+      // ייספג בעותק ה-burn ולא בתבנית הנקייה — וישעון המנוחה יתאפס ויטפס בסולם.
+      if (!inSession && !restedEnough) {
         return { ok: false, reason: 'saturated', action: 'defer', detail: contact.suppressed_reason || '' };
       }
     }
@@ -312,6 +381,26 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   // מהמכסה האישית *ומ*מגבלת ה-24h של הפורטפוליו. מטא, per-user-limits:
   // "Marketing messages sent within this window do not count towards the limit."
   if (inSession) return { ok: true, reason: 'in_session' };
+
+  // שלבי המשך שיווקיים בלבד. ליד טרי עם cap=0 אינו מושפע, וחלון שירות כבר
+  // הוחרג מעל. ההגנה הזו עומדת גם מול UPDATE ידני/backlog שמקדים next_send_at.
+  if (capFailures > 0 && capFailures < Number(s.max_cap_failures) && !cooldownReady) {
+    const retryAt = Number.isFinite(lastCapMs)
+      ? new Date(lastCapMs + stagedCooldown * 86400000)
+      : null;
+    return { ok: false, reason: 'cap_cooldown', action: 'defer', retryAt };
+  }
+
+  // ── שעות שקט ────────────────────────────────────────────────────────────
+  // חלון שירות ופתיחה טרייה פטורים; יתר השיווק נדחה לבוקר.
+  const qs = Number(s.quiet_start_hour), qe = Number(s.quiet_end_hour);
+  if (Number.isFinite(qs) && Number.isFinite(qe) && qs !== qe && !isFreshOpener) {
+    const hour = Number(new Intl.DateTimeFormat('en-GB', {
+      hour: 'numeric', hour12: false, timeZone: s.quiet_tz || 'Asia/Jerusalem',
+    }).format(now));
+    const quiet = qs > qe ? (hour >= qs || hour < qe) : (hour >= qs && hour < qe);
+    if (quiet) return { ok: false, reason: 'quiet_hours', action: 'defer' };
+  }
 
   // ── מכסות שיווק ─────────────────────────────────────────────────────────
   // ההסכמה נבדקת בשתי רמות, ודי באחת מהן:
@@ -341,14 +430,18 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   //
   // מתחת ל-inSession בכוונה: שליחה בחלון פתוח עוקפת את התקרה, נמסרת (100%), ו*משפרת*
   // את מוניטין התבנית. חסר מידע על התבנית ⇒ שולחים (fail-open).
+  if (template && Number(template.failures || 0) >= Number(s.max_template_failures_hard || 48)) {
+    return { ok: false, reason: 'template_burned', action: 'defer' };
+  }
   if (template && Number(template.failures || 0) >= Number(s.max_template_failures)
       && Number(contact.cap_failures || 0) > 0) {
     return { ok: false, reason: 'template_burned', action: 'defer' };
   }
 
   // הגנות עומק — הכתיבה עצמה נעשית ב-reconcileDeliveries, אבל אם מחזור אחד פספס,
-  // השער לא ישלח בכל זאת. רוויה = דחייה, לא הסרה (ראה ההערה למעלה).
-  if (Number(contact.cap_failures || 0) >= Number(s.max_cap_failures)) {
+  // השער לא ישלח בכל זאת. רוויה = דחייה, לא הסרה (ראה ההערה למעלה) — וגם כאן
+  // שחרור-המנוחה חל, מאותו נימוק בדיוק כמו בענף ה-suppressed למעלה.
+  if (Number(contact.cap_failures || 0) >= Number(s.max_cap_failures) && !restedEnough) {
     return { ok: false, reason: 'saturated', action: 'defer' };
   }
   if (Number(contact.unengaged_streak || 0) >= Number(s.max_unengaged)) {
@@ -540,32 +633,55 @@ export async function checkDeliveryFloor(pool, accountId, settings = null) {
   // (אם קיימת). חשבון חדש בלי שורה נופל ל-DEFAULT — כך הבלם מובנה אוטומטית לכולם.
   const s = { ...DEFAULT_SETTINGS, ...(settings || await loadSettings(pool, accountId)) };
 
-  // מסירה על תבניות נקיות בלבד היום. מאגר השריפה מעוצב להיכשל — לכלול אותו כאן זה
-  // בדיוק "המכנה המזוהם" שהפך רשימה תקינה לשרופה פעמיים. NOT LIKE '%burn%' מנקה.
+  // מקור האמת הוא sent_messages.delivery_status. בנוסף למאגר השריפה מוחרג רק
+  // 131049 ראשון-בחיים: הוא רעש שמגיע ממקור הלידים, לא אות שהמספר עצמו קרס.
+  // הצלחות ראשונות וכשלים אחרים נשארים במדגם — אחרת תקלה אמיתית בקהל חדש נעלמת.
   const { rows } = await pool.query(
-    `SELECT count(*) FILTER (WHERE m.status IN (1,2)) AS ok,
-            count(*) FILTER (WHERE m.status = 3)     AS bad
-       FROM drip.sent_messages sm
-       JOIN messages m ON m.id = sm.message_id
-      WHERE sm.account_id = $1
-        AND sm.sent_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Jerusalem') AT TIME ZONE 'Asia/Jerusalem'
-        AND sm.template_name NOT LIKE '%burn%'`,
+    `WITH s AS (
+       SELECT sm.sent_at, COALESCE(sm.delivery_status, 'pending') AS ds, sm.error_code,
+              (sm.template_name LIKE '%burn%') AS is_burn,
+              row_number() OVER (PARTITION BY sm.contact_id ORDER BY sm.sent_at, sm.id) = 1
+                AS first_ever
+         FROM drip.sent_messages sm
+        WHERE sm.account_id = $1
+     )
+     SELECT count(*) FILTER (WHERE ds IN ('delivered','read')) AS ok,
+            count(*) FILTER (WHERE ds = 'failed')              AS bad
+       FROM s
+      WHERE sent_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Jerusalem') AT TIME ZONE 'Asia/Jerusalem'
+        AND NOT is_burn
+        AND NOT (first_ever AND ds = 'failed' AND error_code = '131049')`,
     [accountId]
   );
   const ok = Number(rows[0]?.ok || 0), bad = Number(rows[0]?.bad || 0);
   const n = ok + bad;
-  if (n < (s.min_delivery_sample || 20)) return null;   // מדגם קטן מדי — לא שופטים
+
+  // עצירה שיצר הבלם הזה משתחררת אוטומטית כשהתנאי חולף. עצירת RED/Policy
+  // נשארת ידנית/תלויה במטא. הזיהוי לפי halt_code; הרגקס נשאר לעצירות שנכתבו
+  // לפני מיגרציה 034 (אין להן code, רק את משפט העברית).
+  const isFloorHalt = (h) => h.halt_code === 'delivery_floor' || /שיעור ההגעה/.test(String(h.halt_reason || ''));
+  const maybeResume = async (why) => {
+    const h = await loadHealth(pool, accountId);
+    if (h.halted && isFloorHalt(h)) await resumeAccount(pool, accountId, why);
+  };
+
+  // מדגם קטן אינו הוכחת התאוששות. בפרט בחצות המדגם מתאפס; שחרור אז היה מאפשר
+  // למספר שבור לשרוף עוד batch בכל יום בלי מסירה חיובית אחת.
+  if (n < (s.min_delivery_sample || 30)) return null;
 
   const rate = Math.round((100 * ok) / n);
-  if (rate >= (s.min_delivery_rate || 70)) return { rate, n, halted: false };
+  if (rate >= (s.min_delivery_rate || 45)) {
+    await maybeResume(`שיעור ההגעה התאושש ל-${rate}% (${ok} מתוך ${n}) — השליחה חודשה אוטומטית.`);
+    return { rate, n, halted: false };
+  }
 
   // המסירה צנחה. עוצר — אם לא כבר עצור, כדי לא להציף את הדשבורד באותה התראה כל tick.
   const h = await loadHealth(pool, accountId);
   if (!h.halted) {
     await haltAccount(
       pool, accountId,
-      `שיעור ההגעה צנח ל-${rate}% (${ok} מתוך ${n} היום, תבניות נקיות בלבד). השליחה ` +
-      `נעצרה אוטומטית — בדקו את המספר, המדיה והתבניות, ואז שחררו ידנית (drip.resume_account).`,
+      `שיעור ההגעה צנח ל-${rate}% (${ok} מתוך ${n} היום, נמענות מוכרות על תבניות נקיות). ` +
+      `השליחה נעצרה אוטומטית — בדקו את המספר, המדיה והתבניות. תשתחרר לבד כשהשיעור יתאושש.`,
       'delivery_floor', { rate, ok, total: n }
     );
   }
@@ -835,9 +951,91 @@ export async function marketingSentToday(pool, accountId, contactIds, now = new 
         AND sent_at    > $3::timestamptz - interval '24 hours'
         AND in_session = false
         AND upper(COALESCE(category, 'MARKETING')) = 'MARKETING'
-        AND delivery_status <> 'failed'
       GROUP BY contact_id`,
     [accountId, ids, now]
   );
   return new Map(rows.map((r) => [r.contact_id, Number(r.n)]));
+}
+
+/**
+ * בדיקת תקציב חיה ואטומית רגע לפני שליחה בלתי-הפיכה.
+ *
+ * ההקשר הנטען בתחילת tick הוא snapshot. בלעדיה מנה אחת יכולה:
+ *   1. לשלוח שוב לאותו איש קשר אחרי 131049, כי הכשל טרם נראה ב-snapshot;
+ *   2. להעביר תבנית מ-36 ל-50 כשלים, כי כל ההודעות ראו את אותו מונה 36.
+ *
+ * advisory locks מסדרים גם כמה מופעי engine במקביל. מיד לאחר הבדיקה, reconcile
+ * כותב reservation מחויב ל-sent_messages לפני קריאת הרשת; pending נספר ככשל
+ * אפשרי עד ש-Meta מכריעה אותו.
+ */
+export async function checkLiveSendBudget(db, {
+  accountId,
+  contactId,
+  templateName,
+  category,
+  inSession: openWindow = false,
+  capFailures = 0,
+  settings = DEFAULT_SETTINGS,
+  now = new Date(),
+}) {
+  if (!isMarketing(category) || openWindow) return { ok: true };
+
+  const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
+
+  if (Number.isFinite(Number(contactId))) {
+    await db.query(
+      `SELECT pg_advisory_xact_lock($1::int, hashtext($2))`,
+      [Number(accountId), `contact:${Number(contactId)}`]
+    );
+    const attempts = Number((await db.query(
+      `SELECT count(*)::int AS n
+         FROM drip.sent_messages
+        WHERE account_id = $1 AND contact_id = $2
+          AND sent_at > $3::timestamptz - interval '24 hours'
+          AND in_session = false
+          AND upper(COALESCE(category, 'MARKETING')) = 'MARKETING'`,
+      [accountId, contactId, now]
+    )).rows[0]?.n || 0);
+    if (attempts >= Number(s.max_marketing_per_day)) {
+      return { ok: false, reason: 'daily_cap', action: 'defer' };
+    }
+  }
+
+  if (!templateName) return { ok: true };
+
+  await db.query(
+    `SELECT pg_advisory_xact_lock($1::int, hashtext($2))`,
+    [Number(accountId), `template:${templateName}`]
+  );
+  const live = (await db.query(
+    `SELECT
+       count(*) FILTER (
+         WHERE delivery_status = 'failed'
+           AND sent_at >= $3::timestamptz - make_interval(days => $4)
+       )::int AS failures,
+       count(*) FILTER (
+         WHERE delivery_status = 'pending'
+           AND sent_at >= $3::timestamptz - interval '48 hours'
+       )::int AS pending
+       FROM drip.sent_messages
+      WHERE account_id = $1 AND template_name = $2`,
+    [accountId, templateName, now, BURN_WINDOW_DAYS]
+  )).rows[0] || {};
+
+  const failures = Number(live.failures || 0);
+  const pending = Number(live.pending || 0);
+  const risky = Number(capFailures || 0) > 0;
+  const limit = risky
+    ? Number(s.max_template_failures)
+    : Number(s.max_template_failures_hard || 48);
+
+  if (failures + pending >= limit) {
+    return {
+      ok: false,
+      reason: 'template_burned',
+      action: 'defer',
+      detail: `${failures} failed + ${pending} pending / ${limit}`,
+    };
+  }
+  return { ok: true };
 }

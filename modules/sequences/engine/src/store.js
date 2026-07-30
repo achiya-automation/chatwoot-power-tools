@@ -52,6 +52,7 @@ import { projectSchedule } from './schedule.js';
 import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from './campaigns.js';
 import { handleTemplatesAction } from './templates.js';
 import { handleJourneysAction, makeJourneysCtx } from './journeys.js';
+import { handlePresenceAction } from './presence.js';
 import { makeClient } from './chatwoot.js';
 
 let _config = null;
@@ -106,6 +107,12 @@ export async function handleAction(accountId, action, payload) {
   // בונה פלואו (journeys) — אותו דפוס: מודול נפרד, פריפיקס jrn_.
   // api.js משדר ללקוח את result.data — לכן העטיפה כאן, פעם אחת לכל פעולות ה-jrn_
   // (הלקוח קורא json.data; ההחזרות של handleJourneysAction הן הערך עצמו).
+  // Presence — "נקרא"/"מקליד" (prs_*): אותו דפוס, מודול נפרד.
+  if (action.startsWith('prs_')) {
+    const result = await handlePresenceAction({ query, log: (m) => console.log(m) }, action, payload, accId);
+    return { data: result };
+  }
+
   if (action.startsWith('jrn_')) {
     const result = await handleJourneysAction(
       makeJourneysCtx({ query, makeClient, makeDbReads, config: {} }),
@@ -831,6 +838,13 @@ async function actionDeliveryStats(accountId) {
             count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131049','130472','131056'))::int AS block_cap,
             count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131026','131021'))::int  AS block_invalid,
             count(*) FILTER (WHERE ds = 'failed' AND ec = '131050')::int              AS block_optout,
+            -- ⭐ הסיבות בקהל הנקי בלבד — "סיבות חסימה" חייב לדבר באותה שפה כמו הדונאט.
+            -- הדונאט מציג clean_blocked (בכוונה, מאגר השריפה מופרד), אבל שורת הסיבות
+            -- סכמה את *כל* הכישלונות — "נחסמו 7" ליד "תקרת שיווק: 24" על אותו מסך.
+            -- הסכומים הכוללים (block_cap וכו') נשארים למי שצריך את מלוא התמונה.
+            count(*) FILTER (WHERE NOT is_burn AND ds = 'failed' AND ec IN ('131049','130472','131056'))::int AS block_cap_clean,
+            count(*) FILTER (WHERE NOT is_burn AND ds = 'failed' AND ec IN ('131026','131021'))::int  AS block_invalid_clean,
+            count(*) FILTER (WHERE NOT is_burn AND ds = 'failed' AND ec = '131050')::int              AS block_optout_clean,
             -- סיבות שגיאת השליחה (לא חסימה) — כדי שאפשר להראות מה לתקן
             count(*) FILTER (WHERE ds = 'failed' AND ec IN ('132000','132012','132001','132005','132007'))::int AS err_template,
             count(*) FILTER (WHERE ds = 'failed' AND ec IN ('131052','131053'))::int  AS err_media,
@@ -914,6 +928,7 @@ async function actionDeliveryStats(accountId) {
     `WITH s AS (
        SELECT sm.sent_at, sm.error_code AS ec,
               COALESCE(sm.delivery_status, 'pending') AS ds,
+              (sm.template_name LIKE '%burn%')        AS is_burn,
               row_number() OVER (PARTITION BY sm.contact_id ORDER BY sm.sent_at, sm.id) = 1
                 AS is_first_ever
          FROM drip.sent_messages sm
@@ -926,7 +941,10 @@ async function actionDeliveryStats(accountId) {
             count(*) FILTER (WHERE ds = 'failed' AND ec IN ${META_BLOCK})::int AS blocked,
             count(*) FILTER (WHERE ds = 'failed' AND (ec IS NULL OR ec NOT IN ${META_BLOCK}))::int AS "sendError"
        FROM s
-      WHERE sent_at >= ${dayStart}
+      -- ⭐ הקהל הנקי בלבד: עותקי שריפה נשלחים ללידים שכבר חסומים ונכשלים בכוונה —
+      -- ערבובם ב"המשך הרצף" הציג "נחסמו 23" מפחיד כשרובו מאגר ספיגה שעובד כמתוכנן.
+      -- (הסינון אחרי חלון is_first_ever: שליחת burn עדיין נחשבת "הודעה ראשונה בחייו".)
+      WHERE sent_at >= ${dayStart} AND NOT is_burn
       GROUP BY 1`,
     [accountId]
   ));

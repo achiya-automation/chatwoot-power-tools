@@ -40,7 +40,29 @@
   }
 }
 
-/* אנימציית כניסה למגירה (Drawer). RTL: נכנסת משמאל. */
+/* יוטיליטיז טיפוגרפיה של Chatwoot — הועתקו אחד-לאחד מ-_woot.scss (4.16.1),
+   כדי שרכיבים שמיושרים למקור (BaseTable ועוד) ישתמשו באותם שמות בדיוק. */
+@layer components {
+  .text-body-main {
+    @apply font-inter text-sm font-420;
+    line-height: 21px;
+    letter-spacing: -0.28px;
+  }
+  .text-heading-3 {
+    @apply font-inter text-sm font-medium;
+    line-height: 21px;
+    letter-spacing: -0.27px;
+  }
+  .text-label-small {
+    @apply font-inter text-xs font-440;
+    line-height: 16px;
+    letter-spacing: -0.24px;
+  }
+}
+
+/* אנימציית כניסה למגירה (Drawer). ה-overlay ממקם את הפאנל ב-justify-start
+   (לוגי: ב-RTL זה הקצה הימני), ולכן גם הכניסה חייבת להיות תלוית-כיוון —
+   translateX הוא פיזי, אז ב-RTL נדרש keyframe הפוך. */
 @keyframes slideIn {
   from {
     transform: translateX(-100%);
@@ -50,6 +72,19 @@
     transform: translateX(0);
     opacity: 1;
   }
+}
+@keyframes slideInRtl {
+  from {
+    transform: translateX(100%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+[dir='rtl'] [class*='slideIn'] {
+  animation-name: slideInRtl;
 }
 
 /* כניסת מודאל ממורכז — fade + zoom עדין (זהה לתחושת ה-Dialog של Chatwoot) */
@@ -70,10 +105,10 @@
   to { opacity: 1; }
 }
 
-/* כניסת toast — מלמטה למעלה */
+/* כניסת toast — מלמעלה (ה-viewport מעוגן top-center כמו SnackbarContainer) */
 @keyframes toastIn {
   from {
-    transform: translateY(12px);
+    transform: translateY(-12px);
     opacity: 0;
   }
   to {

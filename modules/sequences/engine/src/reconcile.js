@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { isNoSendNow, gateFor, nextSendAt, atJerusalemHour, addInterval, skipNoSendWindows, quietWindowEnd } from './schedule.js';
 import { withTx } from './db.js';
 import * as compliance from './compliance.js';
@@ -295,6 +296,58 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   // לכן: קודם מי שהחלון שלה פתוח, אחר כך מי שנקייה מחסימות, ורק אז השאר. בתוך כל שכבה —
   // הכי מאחרים בלוח הזמנים ראשונים, כך שהקצב שהוגדר ברצף נשמר.
   // זה לא משנה *מי* יקבל, רק את הסדר בתוך הטיק — ובזכותו התקציב לא נבזבז על חסומות.
+
+  // ── WINDOW RETRY — שחרור-בחלון ללידים תקועים בלבד ────────────────────────────
+  // ⛔ קו אדום (דרישת הלקוח, 30/07): לתזמון של הרצף עצמו אסור לגעת. ליד שההודעה
+  // האחרונה שלו נמסרה (cap_failures=0) שולח את השלב הבא בדיוק בזמן שהרצף קבע —
+  // לעולם לא מוקדם. המנגנון הזה נוגע רק בליד *תקוע*: ההודעה שלו כבר נשלחה בזמן
+  // שהרצף קבע, מטא חסמה אותה (131049), והיא ממתינה בהמתנת-ההחלמה של המנוע
+  // (סולם הצינון 7-45 יום / חניית רוויה). זו הודעה *מאחרת*, לא מוקדמת.
+  //
+  // ההזדמנות: כשהליד התקוע כותב לנו, נפתח חלון שירות של 24 שעות שבו המסירה
+  // ~100% (נמדד כאן: 195/196) וההודעה פטורה מהתקרה הפר-נמענית. "חלון שירות
+  // משחרר רוויה" היא כבר המדיניות המוצהרת (ראה canSend) — אבל טכנית היא יורה
+  // רק אם הליד במקרה בשל (next_send_at <= now) בזמן שהחלון פתוח. נמדד: 88
+  // מ-184 חלונות ב-30 יום התבזבזו כך, 42 מ-65 הלידים שפוספסו היו תקועים.
+  //
+  // המנגנון: הניסיון-החוזר התקוע מוקדם אל תוך החלון (now+1h — מרווח אנושי אחרי
+  // התגובה, כדפוס שלב "replied" ברצף). כל השערים ממשיכים לחול ברגע השליחה:
+  // שבת/שקט דוחים ל-quietWindowEnd (שעדיין בתוך חלון 24ש׳), send_condition
+  // מוערך אז, ו-canSend עובר במלואו (opt-out נשאר drop גם בחלון; בתוך חלון
+  // נשלחת התבנית הנקייה — ראה הניתוב למאגר השריפה בהמשך).
+  //
+  // ניסיון אחד לכל חלון: ה-NOT EXISTS דורש שלא נשלח כלום מאז ההודעה הנכנסת;
+  // רק תגובה *חדשה* (last_inbound_at מתקדם) פותחת שחרור נוסף. התנאי
+  // next_send_at > last_inbound+24h מושך רק ניסיון שהיה מפספס את החלון לגמרי —
+  // מי שכבר נופל בתוכו נשלח ממילא, ומשיכתו רק הייתה נלחמת בדחיות השקט.
+  // 20 שעות ולא 24: שוליים כדי שהשליחה (אחרי +1h וסוף-שקט) תיפול בחלון חי.
+  const cSettings = await compliance.loadSettings(pool, accountId);
+  if (cSettings.window_pull_enabled) {
+    const pulled = await q(
+      `UPDATE drip.enrollments e
+          SET next_send_at = $2::timestamptz + interval '1 hour'
+         FROM drip.contact_state cs, drip.sequences sq
+        WHERE e.account_id = $1
+          AND e.status     = 'active'
+          AND sq.id        = e.sequence_id
+          AND sq.send_enabled
+          AND cs.account_id = e.account_id AND cs.contact_id = e.contact_id
+          AND cs.cap_failures > 0
+          AND cs.last_inbound_at > $2::timestamptz - interval '20 hours'
+          AND e.next_send_at     > cs.last_inbound_at + interval '24 hours'
+          AND (cs.suppressed_at IS NULL OR cs.suppressed_reason = 'saturated')
+          AND NOT EXISTS (SELECT 1 FROM drip.sent_messages sm
+                          WHERE sm.account_id = e.account_id
+                            AND sm.contact_id = e.contact_id
+                            AND sm.sent_at   >= cs.last_inbound_at)
+        RETURNING e.id`,
+      [accountId, now]
+    );
+    if (pulled.length) {
+      console.log(`[drip] window-retry acct ${accountId}: ${pulled.length} stalled step(s) released into open service window`);
+    }
+  }
+
   const dueIds = (await q(
     `SELECT e.id FROM drip.enrollments e
        LEFT JOIN drip.sequences s ON s.id = e.sequence_id
@@ -360,7 +413,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   // Loaded once, outside the per-enrollment loop: the same settings/health/template map
   // govern every send in this cycle, and re-reading them per lead would be N round-trips
   // for identical rows. Contact state IS per-lead, so it is fetched as one batched read.
-  const cSettings  = await compliance.loadSettings(pool, accountId);
+  // (cSettings already loaded above, before the window-pull.)
   const cHealth    = await compliance.loadHealth(pool, accountId);
   const cTemplates = await compliance.loadTemplateHealth(pool, accountId);
 
@@ -417,7 +470,8 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         `כדאי ליצור לה עותק שריפה: בעורך הרצף ← השלב ← "תבנית לנמענות רוויות" ← "צור עותק".`;
     await compliance.raiseAlert(
       pool, accountId, 'warn', `template_degrading:${t.template_name}`, msg,
-      { template: t.template_name, warnAt, limit: cSettings.max_template_failures }
+      { template: t.template_name, warnAt, limit: cSettings.max_template_failures,
+        hasBurnCopy: hasCopy.has(t.template_name) }
     ).catch(() => {});                                     // התראה לעולם לא מפילה שליחה
   }
 
@@ -754,6 +808,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           sentToday: cSentToday.get(e.contact_id) || 0,
           inSession: session,
           isFreshOpener,
+          now,
         });
 
         if (!verdict.ok) {
@@ -803,13 +858,56 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
             verdict.reason === 'daily_cap'       ? 24 * 3600 * 1000 :
             verdict.reason === 'account_halted'  ? 60 * 60 * 1000 :
             verdict.reason === 'template_burned' ? 24 * 3600 * 1000 :
+            verdict.reason === 'cap_cooldown'    ? 24 * 3600 * 1000 :
             verdict.reason === 'saturated'       ? 7 * 24 * 3600 * 1000
                                                  : TEMPLATE_HOLD_MS;
+          const requestedRetry = verdict.retryAt ? new Date(verdict.retryAt) : null;
+          const retryAt = requestedRetry && Number.isFinite(requestedRetry.getTime())
+            && requestedRetry > now
+            ? requestedRetry
+            : new Date(now.getTime() + waitMs);
           await c.query(
             `UPDATE drip.enrollments SET next_send_at = $2 WHERE id = $1`,
-            [e.id, new Date(now.getTime() + waitMs)]
+            [e.id, retryAt]
           );
           console.log(`[drip] gate DEFER acct ${accountId} contact ${e.contact_id}: ${verdict.reason}`);
+          return;
+        }
+
+        // Snapshot checks above are intentionally cheap, but they cannot reserve budget.
+        // Re-check under per-contact/per-template advisory locks immediately before the
+        // irreversible send. Pending rows reserve headroom until Meta resolves them.
+        const liveBudget = await compliance.checkLiveSendBudget(c, {
+          accountId,
+          contactId: e.contact_id,
+          templateName: step.template_name,
+          category: step.category,
+          inSession: session,
+          capFailures: cState.cap_failures || 0,
+          settings: cSettings,
+          now,
+        });
+        if (!liveBudget.ok) {
+          if (liveBudget.reason === 'template_burned') {
+            const isBurnCopy = /burn/i.test(step.template_name || '');
+            await compliance.raiseAlert(
+              pool, accountId, isBurnCopy ? 'warn' : 'error',
+              `template_burned:${step.template_name}`,
+              isBurnCopy
+                ? `🟡 עותק השריפה "${step.template_name}" מילא את תקציב הכישלונות והשליחות הממתינות שלו ונח.`
+                : `🔴 התבנית "${step.template_name}" מילאה את תקציב הכישלונות והשליחות הממתינות שלה ונעצרה לפני חריגה.`,
+              { template: step.template_name, limit: cSettings.max_template_failures,
+                window: compliance.BURN_WINDOW_DAYS, burnCopy: isBurnCopy }
+            );
+          }
+          await c.query(
+            `UPDATE drip.enrollments SET next_send_at = $2 WHERE id = $1`,
+            [e.id, new Date(now.getTime() + 24 * 3600 * 1000)]
+          );
+          console.log(
+            `[drip] live budget DEFER acct ${accountId} contact ${e.contact_id}: ` +
+            `${liveBudget.reason} ${liveBudget.detail || ''}`
+          );
           return;
         }
 
@@ -879,6 +977,21 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           params:   paramsResolve(step.params, contact),
           mediaUrl: step.media_url || null, // header media (IMAGE/VIDEO/DOCUMENT); the sender resolves the type
         };
+
+        // Persist the attempt BEFORE the irreversible network call, on a separate
+        // committed connection. If the process dies, Chatwoot times out after accepting,
+        // or the outer transaction rolls back, the attempt still consumes the contact
+        // and template budgets. This prevents a blind immediate retry.
+        const sentLedgerId = randomUUID();
+        await pool.query(
+          `INSERT INTO drip.sent_messages
+                 (id, account_id, conversation_id, enrollment_id, sequence_id, step_order,
+                  template_name, content, message_id, delivery_status, category, in_session, contact_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, '', NULL, 'pending', $8, $9, $10)`,
+          [sentLedgerId, accountId, conversationId, e.id, e.sequence_id, e.current_step,
+           step.template_name, step.category, session, e.contact_id]
+        );
+
         // MM Lite A/B (opts.mmLiteExperiment, default off). Meta claims its marketing API
         // "can overcome per-user message limits that might not allow delivery on Cloud API"
         // for high-engagement templates — unproven for this audience, so we measure instead
@@ -915,9 +1028,9 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
           sendResult = await client.sendTemplate(conversationId, sendArgs);
         }
 
-        // Record what was delivered (send history → "see exactly what was sent").
-        // Best-effort and SAVEPOINT-isolated: a logging failure must NEVER abort the
-        // advance below — an aborted advance would re-send this step on the next cycle.
+        // Finalize the committed reservation with Chatwoot's response. Best-effort and
+        // SAVEPOINT-isolated: if this update fails, the durable pending reservation remains,
+        // so neither a rollback nor the next tick can mistake the attempt for "never sent".
         const sentContent =
           sendResult && typeof sendResult === 'object' ? sendResult.content || '' : '';
         // Capture the Chatwoot message id so a later tick can read its delivery
@@ -933,17 +1046,15 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         await c.query('SAVEPOINT hist');
         try {
           await c.query(
-            `INSERT INTO drip.sent_messages
-                   (account_id, conversation_id, enrollment_id, sequence_id, step_order,
-                    template_name, content, message_id, category, in_session, contact_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [accountId, conversationId, e.id, e.sequence_id, e.current_step, step.template_name,
-             sentContent, sentMessageId, step.category, session, e.contact_id]
+            `UPDATE drip.sent_messages
+                SET content = $2, message_id = $3, delivery_status = 'pending'
+              WHERE id = $1`,
+            [sentLedgerId, sentContent, sentMessageId]
           );
           await c.query('RELEASE SAVEPOINT hist');
         } catch (histErr) {
           await c.query('ROLLBACK TO SAVEPOINT hist');
-          console.error(`[drip] history insert failed (non-fatal) for enrollment ${e.id}:`, histErr.message);
+          console.error(`[drip] history finalize failed (reservation kept) for enrollment ${e.id}:`, histErr.message);
         }
 
         // The seq_* conversation attrs are COSMETIC (Chatwoot sidebar display). The message is
@@ -1248,20 +1359,28 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
       // also burns the template for everyone else.
       case 'cap': {
         // 130472 = "המספר בניסוי של מטא" — A/B זמני של מטא, לא תקרת שיווק מהקצב שלנו.
-        // חולף תוך יום-יומיים ואינו מושפע מריטריי, אז צינון של 3 ימים (כמו 131049) מעכב
+        // חולף תוך יום-יומיים ואינו מושפע מריטריי, אז צינון של ימים (כמו 131049) מעכב
         // ליד חדש לחינם. ניסיון חוזר מהיר (6ש׳), ובלי להעלות cap_failures — הליד נקי, לא
         // רווי, ואסור שינותב למאגר השריפה בגלל גחמה של מטא.
         if (code === '130472') {
           await rearm(row.enrollment_id, row.step_order, 6);
           continue;
         }
+        // סולם הצינון — נמדד, לא מנוחש (45 יום, n=2,398 שליחות שבאו אחרי 131049):
+        // ניסיון במרווח <4 ימים נמסר ב-8-15% (הסולם הישן 3→6→9 נחת עם המדרגה
+        // הראשונה בדיוק בבור הזה), 4-7 ימים — 41%, 7+ ימים — 61%. לכן המדרגה
+        // הראשונה היא 7, והזנב מתארך עד 45 במקום חניה לצמיתות — נמענת שמטא שומרת
+        // עליה שוב ושוב מקבלת ניסיון בודד ומרווח, לא הפגזה (ראה שחרור-המנוחה ב-canSend).
         let failures = 1;
         if (row.contact_id) {
+          // last_cap_failure_at הוא שעון המנוחה של שחרור-הרוויה (canSend): כל 131049
+          // מאפס אותו. ההיסטוריה המלאה נשארת ב-sent_messages — החותמת רק חוסכת JOIN.
           const st = (await pool.query(
-            `INSERT INTO drip.contact_state (account_id, contact_id, cap_failures)
-             VALUES ($1, $2, 1)
+            `INSERT INTO drip.contact_state (account_id, contact_id, cap_failures, last_cap_failure_at)
+             VALUES ($1, $2, 1, now())
              ON CONFLICT (account_id, contact_id) DO UPDATE
-               SET cap_failures = drip.contact_state.cap_failures + 1, updated_at = now()
+               SET cap_failures = drip.contact_state.cap_failures + 1,
+                   last_cap_failure_at = now(), updated_at = now()
              RETURNING cap_failures`,
             [accountId, row.contact_id]
           )).rows[0];
@@ -1279,7 +1398,8 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
             // כאילו נמסרה. ואז, כשהנמענת אכן מגיבה והחלון נפתח, היא מקבלת את ההמשך של סיפור
             // שלא שמעה את תחילתו — הפוך בדיוק מהכוונה שמעל. נמדד בפרודקשן (14/07/2026):
             // 293 לידים עמדו אחרי הודעות שלא קיבלו, 197 מהן שלושה שלבים קדימה.
-            await rearm(row.enrollment_id, row.step_order, 24 * Math.min(3 * failures, 12));
+            await rearm(row.enrollment_id, row.step_order,
+                        24 * compliance.capCooldownDays(failures));
             continue;
           }
         }
@@ -1298,10 +1418,11 @@ export async function reconcileDeliveries(pool, client, accountId, now = new Dat
         // for up to 24 hours" — the retry loop MANUFACTURES the very block it is fighting.
         // (35% of this account's sends were such retries.)
         //
-        // So: an escalating cooldown on the SAME step (3 → 6 → 9 … capped at 12 days), the
-        // lead stays active, and the only stop is contact-level saturation above. If she ever
-        // replies, the window opens and she gets everything she missed.
-        const cooldownDays = Math.min(3 * failures, 12);
+        // So: an escalating cooldown on the SAME step (7 → 10 → 14 → 21 → 30 → 45 days,
+        // measured — see compliance.CAP_COOLDOWN_DAYS), the lead stays active, and contact-level
+        // saturation above only stretches the spacing further. If she ever replies, the
+        // window opens and she gets everything she missed.
+        const cooldownDays = compliance.capCooldownDays(failures);
         await rearm(row.enrollment_id, row.step_order, 24 * cooldownDays);
         continue;
       }

@@ -6,9 +6,9 @@ import {
   useRef,
   useState,
 } from 'react';
-import { X, Undo2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { CheckCircle2, AlertCircle } from 'lucide-react';
 import useT, { useLocale } from '../../useT.js';
-import { dirFor, translate } from '../../i18n.js';
+import { dirFor } from '../../i18n.js';
 
 /*
  * Toast — הודעות קצרות בתחתית המסך, בסגנון Chatwoot (n-tokens, כרטיס מרחף).
@@ -24,8 +24,8 @@ import { dirFor, translate } from '../../i18n.js';
 
 // מילון co-located (he/en)
 const M = {
-  he: { notifications: 'התראות', closeNotification: 'סגירת ההתראה' },
-  en: { notifications: 'Notifications', closeNotification: 'Close notification' },
+  he: { notifications: 'התראות' },
+  en: { notifications: 'Notifications' },
 };
 
 const ToastContext = createContext(null);
@@ -93,7 +93,7 @@ function ToastViewport({ toasts, dismiss }) {
   if (!toasts.length) return null;
   return (
     <div
-      className="pointer-events-none fixed inset-x-0 bottom-4 z-[60] flex flex-col items-center gap-2 px-4"
+      className="pointer-events-none fixed top-4 left-1/2 -translate-x-1/2 z-[60] flex w-[calc(100%-2rem)] max-w-[25rem] flex-col items-center gap-0 px-0"
       dir={dirFor(locale)}
       role="region"
       aria-live="polite"
@@ -110,11 +110,14 @@ function ToastItem({ t, onDismiss }) {
   const v = VARIANT[t.variant] || VARIANT.default;
   const Icon = v.icon;
   return (
-    <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-xl border border-n-weak bg-n-solid-1 px-4 py-3 shadow-2xl animate-[toastIn_.2s_ease-out]">
+    // Snackbar.vue של המקור: גלולה כהה הפוכה (bg-n-slate-12 / דארק slate-7), טקסט לבן,
+    // פעולה כקישור text-n-blue-10. אין אייקוני-וריאנט ואין כפתור X במקור — ה-Undo נשאר
+    // (יכולת מכוונת), מעוצב כקישור הפעולה הנייטיבי.
+    <div className="pointer-events-auto inline-flex items-center gap-3 rounded-lg bg-n-slate-12 dark:bg-n-slate-7 shadow-sm px-6 py-3 min-h-[1.875rem] min-w-[15rem] max-w-[25rem] mb-2 animate-[toastIn_.2s_ease-out]">
       {Icon ? (
-        <Icon size={18} className={`shrink-0 ${v.color}`} aria-hidden="true" />
+        <Icon size={16} className="shrink-0 text-white" aria-hidden="true" />
       ) : null}
-      <span className="grow text-sm text-n-slate-12">{t.message}</span>
+      <span className="grow text-sm font-medium text-white dark:text-white">{t.message}</span>
       {t.action ? (
         <button
           type="button"
@@ -122,20 +125,11 @@ function ToastItem({ t, onDismiss }) {
             t.action.onClick();
             onDismiss();
           }}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium text-n-blue-11 transition-colors hover:bg-n-alpha-2"
+          className="shrink-0 cursor-pointer select-none text-sm font-medium text-n-blue-10 hover:text-n-brand"
         >
-          <Undo2 size={14} aria-hidden="true" />
           {t.action.label}
         </button>
       ) : null}
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label={translate(M, 'closeNotification')}
-        className="shrink-0 rounded-md p-1 text-n-slate-10 transition-colors hover:bg-n-alpha-2 hover:text-n-slate-12"
-      >
-        <X size={14} aria-hidden="true" />
-      </button>
     </div>
   );
 }

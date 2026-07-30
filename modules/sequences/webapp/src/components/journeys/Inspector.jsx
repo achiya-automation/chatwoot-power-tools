@@ -120,7 +120,7 @@ const M = {
 
     tplPick: 'תבנית וואטסאפ',
     tplHint: 'תבנית מאושרת נשלחת גם מחוץ לחלון ה-24 שעות — זו הדרך לפתוח שיחה יזומה. עובד רק בתיבת וואטסאפ רשמית (Cloud API).',
-    tplNoOfficial: '⚠️ לחשבון אין תיבת וואטסאפ רשמית — צומת תבנית ייכשל בשליחה.',
+    tplNoOfficial: 'לחשבון אין תיבת וואטסאפ רשמית — צומת תבנית ייכשל בשליחה.',
     tplParam: 'פרמטר {{{n}}}',
     tplParamsTitle: 'פרמטרים לתבנית',
     tplMedia: 'קישור מדיה לכותרת ({format})',
@@ -238,7 +238,7 @@ const M = {
 
     tplPick: 'WhatsApp template',
     tplHint: 'An approved template is deliverable outside the 24h window — the way to open a conversation proactively. Official (Cloud API) WhatsApp inboxes only.',
-    tplNoOfficial: '⚠️ This account has no official WhatsApp inbox — a template node will fail to send.',
+    tplNoOfficial: 'This account has no official WhatsApp inbox — a template node will fail to send.',
     tplParam: 'Param {{{n}}}',
     tplParamsTitle: 'Template parameters',
     tplMedia: 'Header media URL ({format})',
@@ -720,7 +720,7 @@ function TriggerPanel({ name, onName, trigger, onTrigger, inboxes }) {
                   <label key={ib.id} className="flex cursor-pointer items-center gap-2 text-sm text-n-slate-12">
                     <input
                       type="checkbox"
-                      className="h-4 w-4 accent-[#2781F6]"
+                      className="h-4 w-4 accent-n-brand"
                       checked={ids.includes(Number(ib.id))}
                       onChange={() => toggleInbox(ib.id)}
                     />

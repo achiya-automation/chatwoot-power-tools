@@ -9,6 +9,7 @@ import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 import { pollTemplateStatuses } from './templates.js';
 import { reconcileJourneys } from './journeys.js';
+import { tickPresence } from './presence.js';
 import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
 import * as compliance from './compliance.js';
 
@@ -229,3 +230,14 @@ async function tick() {
 
 setInterval(() => tick().catch((e) => console.error('[drip] tick error:', e.message)),
   config.reconcileIntervalMs);
+
+// ── Presence loop — "נקרא"/"מקליד" ─────────────────────────────────────────
+// לולאה נפרדת ומהירה מה-reconcile: ✓✓ שמופיע דקה אחרי ההודעה מרגיש מוזר.
+// 5 שניות + ההשהיה האנושית שבהגדרות = חוויה טבעית. ראה presence.js על למה
+// משיכה ולא webhook (SafeFetch חוסם יעדים פנימיים).
+const PRESENCE_INTERVAL_MS = Number(process.env.PRESENCE_INTERVAL_MS || 5000);
+setInterval(
+  () => tickPresence({ query, log: (m) => console.log(m) })
+    .catch((e) => console.error('[presence] tick error:', e.message)),
+  PRESENCE_INTERVAL_MS
+);

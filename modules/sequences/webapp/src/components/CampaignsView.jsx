@@ -123,7 +123,7 @@ export default function CampaignsView({ accountId, onSelect }) {
                     <div className="w-full rounded-t bg-n-ruby-9" style={{ height: `${failH}px` }} title={`${dd.day}: ${dd.failed || 0}`} />
                     <div className="w-full bg-n-teal-9" style={{ height: `${okH}px` }} title={`${dd.day}: ${dd.delivered || 0}`} />
                   </div>
-                  <span className="text-[10px] text-n-slate-10">{dd.day}</span>
+                  <span className="text-xxs text-n-slate-10">{dd.day}</span>
                 </div>
               );
             })}
@@ -166,7 +166,7 @@ export default function CampaignsView({ accountId, onSelect }) {
         </div>
       ) : (
         <Table>
-          <THead><TR className="hover:bg-transparent">
+          <THead><TR>
             <TH>{t('colName')}</TH><TH>{t('colStatus')}</TH><TH>{t('colDate')}</TH>
             <TH align="end">{t('colSent')}</TH><TH align="end">{t('colDelivered')}</TH>
             <TH align="end">{t('colRead')}</TH><TH align="end">{t('colReadRate')}</TH>

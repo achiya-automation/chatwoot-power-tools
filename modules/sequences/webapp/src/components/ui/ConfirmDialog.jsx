@@ -45,15 +45,16 @@ export default function ConfirmDialog({
   const toneCfg = TONES[tone] || TONES.warning;
   const Icon = IconOverride || toneCfg.Icon;
 
+  // פריסת אלרט-Dialog נייטיבית: שני כפתורים מתוחים לכל הרוחב, ביטול=faded/slate
   const footer = (
-    <>
-      <Button variant="ghost" color="slate" onClick={onClose} disabled={loading}>
+    <div className="flex w-full items-center justify-between gap-3">
+      <Button variant="faded" color="slate" className="w-full" onClick={onClose} disabled={loading}>
         {_cancel}
       </Button>
-      <Button variant="solid" color={toneCfg.color} onClick={onConfirm} loading={loading}>
+      <Button variant="solid" color={toneCfg.color} className="w-full" onClick={onConfirm} loading={loading}>
         {_confirm}
       </Button>
-    </>
+    </div>
   );
 
   return (
@@ -66,7 +67,7 @@ export default function ConfirmDialog({
           <Icon size={22} strokeWidth={2} />
         </span>
         <div className="min-w-0 grow pt-0.5">
-          {title ? <h3 className="text-base font-semibold text-n-slate-12">{title}</h3> : null}
+          {title ? <h3 className="text-base font-medium leading-6 text-n-slate-12 m-0">{title}</h3> : null}
           {description ? (
             <p className="mt-1 text-sm leading-relaxed text-n-slate-11">{description}</p>
           ) : null}

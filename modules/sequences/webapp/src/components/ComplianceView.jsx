@@ -13,8 +13,7 @@ import {
   Save,
   Tag,
   Activity,
-  Smartphone,
-} from 'lucide-react';
+  Smartphone, Loader2 } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
 import Input from './ui/Input.jsx';
@@ -104,13 +103,15 @@ const M = {
     al_quality_yellow: 'דירוג האיכות של המספר ירד ל-YELLOW. בדקו את שיעור הקריאה ואת איכות הרשימה.',
     al_template_paused: 'התבנית "{template}" מושהית ע"י מטא. רצפים שמשתמשים בה ממתינים ויימשכו כשתחזור.',
     al_template_degrading: 'התבנית "{template}" מתחילה להישרף (מעל {warnAt} כישלוני מסירה, הבלם ב-{limit}). כדאי ליצור לה עותק שריפה.',
-    al_template_burned: 'התבנית "{template}" הגיעה ל-{limit} כישלוני מסירה והשליחה בה נעצרה. צריך ליצור תאומה ולהחליף את השלב — הרצף תקוע כאן.',
+    al_template_degrading_copy: 'התבנית "{template}" ממשיכה לצבור כישלוני מסירה (מעל {warnAt}) למרות שכבר יש לה עותק שריפה — הנקייה עצמה נשרפת. עותק נוסף לא יעזור; בדקו את איכות הרשימה והמספר.',
+    al_template_burned: 'התבנית "{template}" הגיעה ל-{limit} כישלוני מסירה בחלון {window} ימים והשליחה בה נעצרה לנמענות בסיכון (נקיות ממשיכות). היא תשתחרר לבד עם התפנות החלון — אבל תבנית נקייה לא אמורה להישרף: בדקו דליפת חסומות וקצב כניסה לשלב.',
+    al_template_burned_copy: 'עותק השריפה "{template}" ספג את מכסת הכישלונות ({limit} בחלון {window} ימים) ונח — זה תפקידו. הנמענות הרוויות ימתינו וישוחררו לבד כשהחלון הנע יתפנה; נקיות ממשיכות כרגיל. אין צורך ליצור תבנית.',
     al_unknown_meta_code: 'מטא החזירה קוד שאיננו מכירים ({code}): {title}. הליד לא נמחק — הוא מתקרר וינסה שוב.',
     al_resumed: 'השליחה חודשה: {reason}',
 
     // סיבות עצירה — משמשות גם בהתראת halted וגם בכרטיס בריאות המספר.
     hz_quality_red: 'דירוג האיכות של המספר ירד ל-RED. המשך שליחה עלול להוביל להשעיית המספר.',
-    hz_delivery_floor: 'שיעור ההגעה צנח ל-{rate}% ({ok} מתוך {total} היום, תבניות נקיות בלבד). בדקו את המספר, המדיה והתבניות, ואז שחררו ידנית.',
+    hz_delivery_floor: 'שיעור ההגעה צנח ל-{rate}% ({ok} מתוך {total} היום, נמענות מוכרות על תבניות נקיות). בדקו את המספר, המדיה והתבניות — השליחה תשתחרר לבד כשהשיעור יתאושש.',
     hz_meta_policy: 'מטא החזירה קוד {code}: {title}',
     haltedPrefix: 'השליחה נעצרה אוטומטית: ',
 
@@ -257,12 +258,14 @@ const M = {
     al_quality_yellow: "The number's quality rating dropped to YELLOW. Check your read rate and list quality.",
     al_template_paused: 'Template "{template}" is paused by Meta. Sequences using it are waiting and will resume when it returns.',
     al_template_degrading: 'Template "{template}" is starting to burn ({warnAt}+ delivery failures, cut-off at {limit}). Consider creating a burn copy for it.',
-    al_template_burned: 'Template "{template}" reached {limit} delivery failures and sending on it stopped. Create a twin and swap the step — the sequence is stuck here.',
+    al_template_degrading_copy: 'Template "{template}" keeps accumulating delivery failures ({warnAt}+) even though it already has a burn copy — the clean template itself is burning. Another copy will not help; check the list quality and the number.',
+    al_template_burned: 'Template "{template}" reached {limit} delivery failures within {window} days and sending on it stopped for at-risk recipients (clean ones continue). It will release on its own as the window clears — but a clean template should not burn: check for blocked-lead leaks and the step entry rate.',
+    al_template_burned_copy: 'Burn copy "{template}" absorbed its failure quota ({limit} within {window} days) and is resting — that is its job. Saturated recipients on the step will wait and release on their own as the rolling window clears; clean recipients continue as usual. No new template is needed.',
     al_unknown_meta_code: 'Meta returned a code we do not recognise ({code}): {title}. The lead was not dropped — it will cool off and retry.',
     al_resumed: 'Sending resumed: {reason}',
 
     hz_quality_red: "The number's quality rating dropped to RED. Continuing to send risks having the number disabled.",
-    hz_delivery_floor: 'Delivery dropped to {rate}% ({ok} of {total} today, clean templates only). Check the number, the media and the templates, then resume manually.',
+    hz_delivery_floor: 'Delivery dropped to {rate}% ({ok} of {total} today, known recipients on clean templates). Check the number, the media and the templates — sending will resume on its own once the rate recovers.',
     hz_meta_policy: 'Meta returned code {code}: {title}',
     haltedPrefix: 'Sending halted automatically: ',
 
@@ -890,7 +893,7 @@ export default function ComplianceView({ accountId }) {
         <div className="mb-5">
           <Table>
             <THead>
-              <TR className="hover:bg-transparent">
+              <TR>
                 <TH>{t('colTemplate')}</TH>
                 <TH>{t('colLang')}</TH>
                 <TH>{t('colCategory')}</TH>
@@ -937,7 +940,7 @@ export default function ComplianceView({ accountId }) {
       ) : (
         <Table>
           <THead>
-            <TR className="hover:bg-transparent">
+            <TR>
               <TH>{t('colContact')}</TH>
               <TH>{t('colPhone')}</TH>
               <TH>{t('colReason')}</TH>
@@ -1115,7 +1118,12 @@ function ConsentByLabelModal({ open, onClose, accountId, onDone }) {
               placeholder={t('selectLabel')}
               ariaLabel={t('selectLabelAria')}
             />
-            {loadingLabels ? <p className="mt-1 text-xs text-n-slate-11">{t('loadingLabels')}</p> : null}
+            {loadingLabels ? (
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-n-slate-11">
+                <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                {t('loadingLabels')}
+              </p>
+            ) : null}
           </div>
 
           <div>

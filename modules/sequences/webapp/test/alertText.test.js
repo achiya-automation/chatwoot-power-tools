@@ -6,6 +6,8 @@ import { alertText, haltText } from '../src/lib/alertText.js';
 const DICT = {
   al_template_paused: 'Template "{template}" is paused by Meta.',
   al_template_burned: 'Template "{template}" hit {limit} failures.',
+  al_template_burned_copy: 'Burn copy "{template}" is resting ({limit} in {window} days).',
+  al_template_degrading: 'Template "{template}" is degrading — create a burn copy.',
   hz_quality_red: 'Quality dropped to RED.',
   hz_delivery_floor: 'Delivery dropped to {rate}% ({ok} of {total}).',
   haltedPrefix: 'Sending halted automatically: ',
@@ -33,6 +35,26 @@ test('alertText: template-scoped code strips the :name suffix', () => {
     message: 'raw',
   });
   assert.equal(out, 'Template "promo_08" hit 40 failures.');
+});
+
+test('alertText: burn copy routes to the _copy variant, not the generic burned text', () => {
+  // עותק שריפה שנח הוא מצב תקין — הנוסח הגנרי היה שולח את הנציג ליצור תבנית לחינם.
+  const out = alertText(t, {
+    code: 'template_burned:promo_08_burn',
+    params: { template: 'promo_08_burn', limit: 40, window: 7, burnCopy: true },
+    message: 'raw',
+  });
+  assert.equal(out, 'Burn copy "promo_08_burn" is resting (40 in 7 days).');
+});
+
+test('alertText: untranslated variant falls back to the raw message, never to the base key', () => {
+  // הבסיס של degrading אומר "צרו עותק" — בדיוק העצה הלא-נכונה לתבנית שכבר יש לה עותק.
+  const out = alertText(t, {
+    code: 'template_degrading:promo_08',
+    params: { template: 'promo_08', warnAt: 24, limit: 40, hasBurnCopy: true },
+    message: 'הודעה גולמית נכונה',
+  });
+  assert.equal(out, 'הודעה גולמית נכונה');
 });
 
 test('alertText: unknown code falls back to the raw message', () => {

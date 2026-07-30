@@ -37,8 +37,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SEQ="$REPO_ROOT/modules/sequences"
-PATCH_SRC="$SEQ/deploy/chatwoot-initializers/whatsapp_campaign_conversations.rb"
-PATCH_DEST="/opt/chatwoot/custom-initializers/whatsapp_campaign_conversations.rb"
+# כל קובצי ה-.rb בתיקייה נפרסים — initializer חדש בריפו מצטרף לפריסה מעצמו.
+PATCH_DIR="$SEQ/deploy/chatwoot-initializers"
+PATCH_DEST_DIR="/opt/chatwoot/custom-initializers"
 SERVERS=(chatwoot chatwoot_admon)
 
 CHECK_ONLY=0
@@ -115,26 +116,29 @@ md5_stdin() { md5 -q 2>/dev/null || md5sum | awk '{print $1}'; }
 check_drift() {
   local server="$1" layout="$2" blocking=0 behind=0
   local remote_src; remote_src="$(remote_engine_src "$layout")"
-  local rel_patch="modules/sequences/deploy/chatwoot-initializers/whatsapp_campaign_conversations.rb"
-
-  local want have
-  want="$(md5_of "$PATCH_SRC")"
-  have="$(remote_md5 "$server" "$PATCH_DEST")"
-  if [[ -z "$have" ]]; then
-    warn "Rails patch missing on $server — will be installed"
-    behind=1
-  elif [[ "$want" != "$have" ]]; then
-    if known_in_history "$rel_patch" "$have"; then
-      warn "Rails patch on $server is an older committed version — will be updated"
-      behind=1
-    else
-      warn "Rails patch on $server matches NO commit — edited in place, and this is the only copy"
-      warn "  review before overwriting:  ssh $server 'sudo cat $PATCH_DEST' | diff - $PATCH_SRC"
-      blocking=1
+  local want have patch_ok=1
+  for patch_src in "$PATCH_DIR"/*.rb; do
+    local base rel_patch dest
+    base="$(basename "$patch_src")"
+    rel_patch="modules/sequences/deploy/chatwoot-initializers/$base"
+    dest="$PATCH_DEST_DIR/$base"
+    want="$(md5_of "$patch_src")"
+    have="$(remote_md5 "$server" "$dest")"
+    if [[ -z "$have" ]]; then
+      warn "Rails patch $base missing on $server — will be installed"
+      behind=1; patch_ok=0
+    elif [[ "$want" != "$have" ]]; then
+      if known_in_history "$rel_patch" "$have"; then
+        warn "Rails patch $base on $server is an older committed version — will be updated"
+        behind=1; patch_ok=0
+      else
+        warn "Rails patch $base on $server matches NO commit — edited in place, and this is the only copy"
+        warn "  review before overwriting:  ssh $server 'sudo cat $dest' | diff - $patch_src"
+        blocking=1; patch_ok=0
+      fi
     fi
-  else
-    ok "Rails patch matches git"
-  fi
+  done
+  [[ $patch_ok -eq 1 ]] && ok "Rails patches match git"
 
   for f in campaigns.js campaignCsv.js; do
     want="$(md5_of "$SEQ/engine/src/$f")"
@@ -186,13 +190,18 @@ deploy_engine() {
 
 deploy_patch() {
   local server="$1"
-  scp -q "$PATCH_SRC" "$server:/tmp/cwpt-patch.rb"
-  # Syntax-check inside the real Rails image before it can break boot.
-  ssh "$server" "docker cp /tmp/cwpt-patch.rb chatwoot-rails-1:/tmp/c.rb >/dev/null && docker exec chatwoot-rails-1 ruby -c /tmp/c.rb >/dev/null" \
-    || die "Ruby syntax check failed on $server — nothing installed"
-  ssh "$server" "sudo cp -n $PATCH_DEST ${PATCH_DEST}.bak-\$(date +%Y%m%d%H%M) 2>/dev/null; \
-    sudo install -o root -g root -m 644 /tmp/cwpt-patch.rb $PATCH_DEST && rm -f /tmp/cwpt-patch.rb"
-  ok "Rails initializer installed"
+  local base dest
+  for patch_src in "$PATCH_DIR"/*.rb; do
+    base="$(basename "$patch_src")"
+    dest="$PATCH_DEST_DIR/$base"
+    scp -q "$patch_src" "$server:/tmp/cwpt-patch.rb"
+    # Syntax-check inside the real Rails image before it can break boot.
+    ssh "$server" "docker cp /tmp/cwpt-patch.rb chatwoot-rails-1:/tmp/c.rb >/dev/null && docker exec chatwoot-rails-1 ruby -c /tmp/c.rb >/dev/null" \
+      || die "Ruby syntax check failed on $server ($base) — nothing installed"
+    ssh "$server" "sudo cp -n $dest ${dest}.bak-\$(date +%Y%m%d%H%M) 2>/dev/null; \
+      sudo install -o root -g root -m 644 /tmp/cwpt-patch.rb $dest && rm -f /tmp/cwpt-patch.rb"
+  done
+  ok "Rails initializers installed"
 }
 
 rebuild_engine() {

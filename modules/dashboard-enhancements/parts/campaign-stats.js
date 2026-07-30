@@ -124,7 +124,7 @@
 
   function metric(value, label, colorClass) {
     return '<span class="flex items-baseline gap-1.5 text-sm">' +
-             '<span class="font-semibold ' + colorClass + '">' + value + '</span>' +
+             '<span class="font-medium ' + colorClass + '">' + value + '</span>' +
              '<span class="text-n-slate-11">' + label + '</span>' +
            '</span>';
   }
@@ -162,8 +162,8 @@
       bar.__sig = sig;
       bar.innerHTML = statsHtml(c) +
         '<button type="button" data-cwpt-report="' + c.id + '" ' +
-        'class="ms-auto inline-flex items-center gap-1.5 text-sm text-n-slate-11 hover:text-n-slate-12" ' +
-        'style="cursor:pointer">' + REPORT_ICON + '<span>' + t('report') + '</span></button>';
+        'class="ms-auto inline-flex items-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline outline-transparent p-0 text-sm font-medium underline-offset-2 text-n-slate-11 hover:enabled:text-n-slate-12 hover:enabled:underline focus-visible:text-n-slate-12" ' +
+        'style="cursor:pointer;background:none">' + REPORT_ICON + '<span>' + t('report') + '</span></button>';
     }
   }
 
@@ -181,10 +181,13 @@
       b = document.createElement('button');
       b.id = 'cwpt-overview-btn';
       b.type = 'button';
-      b.className = 'inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm font-medium text-n-slate-11 hover:text-n-slate-12 hover:bg-n-alpha-2';
-      b.style.cssText = 'margin-inline-end:8px;cursor:pointer;';
+      // Button.vue: base + sizes.sm + fontSize.sm + colors.slate.ghost + clickAnimation.sm
+      b.className = 'inline-flex items-center justify-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline disabled:opacity-50 h-8 px-3 text-sm text-n-slate-12 hover:enabled:bg-n-alpha-2 focus-visible:bg-n-alpha-2 outline-transparent active:enabled:scale-[0.97]';
+      b.style.cursor = 'pointer';
       b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); showReport(null); });
-      btnWrap.insertBefore(b, btnWrap.firstChild); // sits inline, just before "+ New Campaign"
+      // אח בשורת ה-header (gap-2 נותן את הריווח) — לא בתוך עטיפת כפתור הקמפיין,
+      // שה-group-hover שלה הדליק את "+ קמפיין חדש" בכל ריחוף עלינו
+      headerRow.insertBefore(b, btnWrap);
     }
     // ⚠️ התווית נכתבת מחדש כשהשפה משתנה (כמו ב-renderCards/renderKpiBar, שה-sig שלהם כולל
     // locale()). Chatwoot קובע #app[dir]="rtl" רק אחרי טעינת החשבון — כפתור שנוצר לפני כן עם
@@ -240,13 +243,15 @@
         cls: !statsTier.unlimited && statsTier.remaining === 0 ? 'text-n-ruby-11' : 'text-n-teal-11',
       });
     }
-    bar.className = 'flex flex-wrap items-center rounded-xl bg-n-alpha-1 px-2 py-1.5 ring-1 ring-n-weak mb-4';
+    bar.className = 'flex flex-wrap items-center rounded-xl bg-n-solid-2 outline-1 outline outline-n-container -outline-offset-1 px-2 py-1.5 mb-4';
     bar.setAttribute('aria-label', t('overview'));
     bar.innerHTML = KPIS.map(function (k, i) {
-      var separator = i ? 'border-inline-start:1px solid rgb(var(--slate-6)/0.55);' : '';
-      return '<div class="flex items-center justify-center gap-2 px-3 py-1.5" style="flex:1 1 108px;min-width:0;' + separator + '"' + (k.title ? ' title="' + k.title + '"' : '') + '>' +
-               '<span class="text-sm font-semibold leading-none ' + k.cls + '">' + k.value + '</span>' +
-               '<span class="text-xs text-n-slate-11" style="white-space:nowrap">' + k.label + '</span>' +
+      // מפריד במחלקות טוקן (border-s border-n-weak) — לא ב-var ידני; flex-basis נשאר inline
+      // (אין לזה יוטיליטי רספונסיבי מובטח ב-CSS המקומפל — מתועד)
+      var separator = i ? ' border-s border-n-weak' : '';
+      return '<div class="flex items-center justify-center gap-2 px-3 py-1.5 min-w-0' + separator + '" style="flex:1 1 108px"' + (k.title ? ' title="' + k.title + '"' : '') + '>' +
+               '<span class="text-sm font-medium leading-none ' + k.cls + '">' + k.value + '</span>' +
+               '<span class="text-xs text-n-slate-11 whitespace-nowrap">' + k.label + '</span>' +
              '</div>';
     }).join('');
   }
@@ -262,7 +267,7 @@
     return best || document.querySelector('div.overflow-auto.bg-n-surface-1') || document.body;
   }
 
-  var holder = null, frame = null, spinner = null, closeBtn = null, shown = false, loaded = false, loadedSolo = null;
+  var holder = null, frame = null, spinner = null, closeBtn = null, shown = false, loaded = false, loadedSolo = null, loadedAcc = null;
   function buildOverlay() {
     holder = document.createElement('div');
     holder.id = 'cwpt-report-overlay';
@@ -271,7 +276,8 @@
     // variable that doesn't exist in Chatwoot's compiled CSS → hard-coded WHITE flash in
     // dark mode while the iframe loaded.)
     holder.className = 'bg-n-background';
-    holder.style.cssText = 'position:fixed;z-index:40;display:none;';
+    // z-30 — מתחת ל-aside (z-40): תפריטי הסיידבר נצבעים מעל ה-overlay (ראו sequences-nav)
+    holder.style.cssText = 'position:fixed;z-index:30;display:none;';
     frame = document.createElement('iframe');
     frame.title = t('overview');
     frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
@@ -282,15 +288,15 @@
     spinner.className = 'flex items-center justify-center text-n-brand';
     spinner.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
     spinner.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
     holder.appendChild(spinner);
     frame.addEventListener('load', function () { spinner.style.display = 'none'; });
     // close control (×) — returns to the native campaigns list. z above the iframe.
     var close = document.createElement('button');
     close.type = 'button';
     close.setAttribute('aria-label', t('close'));
-    close.className = 'inline-flex items-center justify-center rounded-lg bg-n-alpha-2 text-n-slate-11 hover:text-n-slate-12';
-    close.style.cssText = 'position:absolute;top:10px;inset-inline-end:14px;width:28px;height:28px;z-index:2;cursor:pointer;';
+    close.className = 'inline-flex items-center justify-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline outline-transparent h-8 w-8 p-0 text-n-slate-12 hover:enabled:bg-n-alpha-2 focus-visible:bg-n-alpha-2 active:enabled:scale-[0.97]';
+    close.style.cssText = 'position:absolute;top:10px;inset-inline-end:14px;z-index:2;cursor:pointer;background:none;';
     close.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
     close.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); hideReport(); });
     holder.appendChild(close);
@@ -338,10 +344,10 @@
     var wantSolo = !!cid;
     // (Re)load only when switching between the two modes (solo detail vs. overview list); within a
     // mode we just postMessage, so switching campaigns doesn't flash the iframe.
-    if (!loaded || loadedSolo !== wantSolo) {
+    if (!loaded || loadedSolo !== wantSolo || loadedAcc !== accountId()) {
       if (spinner) spinner.style.display = '';
       frame.setAttribute('src', reportSrc(cid));
-      loaded = true; loadedSolo = wantSolo;
+      loaded = true; loadedSolo = wantSolo; loadedAcc = accountId();
     } else if (cid) {
       try { frame.contentWindow.postMessage({ type: 'drip-open-campaign', id: parseInt(cid, 10) }, window.location.origin); } catch (e) {}
     } else {
@@ -352,7 +358,18 @@
     positionOverlay();
     var want = cid ? String(cid) : 'all';
     if (crepFromUrl() !== want) {
-      try { history.pushState(history.state, '', urlWithCrep(want)); } catch (e) {}
+      try {
+        // מיזוג ה-state של Vue router + current/position עקביים (ראו sequences-nav)
+        var st = history.state || {};
+        var entry = {};
+        for (var k in st) entry[k] = st[k];
+        entry.current = urlWithCrep(want);
+        entry.back = st.current || entry.back || null;
+        entry.forward = null;
+        if (typeof st.position === 'number') entry.position = st.position + 1;
+        entry.replaced = false;
+        history.pushState(entry, '', urlWithCrep(want));
+      } catch (e) {}
     }
     try { closeBtn.focus(); } catch (e) {} // keyboard users land on the close control
   }
@@ -361,7 +378,13 @@
     shown = false;
     if (holder) holder.style.display = 'none';
     if (crepFromUrl()) {
-      try { history.replaceState(history.state, '', urlWithoutCrep()); } catch (e) {}
+      try {
+        var st2 = history.state || {};
+        var entry2 = {};
+        for (var k2 in st2) entry2[k2] = st2[k2];
+        entry2.current = urlWithoutCrep();
+        history.replaceState(entry2, '', urlWithoutCrep());
+      } catch (e) {}
     }
   }
   window.__cwptReportHide = hideReport; // let sequences-nav close this overlay before opening its panel

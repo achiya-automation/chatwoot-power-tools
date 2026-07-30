@@ -97,7 +97,7 @@ const M = {
     burnLabel: 'תבנית לנמענות רוויות', burnBadge: 'עותק שריפה',
     burnNone: 'ללא — נמענת רוויה תמתין', burnCreate: 'צור עותק', burnCreating: 'יוצר…',
     burnHint: 'עותק זהה בתוכן. נמענת שהגיעה לתקרת מטא מקבלת אותו במקום — כדי שהכשלים ייפלו עליו ולא ישרפו את התבנית הנקייה. רוב הרשימות הנקיות לא צריכות עותק.',
-    burnCreated: 'העותק "{name}" נוצר ונשלח לאישור מטא ✓', burnFailed: 'יצירת העותק נכשלה',
+    burnCreated: 'העותק "{name}" נוצר ונשלח לאישור מטא', burnFailed: 'יצירת העותק נכשלה',
     burnPending: 'ממתין לאישור', burnStatusClean: 'דרך הנקייה', burnStatusBurn: 'דרך העותק',
     waitDays: 'המתנה (ימים)', waitHours: 'המתנה (שעות)',
     whenToSend: 'מתי לשלוח את ההודעה',
@@ -122,7 +122,7 @@ const M = {
     compressFailed: 'דחיסת הסרטון נכשלה', uploadFailed: 'העלאה נכשלה', compressCancelled: 'הדחיסה בוטלה',
     stageProbe: 'בודק את הסרטון…', stageLoad: 'טוען מנוע דחיסה (פעם ראשונה)…', stageEncode: 'מכווץ סרטון…', stageRetry: 'משפר עוד קצת…', stageDefault: 'מעבד…',
     mediaHeader: '{label} בכותרת (header)',
-    mediaUploaded: 'המדיה הועלתה — הקישור נוצר ונזכר אוטומטית ✓',
+    mediaUploaded: 'המדיה הועלתה — הקישור נוצר ונזכר אוטומטית',
     replace: 'החלפה', remove: 'הסרה',
     localProcessing: 'הכל רץ במחשב שלך — אפס עומס על השרת. אפשר להמתין כמה שניות.',
     uploadAria: 'העלאת {label}', uploading: 'מעלה…',
@@ -160,7 +160,7 @@ const M = {
     burnLabel: 'Template for saturated recipients', burnBadge: 'burn copy',
     burnNone: 'None — a saturated recipient waits', burnCreate: 'Create copy', burnCreating: 'Creating…',
     burnHint: 'An identical copy. A recipient who hit Meta’s cap gets it instead — so the failures land on it, not on the clean template. Most clean lists need no copy.',
-    burnCreated: 'Copy "{name}" created and sent to Meta for approval ✓', burnFailed: 'Failed to create the copy',
+    burnCreated: 'Copy "{name}" created and sent to Meta for approval', burnFailed: 'Failed to create the copy',
     burnPending: 'awaiting approval', burnStatusClean: 'via clean', burnStatusBurn: 'via copy',
     waitDays: 'Wait (days)', waitHours: 'Wait (hours)',
     whenToSend: 'When to send the message',
@@ -182,7 +182,7 @@ const M = {
     compressFailed: 'Video compression failed', uploadFailed: 'Upload failed', compressCancelled: 'Compression cancelled',
     stageProbe: 'Checking the video…', stageLoad: 'Loading the compression engine (first time)…', stageEncode: 'Compressing video…', stageRetry: 'Improving a bit more…', stageDefault: 'Processing…',
     mediaHeader: '{label} in the header',
-    mediaUploaded: 'Media uploaded — the link was created and remembered automatically ✓',
+    mediaUploaded: 'Media uploaded — the link was created and remembered automatically',
     replace: 'Replace', remove: 'Remove',
     localProcessing: 'Everything runs on your computer — zero server load. It may take a few seconds.',
     uploadAria: 'Upload {label}', uploading: 'Uploading…',
@@ -757,7 +757,7 @@ function StepCard({
     try {
       const res = await createBurnTemplate(step.template, accountId);
       onChange({ templateBurn: res.name });
-      toast({ message: t('burnCreated', { name: res.name }) });
+      toast({ message: t('burnCreated', { name: res.name }), variant: 'success' });
     } catch (e) {
       setBurnErr(e.message || t('burnFailed'));
     } finally {
@@ -889,7 +889,7 @@ function StepCard({
                     <p className="mb-2 flex flex-wrap items-center gap-1.5 text-sm font-medium text-n-slate-12">
                       <Flame size={14} className="text-n-amber-11" aria-hidden="true" />
                       {t('burnLabel')}
-                      <span className="rounded bg-n-amber-4 px-1.5 py-0.5 text-[10px] font-medium text-n-amber-11">
+                      <span className="rounded bg-n-amber-4 px-1.5 py-0.5 text-xxs font-medium text-n-amber-11">
                         {t('burnBadge')}
                       </span>
                     </p>

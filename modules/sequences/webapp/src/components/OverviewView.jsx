@@ -409,7 +409,7 @@ function DeliveryCard({ stats }) {
               <LegendRow cls="text-n-ruby-9" label={tr('mBlocked')} value={String(cleanBlocked)} />
               {(burnArrived + burnBlocked) > 0 ? (
                 <LegendRow cls="text-n-teal-9" label={tr('burnPool')} hint={tr('burnPoolHint')}
-                           value={`${burnArrived} 🎉`} />
+                           value={`${burnArrived}`} />
               ) : null}
               {sendError > 0 ? (
                 <LegendRow cls="text-n-amber-9" label={tr('sendError')} hint={tr('sendErrorHint')}
@@ -541,7 +541,7 @@ function Donut({ slices, size = 132, thickness = 17, centerValue, centerLabel })
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className="text-2xl font-semibold leading-none text-n-slate-12">{centerValue}</span>
-        <span className="mt-1 text-[10px] text-n-slate-10">{centerLabel}</span>
+        <span className="mt-1 text-xxs text-n-slate-10">{centerLabel}</span>
       </div>
     </div>
   );
@@ -772,7 +772,7 @@ function TrendChart({ trend, tr }) {
           return (
             <div key={d.day} className="flex flex-1 flex-col items-center gap-1.5" title={title}>
               {/* נפח היום — המספר שהעין מאבדת בקנה מידה מרוכך */}
-              <span className="text-[10px] font-medium tabular-nums text-n-slate-11">
+              <span className="text-xxs font-medium tabular-nums text-n-slate-11">
                 {n > 0 ? n : ''}
               </span>
               <div className="flex w-full max-w-[40px] flex-col justify-end gap-px"
@@ -790,7 +790,7 @@ function TrendChart({ trend, tr }) {
                 ) : null}
                 {n === 0 ? <div className="w-full rounded bg-n-alpha-2" style={{ height: '3px' }} /> : null}
               </div>
-              <span className="text-[11px] tabular-nums text-n-slate-10">{d.day}</span>
+              <span className="text-xs tabular-nums text-n-slate-10">{d.day}</span>
             </div>
           );
         })}

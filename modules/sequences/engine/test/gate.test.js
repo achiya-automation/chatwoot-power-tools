@@ -143,6 +143,86 @@ test('GATE: the per-contact daily cap blocks a second marketing template within 
   assert.equal(e.status, 'active', 'the lead waits for tomorrow — it is not failed');
 });
 
+test('GATE: 131049 שנכשל עדיין צורך את מכסת 24 השעות — אין retry מזיק', async () => {
+  await seed({ consent: true });
+  await query(
+    `INSERT INTO drip.sent_messages
+       (account_id, conversation_id, template_name, category, in_session, contact_id,
+        delivery_status, error_code, sent_at)
+     VALUES ($1, 501, 'tpl', 'MARKETING', false, 1, 'failed', '131049', now() - interval '2 minutes')`,
+    [ACCT]
+  );
+
+  const c = spyClient();
+  await run(c);
+  assert.equal(c.sent.length, 0, 'failed is an attempt, not a free retry token');
+  const e = await enrollment();
+  assert.equal(e.status, 'active');
+  assert.ok(new Date(e.next_send_at) > new Date());
+});
+
+test('GATE: timeout אחרי קריאת השליחה משאיר reservation ומונע ניסיון עיוור נוסף', async () => {
+  await seed({ consent: true });
+  const uncertainClient = spyClient();
+  uncertainClient.sendTemplate = async () => {
+    throw new Error('timeout after request');
+  };
+  await run(uncertainClient);
+
+  const reservation = (await query(
+    `SELECT delivery_status, message_id
+       FROM drip.sent_messages
+      WHERE account_id=$1 AND contact_id=1`,
+    [ACCT]
+  ))[0];
+  assert.equal(reservation.delivery_status, 'pending');
+  assert.equal(reservation.message_id, null);
+
+  await query(
+    `UPDATE drip.enrollments
+        SET next_send_at=now()-interval '1 minute'
+      WHERE account_id=$1 AND contact_id=1`,
+    [ACCT]
+  );
+  const retry = spyClient();
+  await run(retry);
+  assert.equal(retry.sent.length, 0, 'an uncertain side effect must not be retried inside 24h');
+});
+
+test('GATE: failed + pending reserve template headroom inside the current tick', async () => {
+  await seed({ consent: true });
+  await query(
+    `INSERT INTO drip.compliance
+       (account_id, require_consent, max_marketing_per_day, max_cap_failures, max_template_failures)
+     VALUES ($1, true, 999, 5, 2)
+     ON CONFLICT (account_id) DO UPDATE SET
+       max_marketing_per_day=999, max_cap_failures=5, max_template_failures=2`,
+    [ACCT]
+  );
+  await query(
+    `UPDATE drip.contact_state
+        SET cap_failures=1, last_cap_failure_at=now()-interval '30 days'
+      WHERE account_id=$1 AND contact_id=1`,
+    [ACCT]
+  );
+  await query(
+    `INSERT INTO drip.sent_messages
+       (account_id, conversation_id, template_name, category, in_session, contact_id,
+        delivery_status, error_code, sent_at)
+     VALUES
+       ($1, 598, 'tpl', 'MARKETING', false, 98, 'failed', '131049', now()-interval '1 day'),
+       ($1, 599, 'tpl', 'MARKETING', false, 99, 'pending', NULL, now()-interval '1 minute')`,
+    [ACCT]
+  );
+
+  const c = spyClient();
+  await run(c);
+  assert.equal(c.sent.length, 0, '1 failed + 1 pending fills a risky template budget of 2');
+  const e = await enrollment();
+  assert.equal(e.status, 'active');
+  assert.ok(new Date(e.next_send_at) > new Date());
+});
+
 test('GATE: a suppressed contact is dropped and the sequence attribute is cleared', async () => {
   await seed({ consent: true });
   await suppressContact(pool, ACCT, 1, 'keyword', 'הסר', 'all');
