@@ -355,11 +355,143 @@ test('canSend: תבנית מעל התקציב נעצרת לנמענת מסוכנ
   assert.deepEqual(canSend({ ...base, template: null }), { ok: true });
 });
 
+test('canSend: המדרגה הקשיחה — תבנית על סף הקריסה נחה לכולם, גם לנמענת נקייה', () => {
+  // העקומה הנמדדת קורסת ב-50+ (⇒18% לכולם). הסף הרגיל (40) משאיר נקיות לשלוח —
+  // נכון בדרך כלל, אבל חסימות-ראשונות ממשיכות לצבור, ותבנית שחצתה את נקודת
+  // הקריסה נחסמת גם אצל הלקוחות הטובים. המדרגה הקשיחה עוצרת ממש לפני.
+  const nearDeath = { ...base.template, failures: 48 };
+
+  // נמענת נקייה לגמרי — ובכל זאת נעצרת: מגינים על התבנית, לא על השליחה הבודדת.
+  const v = canSend({ ...base, template: nearDeath });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'template_burned');
+  assert.equal(v.action, 'defer');           // הליד מחכה שהחלון הנע יתפנה — לא נזרק
+
+  // מתחת למדרגה הקשיחה — הנקייה עדיין עוברת (ההתנהגות הקיימת של הסף הרגיל).
+  assert.deepEqual(canSend({ ...base, template: { ...base.template, failures: 47 } }), { ok: true });
+
+  // חלון שירות פתוח גובר גם על המדרגה הקשיחה: נמסר ב-100% ומרפא את התבנית.
+  assert.equal(canSend({ ...base, template: nearDeath, inSession: true }).ok, true);
+
+  // הסף הקשיח מכוונן פר-חשבון כמו כל הגדרת ציות.
+  const s = { ...DEFAULT_SETTINGS, max_template_failures_hard: 60 };
+  assert.deepEqual(canSend({ ...base, settings: s, template: nearDeath }), { ok: true });
+});
+
 test('canSend: cap_failures מעל הסף נדחה, לא מוסר', () => {
   const v = canSend({ ...base, contact: { ...base.contact, cap_failures: 2 } });
   assert.equal(v.ok, false);
   assert.equal(v.reason, 'saturated');
   assert.equal(v.action, 'defer');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-07-29 — שחרור-מנוחה לנמענת רוויה (נמדד: 45 יום, n=2,398)
+// מרווח <4 ימים אחרי 131049 נמסר ב-8-15% · 4-7 ימים — 41% · 7+ ימים — 61%.
+// התקרה של מטא "מסתגלת אוטומטית" — מנוחה ארוכה משחררת אותה, וחנייה לצמיתות
+// זורקת לידים שחזרו להיות ברי-השגה.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
+
+test('canSend: רוויה עם חסימה טרייה נשארת חנויה — המנוחה טרם הבשילה', () => {
+  const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100,
+                                          suppressed_at: daysAgo(2),
+                                          suppressed_reason: 'saturated',
+                                          cap_failures: 5,
+                                          last_cap_failure_at: daysAgo(2) } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'saturated');
+  assert.equal(v.action, 'defer');
+});
+
+test('canSend: רוויה שנחה מעבר לסף משתחררת לניסיון בודד', () => {
+  // contact_id=100 ⇒ פיזור 0 ⇒ הסף הוא saturation_release_days בדיוק (ברירת מחדל 21).
+  const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100,
+                                          suppressed_at: daysAgo(40),
+                                          suppressed_reason: 'saturated',
+                                          cap_failures: 5,
+                                          last_cap_failure_at: daysAgo(40) } });
+  assert.equal(v.ok, true);
+});
+
+test('canSend: הפיזור לפי contact_id דוחה קוהורט שלם מלהשתחרר באותו יום', () => {
+  // אותה מנוחה (25 ימים): id שהפיזור שלו 0 משוחרר, id שהפיזור שלו 9 עדיין ממתין.
+  const rested = { ...base.contact, suppressed_at: daysAgo(25), suppressed_reason: 'saturated',
+                   cap_failures: 5, last_cap_failure_at: daysAgo(25) };
+  assert.equal(canSend({ ...base, contact: { ...rested, contact_id: 100 } }).ok, true);   // 25 ≥ 21+0
+  assert.equal(canSend({ ...base, contact: { ...rested, contact_id: 109 } }).ok, false);  // 25 < 21+9
+});
+
+test('canSend: שחרור-המנוחה חל גם על הגנת העומק (cap_failures ≥ max בלי suppressed)', () => {
+  const c = { ...base.contact, contact_id: 100, cap_failures: 2 };
+  assert.equal(canSend({ ...base, contact: { ...c, last_cap_failure_at: daysAgo(1) } }).ok, false);
+  assert.equal(canSend({ ...base, contact: { ...c, last_cap_failure_at: daysAgo(40) } }).ok, true);
+});
+
+test('canSend: אין חותמת = אין ראיה למנוחה = ההתנהגות הישנה (חנייה) — fail-closed', () => {
+  const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100, cap_failures: 5,
+                                          suppressed_at: daysAgo(60), suppressed_reason: 'saturated' } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'saturated');
+});
+
+test('canSend: saturation_release_days=0 מכבה את השחרור — חנייה לצמיתות כמו קודם', () => {
+  const settings = { ...DEFAULT_SETTINGS, saturation_release_days: 0 };
+  const v = canSend({ ...base, settings,
+                      contact: { ...base.contact, contact_id: 100, cap_failures: 5,
+                                 suppressed_at: daysAgo(90), suppressed_reason: 'saturated',
+                                 last_cap_failure_at: daysAgo(90) } });
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, 'saturated');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-07-29 — שעות שקט לשיווק (נצפה חי: שליחות ב-01:00-03:00)
+// כבוי בברירת המחדל (שעון אמיתי היה שובר CI לילי); מודלק פר-חשבון במיגרציה 037.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const QUIET = { ...DEFAULT_SETTINGS, quiet_start_hour: 21, quiet_end_hour: 8 };
+const NIGHT_IL = new Date('2026-07-12T23:30:00Z');   // 02:30 בישראל (קיץ, UTC+3)
+const EVENING_IL = new Date('2026-07-12T19:00:00Z'); // 22:00 בישראל
+const NOON_IL = new Date('2026-07-12T09:00:00Z');    // 12:00 בישראל
+
+test('canSend: שיווק בשעות השקט נדחה — בלילה ובערב, ועובר בצהריים', () => {
+  for (const now of [NIGHT_IL, EVENING_IL]) {
+    const v = canSend({ ...base, settings: QUIET, now });
+    assert.equal(v.ok, false);
+    assert.equal(v.reason, 'quiet_hours');
+    assert.equal(v.action, 'defer');   // הליד נשאר במקומו ויוצא בבוקר
+  }
+  assert.deepEqual(canSend({ ...base, settings: QUIET, now: NOON_IL }), { ok: true });
+});
+
+test('canSend: חלון שירות פתוח יוצא גם בלילה — מענה לשיחה חיה הוא שירות, לא שיווק', () => {
+  const v = canSend({ ...base, settings: QUIET, now: NIGHT_IL, inSession: true });
+  assert.equal(v.ok, true);
+});
+
+test('canSend: UTILITY אינה כפופה לשעות השקט — עדכון הזמנה מגיע גם בלילה', () => {
+  assert.deepEqual(canSend({ ...base, settings: QUIET, now: NIGHT_IL, category: 'UTILITY', contact: {} }), { ok: true });
+});
+
+test('canSend: ברירת המחדל כבויה — בלי הדלקה מפורשת אין דחיית לילה', () => {
+  assert.deepEqual(canSend({ ...base, now: NIGHT_IL }), { ok: true });
+});
+
+test('canSend: פתיחה לליד טרי יוצאת גם בשעות השקט — רגע ההרשמה הוא רגע המסירה', () => {
+  // אותו נימוק כמו הפטור מעצירת חשבון: ליד שנרשם עכשיו מצפה להודעה עכשיו.
+  // שעות השקט נועדו לשלבי ההמשך, לא לרגע ההיכרות.
+  const v = canSend({ ...base, settings: QUIET, now: NIGHT_IL, isFreshOpener: true });
+  assert.equal(v.ok, true);
+});
+
+test('canSend: שחרור-מנוחה אינו עוקף opt-out — מי שביקשה להסיר לא חוזרת לעולם', () => {
+  const v = canSend({ ...base, contact: { ...base.contact, contact_id: 100,
+                                          suppressed_at: daysAgo(90), suppressed_reason: 'keyword',
+                                          last_cap_failure_at: daysAgo(90) } });
+  assert.equal(v.ok, false);
+  assert.equal(v.action, 'drop');
 });
 
 test('scanInbound: תגובה ישנה אינה מאפסת את מונה החסימות (נמדד: 13/13 נכשלו)', () => {

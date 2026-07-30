@@ -221,14 +221,32 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // 40 = אחרי שהשחיקה אמיתית, לפני הקריסה, ובקצב רוטציה של פעם בחודש בערך.
   max_template_failures: 40,
 
+  // ── מדרגת העצירה השנייה: מנוחה-לכולם לפני הקריסה ─────────────────────────────
+  // הסף הרגיל (40) עוצר את התבנית רק לנמענות מסוכנות (cap>0) — נקיות ממשיכות,
+  // כי חסימתן הייתה מקפיאה את הרצף בשביל הקהל הטוב. אבל חסימות-ראשונות של לידים
+  // (בלתי-צפויות בהגדרה — נמדד: המעורבות לא מנבאת אותן) ממשיכות לצבור כישלונות
+  // גם אחרי הסף, והעקומה למעלה קורסת ב-50+: תבנית שחצתה לשם נחסמת גם אצל
+  // הלקוחות הטובים. לכן מדרגה שנייה, ממש לפני נקודת הקריסה: התבנית נחה *לכל*
+  // הנמענות עד שהחלון הנע (BURN_WINDOW_DAYS) מתפנה. השלב מחכה כמה ימים —
+  // עדיף רצף שמתעכב על תבנית שמתה לכולם לתמיד.
+  max_template_failures_hard: 48,
+
   // ── בלם המסירה (delivery floor) ────────────────────────────────────────────
   // halt_on_red מסתמך על דירוג האיכות של מטא — שבנפחים האלה מחזיר UNKNOWN לנצח
   // ואינו נורה אף פעם. הבלם האמיתי מודד את המסירה *בפועל*: אם ההודעות על תבניות
   // נקיות מפסיקות להגיע (WABA שרוף, מדיה שבורה, פעולת מדיניות של מטא) — כל שליחה
   // נכשלת בלי שאף תבנית בודדת חוצה את הסף שלה, והחשבון נשאר "בריא" בעיני מטא בזמן
-  // שהוא הולם. checkDeliveryFloor עוצר את זה. נמדד בפרודקשן: מסירה תקינה = 91-98%.
-  min_delivery_rate:     70,   // אחוז הגעה מינימלי על מדגם תבניות נקיות
-  min_delivery_sample:   20,   // אל תשפוט מסירה על מדגם קטן מזה
+  // שהוא הולם. checkDeliveryFloor עוצר את זה.
+  //
+  // ⭐ הסף מכויל להבחין בין קריסה לרעש (נלמד מעצירת-שווא, 29/07/2026):
+  // הבייסליין הבריא לקהל נקי הוא 60-84% — לא 91-98% — כי חלק מהנמענות מגיעות
+  // רוויות מעסקים אחרים, וה-131049 הראשון של ליד בלתי-ניתן לחיזוי בהגדרה. ביום
+  // חלש על מדגם קטן 55% זה רעש בינומי רגיל (קורה כל שבוע), בעוד קריסה אמיתית
+  // (WABA מת) נראית כמו 0-20%. סף 70 עצר יום חלש; סף 45 מפריד את ההתפלגויות:
+  // כמעט בלתי-אפשרי סטטיסטית ביום תקין, ומיידי כשמשהו באמת נשבר. העצירה משתחררת
+  // אוטומטית כשהשיעור מתאושש או כשמתחיל יום חדש (ראה checkDeliveryFloor).
+  min_delivery_rate:     45,   // רצפת קריסה, לא "יום חלש" — ראה כיול למעלה
+  min_delivery_sample:   30,   // אל תשפוט מסירה על מדגם קטן מזה
 
   // ── חלון הפתיחה לליד חדש (fresh opener) ─────────────────────────────────────
   // גם כשהחשבון עצור על RED, מותר לשלוח את *הפתיחה בלבד* לליד שנרשם ממש לאחרונה.
@@ -237,6 +255,32 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // ליד שלא מקבל פתיחה בזמן = ליד אבוד. ⚠️ רק ליד שנרשם בתוך החלון הזה — לא קהל ישן
   // וקר (שהוא בדיוק מה ששרף את המספר). 0 = לכבות את ההחרגה לגמרי.
   fresh_opener_hours:    48,
+
+  // ── שחרור-מנוחה לנמענת רוויה (saturation rest release) ──────────────────────
+  // מטא: התקרה הפר-נמענת "מסתגלת אוטומטית עם הזמן" — כלומר היא משתחררת אחרי מנוחה.
+  // נמדד אצלנו (45 יום, n=2,398 שליחות שבאו אחרי 131049): ניסיון במרווח של פחות
+  // מ-4 ימים מהחסימה האחרונה נמסר ב-8-15%; 4-7 ימים — 41%; 7 ימים ומעלה — 61%.
+  // לכן נמענת שסומנה saturated אינה חנויה לנצח: אחרי המנוחה הזו מותר ניסיון בודד.
+  // כישלון נוסף מאפס את שעון המנוחה ומטפס בסולם הצינון (ראה reconcile), כך שנמענת
+  // שמטא ממשיכה לשמור עליה מקבלת ניסיון אחד ומרווח — לא הפגזה. לסף מתווסף פיזור
+  // דטרמיניסטי של 0-9 ימים לפי contact_id, כדי שקוהורט שלם שנחסם באותו שבוע לא
+  // ישתחרר באותו בוקר וישרוף את עותקי ה-burn בבת אחת. 0 = כבוי (חניה לצמיתות).
+  saturation_release_days: 21,
+
+  // ── שעות שקט לשיווק ─────────────────────────────────────────────────────────
+  // שלבים עם delay יחסי ובלי send_hour יוצאים בכל שעה — נצפו שליחות שיווק
+  // ב-01:00-03:00. זה לא עניין מסירה (לילה דווקא נמסר יפה) אלא ציות ותדמית:
+  // אף עסק לא רוצה שהודעת השיווק שלו תעיר לקוחה ב-2 בלילה. defer בלבד — הליד
+  // נשאר due ויוצא בטיק הראשון אחרי פתיחת החלון. חלון שירות פתוח פטור (מענה
+  // לשיחה חיה הוא שירות, לא שיווק).
+  //
+  // start == end ⇒ כבוי. ברירת המחדל כבויה ובמתכוון: השעה תלויה בשעון אמיתי,
+  // וברירת-מחדל דלוקה הייתה הופכת כל טסט ו-CI שרצים בלילה-ישראל לנכשלים
+  // (18 אתרי reconcileAccount עם new Date() בטסטים). ההדלקה נעשית פר-חשבון
+  // ב-drip.compliance — מיגרציה 037 מדליקה 21→8 לכל החשבונות הקיימים.
+  quiet_start_hour: 0,                // מהשעה הזו (כולל) — שקט
+  quiet_end_hour:   0,                // עד השעה הזו (לא כולל) — שקט
+  quiet_tz:         'Asia/Jerusalem',
 });
 
 /**
@@ -259,7 +303,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
  */
 export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETTINGS,
                           health = {}, template = null, sentToday = 0, inSession = false,
-                          isFreshOpener = false }) {
+                          isFreshOpener = false, now = new Date() }) {
   const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
 
   // ── חוסם הכל — פרט לחלון שירות פתוח ───────────────────────────────────────
@@ -286,6 +330,16 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
 
   // ── חוסם את איש הקשר ────────────────────────────────────────────────────
   const marketing = isMarketing(category);
+
+  // כמה זמן הנמענת נחה מאז ה-131049 האחרון שלה? השחרור דורש *ראיה* למנוחה —
+  // חותמת שקיימת וישנה מספיק. אין חותמת ⇒ אין ראיה ⇒ ההתנהגות הישנה (חנייה),
+  // fail-closed. הפיזור לפי contact_id דטרמיניסטי: אותה נמענת משתחררת תמיד
+  // באותו יום, אבל קוהורט שנחסם יחד נמרח על פני ~10 ימים.
+  const releaseDays = Number(s.saturation_release_days || 0);
+  const restedEnough = releaseDays > 0 && !!contact.last_cap_failure_at &&
+    (now.getTime() - new Date(contact.last_cap_failure_at).getTime()) / 86400000
+      >= releaseDays + (Number(contact.contact_id) || 0) % 10;
+
   if (contact.suppressed_at) {
     const scope = contact.suppressed_scope || 'marketing';
     if (scope === 'all' || marketing) {
@@ -298,7 +352,10 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
       if (!capBased) {
         return { ok: false, reason: 'suppressed', action: 'drop', detail: contact.suppressed_reason || '' };
       }
-      if (!inSession) {
+      // אחרי המנוחה המדודה התקרה של מטא כבר הסתגלה — ניסיון בודד משתחרר. הניתוב
+      // למאגר השריפה עדיין חל (cap_failures>0), כך שגם אם הניסיון ייכשל, הכישלון
+      // ייספג בעותק ה-burn ולא בתבנית הנקייה — וישעון המנוחה יתאפס ויטפס בסולם.
+      if (!inSession && !restedEnough) {
         return { ok: false, reason: 'saturated', action: 'defer', detail: contact.suppressed_reason || '' };
       }
     }
@@ -312,6 +369,22 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   // מהמכסה האישית *ומ*מגבלת ה-24h של הפורטפוליו. מטא, per-user-limits:
   // "Marketing messages sent within this window do not count towards the limit."
   if (inSession) return { ok: true, reason: 'in_session' };
+
+  // ── שעות שקט ────────────────────────────────────────────────────────────
+  // אחרי הפטור של החלון הפתוח (מענה לשיחה חיה יוצא גם בלילה) ולפני המכסות.
+  // defer — הליד נשאר במקומו ויוצא בפתיחת החלון.
+  // isFreshOpener פטור, מאותו נימוק כמו הפטור שלו מעצירת חשבון: ליד שנרשם ממש
+  // עכשיו מצפה להודעה ממש עכשיו — רגע ההרשמה הוא רגע המסירה הטוב ביותר (נמדד:
+  // 91%), ושליחות לילה כאלה נמסרות יפה (הליד עצמו ער ופעיל — הוא הרגע נרשם).
+  // שעות השקט נועדו לשלבי ההמשך שרודפים אחרי קהל ישן — לא לרגע ההיכרות.
+  const qs = Number(s.quiet_start_hour), qe = Number(s.quiet_end_hour);
+  if (Number.isFinite(qs) && Number.isFinite(qe) && qs !== qe && !isFreshOpener) {
+    const hour = Number(new Intl.DateTimeFormat('en-GB', {
+      hour: 'numeric', hour12: false, timeZone: s.quiet_tz || 'Asia/Jerusalem',
+    }).format(now));
+    const quiet = qs > qe ? (hour >= qs || hour < qe) : (hour >= qs && hour < qe);
+    if (quiet) return { ok: false, reason: 'quiet_hours', action: 'defer' };
+  }
 
   // ── מכסות שיווק ─────────────────────────────────────────────────────────
   // ההסכמה נבדקת בשתי רמות, ודי באחת מהן:
@@ -341,14 +414,23 @@ export function canSend({ category, contact = {}, phone, settings = DEFAULT_SETT
   //
   // מתחת ל-inSession בכוונה: שליחה בחלון פתוח עוקפת את התקרה, נמסרת (100%), ו*משפרת*
   // את מוניטין התבנית. חסר מידע על התבנית ⇒ שולחים (fail-open).
+  //
+  // שתי מדרגות (ראה DEFAULT_SETTINGS):
+  //   • הרגילה (40) — עוצרת רק לנמענות מסוכנות; הקהל הנקי ממשיך ומרפא.
+  //   • הקשיחה (48) — ממש לפני נקודת הקריסה הנמדדת (50+ ⇒ 18%): התבנית נחה
+  //     לכולם עד שהחלון הנע מתפנה, אחרת היא נחסמת גם אצל הלקוחות הטובים לתמיד.
+  if (template && Number(template.failures || 0) >= Number(s.max_template_failures_hard || 48)) {
+    return { ok: false, reason: 'template_burned', action: 'defer' };
+  }
   if (template && Number(template.failures || 0) >= Number(s.max_template_failures)
       && Number(contact.cap_failures || 0) > 0) {
     return { ok: false, reason: 'template_burned', action: 'defer' };
   }
 
   // הגנות עומק — הכתיבה עצמה נעשית ב-reconcileDeliveries, אבל אם מחזור אחד פספס,
-  // השער לא ישלח בכל זאת. רוויה = דחייה, לא הסרה (ראה ההערה למעלה).
-  if (Number(contact.cap_failures || 0) >= Number(s.max_cap_failures)) {
+  // השער לא ישלח בכל זאת. רוויה = דחייה, לא הסרה (ראה ההערה למעלה) — וגם כאן
+  // שחרור-המנוחה חל, מאותו נימוק בדיוק כמו בענף ה-suppressed למעלה.
+  if (Number(contact.cap_failures || 0) >= Number(s.max_cap_failures) && !restedEnough) {
     return { ok: false, reason: 'saturated', action: 'defer' };
   }
   if (Number(contact.unengaged_streak || 0) >= Number(s.max_unengaged)) {
@@ -540,32 +622,59 @@ export async function checkDeliveryFloor(pool, accountId, settings = null) {
   // (אם קיימת). חשבון חדש בלי שורה נופל ל-DEFAULT — כך הבלם מובנה אוטומטית לכולם.
   const s = { ...DEFAULT_SETTINGS, ...(settings || await loadSettings(pool, accountId)) };
 
-  // מסירה על תבניות נקיות בלבד היום. מאגר השריפה מעוצב להיכשל — לכלול אותו כאן זה
-  // בדיוק "המכנה המזוהם" שהפך רשימה תקינה לשרופה פעמיים. NOT LIKE '%burn%' מנקה.
+  // מקור האמת: delivery_status של המנוע — לא JOIN ל-public.messages. מחיקת תיבה
+  // מוחקת בקסקייד את שורות messages, וה-JOIN מפיל חסימות מהמדגם בשקט (אותו באג
+  // שתוקן ב-delivery_stats). מוחרגות מהמדגם:
+  //   • מאגר השריפה — מעוצב להיכשל; לכלול אותו זה "המכנה המזוהם".
+  //   • הודעה ראשונה-בחיים — ליד שמגיע רווי מעסקים אחרים הוא רעש מקור-לידים,
+  //     לא בריאות המספר. נמדד בעצירת-השווא של 29/07/2026: כל 9 הכשלים "הנקיים"
+  //     של היום היו ה-131049 הראשון של הליד — אפס אות על המספר עצמו.
   const { rows } = await pool.query(
-    `SELECT count(*) FILTER (WHERE m.status IN (1,2)) AS ok,
-            count(*) FILTER (WHERE m.status = 3)     AS bad
-       FROM drip.sent_messages sm
-       JOIN messages m ON m.id = sm.message_id
-      WHERE sm.account_id = $1
-        AND sm.sent_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Jerusalem') AT TIME ZONE 'Asia/Jerusalem'
-        AND sm.template_name NOT LIKE '%burn%'`,
+    `WITH s AS (
+       SELECT sm.sent_at, COALESCE(sm.delivery_status, 'pending') AS ds,
+              (sm.template_name LIKE '%burn%') AS is_burn,
+              row_number() OVER (PARTITION BY sm.contact_id ORDER BY sm.sent_at, sm.id) = 1
+                AS first_ever
+         FROM drip.sent_messages sm
+        WHERE sm.account_id = $1
+     )
+     SELECT count(*) FILTER (WHERE ds IN ('delivered','read')) AS ok,
+            count(*) FILTER (WHERE ds = 'failed')              AS bad
+       FROM s
+      WHERE sent_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Jerusalem') AT TIME ZONE 'Asia/Jerusalem'
+        AND NOT is_burn AND NOT first_ever`,
     [accountId]
   );
   const ok = Number(rows[0]?.ok || 0), bad = Number(rows[0]?.bad || 0);
   const n = ok + bad;
-  if (n < (s.min_delivery_sample || 20)) return null;   // מדגם קטן מדי — לא שופטים
+
+  // עצירה של הבלם הזה משתחררת לבד ברגע שהתנאי חולף — אחרת נוצר מבוי סתום:
+  // עצור ⇒ אין שליחות ⇒ המדגם היומי לא גדל (וביום חדש מתאפס) ⇒ עצור לנצח.
+  // משחררים רק עצירות שהבלם הזה יצר (לפי נוסח הסיבה) — עצירת RED של מטא נשארת.
+  const isFloorHalt = (r) => /שיעור ההגעה/.test(String(r || ''));
+  const maybeResume = async (why) => {
+    const h = await loadHealth(pool, accountId);
+    if (h.halted && isFloorHalt(h.halt_reason)) await resumeAccount(pool, accountId, why);
+  };
+
+  if (n < (s.min_delivery_sample || 30)) {
+    await maybeResume('בלם הרצפה שוחרר — המדגם היומי קטן מכדי לשפוט (יום חדש). השליחה חודשה אוטומטית.');
+    return null;   // מדגם קטן מדי — לא שופטים
+  }
 
   const rate = Math.round((100 * ok) / n);
-  if (rate >= (s.min_delivery_rate || 70)) return { rate, n, halted: false };
+  if (rate >= (s.min_delivery_rate || 45)) {
+    await maybeResume(`שיעור ההגעה התאושש ל-${rate}% (${ok} מתוך ${n}) — השליחה חודשה אוטומטית.`);
+    return { rate, n, halted: false };
+  }
 
   // המסירה צנחה. עוצר — אם לא כבר עצור, כדי לא להציף את הדשבורד באותה התראה כל tick.
   const h = await loadHealth(pool, accountId);
   if (!h.halted) {
     await haltAccount(
       pool, accountId,
-      `שיעור ההגעה צנח ל-${rate}% (${ok} מתוך ${n} היום, תבניות נקיות בלבד). השליחה ` +
-      `נעצרה אוטומטית — בדקו את המספר, המדיה והתבניות, ואז שחררו ידנית (drip.resume_account).`,
+      `שיעור ההגעה צנח ל-${rate}% (${ok} מתוך ${n} היום, נמענות מוכרות על תבניות נקיות). ` +
+      `השליחה נעצרה אוטומטית — בדקו את המספר, המדיה והתבניות. תשתחרר לבד כשהשיעור יתאושש.`,
       'delivery_floor', { rate, ok, total: n }
     );
   }
