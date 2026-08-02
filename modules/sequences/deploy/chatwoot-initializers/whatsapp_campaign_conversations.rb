@@ -95,10 +95,45 @@ class WhatsappCampaignErrorSink
   end
 end
 
+# The campaign opener automation must assign the selected/default bot before its webhook is
+# queued. Doing this in Chatwoot closes the race where n8n receives the outgoing opener while
+# the conversation is still unassigned. Existing User/AgentBot assignments always win, so a
+# campaign-level selection or a human takeover is never overwritten.
+module WhatsappCampaignAutomationActionService
+  private
+
+  def assign_agent_bot_if_unassigned(agent_bot_ids = [])
+    return if @conversation.assignee_id.present? || @conversation.assignee_agent_bot_id.present?
+
+    agent_bot_id = Array(agent_bot_ids).first.to_i
+    return if agent_bot_id.zero?
+
+    Conversations::AssignmentService.new(
+      conversation: @conversation,
+      assignee_id: agent_bot_id,
+      assignee_type: 'AgentBot'
+    ).perform
+  end
+end
+
+module WhatsappCampaignAutomationRuleActions
+  def actions_attributes
+    super + %w[assign_agent_bot_if_unassigned]
+  end
+end
+
 Rails.application.config.after_initialize do
   Rails.logger.info '[CUSTOM] Loading WhatsApp campaign conversation patch...'
 
   begin
+    unless AutomationRule.ancestors.include?(WhatsappCampaignAutomationRuleActions)
+      AutomationRule.prepend(WhatsappCampaignAutomationRuleActions)
+    end
+
+    unless AutomationRules::ActionService.ancestors.include?(WhatsappCampaignAutomationActionService)
+      AutomationRules::ActionService.prepend(WhatsappCampaignAutomationActionService)
+    end
+
     svc = Whatsapp::OneoffCampaignService
 
     expected_send_signature = [%i[keyreq to], %i[keyreq template_params]]
