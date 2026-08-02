@@ -10,6 +10,9 @@ import { buildRows, filterRows, parseFilter, toCsv, csvFileName } from './campai
 import { validateWhatsAppMedia, extForMime } from './media.js';
 import { uploadExampleMedia, hasTemplateAccess } from './templates.js';
 import { handleJourneyHook, makeJourneysCtx, perAccountHookToken } from './journeys.js';
+import {
+  handleJourneyIntake, perAccountIntakeToken, validIntakeAuthorization,
+} from './journeyIntake.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 
@@ -166,6 +169,34 @@ export function createApp(config) {
       handleJourneyHook(journeysCtx, req.body || {}).catch((e) =>
         console.error('[journeys] hook error:', e.message)
       );
+    });
+  }
+
+  // ── external journey intake (PUBLIC URL, authenticated in Authorization header) ──
+  // Synchronous by design: Make continues only after the contact/conversation exists and the
+  // first template node has started. The per-account credential never appears in this URL.
+  if (config.journeyIntakeSecret) {
+    const journeysCtx = makeJourneysCtx({ query, makeClient, makeDbReads, config });
+    app.post('/drip-api/journey-intake/:accountId', async (req, res) => {
+      const accountId = Number(req.params.accountId);
+      const expected = accountId
+        ? perAccountIntakeToken(config.journeyIntakeSecret, accountId)
+        : '';
+      if (!validIntakeAuthorization(req.headers.authorization, expected)) {
+        return res.status(404).end();
+      }
+      res.set('Cache-Control', 'no-store');
+      try {
+        const result = await handleJourneyIntake(journeysCtx, req.body || {}, accountId);
+        return res.json({ ok: true, ...result });
+      } catch (error) {
+        const code = error?.code || 'intake_failed';
+        console.error(`[journeys] intake failed for account ${accountId}: ${code}`);
+        if (code === 'intake_processing' || code === 'intake_attempt_superseded') {
+          res.set('Retry-After', '5');
+        }
+        return res.status(Number(error?.status) || 500).json({ ok: false, error: code });
+      }
     });
   }
 

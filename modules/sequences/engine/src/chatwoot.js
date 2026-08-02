@@ -11,11 +11,22 @@ const GRAPH = 'https://graph.facebook.com/v21.0';
 export function makeClient({ baseUrl, token, accountId, reads, query }) {
   const base = `${baseUrl}/api/v1/accounts/${accountId}`;
   const h = { 'Content-Type': 'application/json', api_access_token: token };
+  const REQUEST_TIMEOUT_MS = 15_000;
 
   const req = async (path, opts = {}) => {
-    const r = await fetch(`${base}${path}`, { headers: h, ...opts });
-    if (!r.ok) throw new Error(`Chatwoot ${opts.method || 'GET'} ${path} → ${r.status}`);
-    return r.json();
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const r = await fetch(`${base}${path}`, {
+        headers: h,
+        ...opts,
+        signal: opts.signal || ac.signal,
+      });
+      if (!r.ok) throw new Error(`Chatwoot ${opts.method || 'GET'} ${path} → ${r.status}`);
+      return r.json();
+    } finally {
+      clearTimeout(timer);
+    }
   };
 
   // Raw WhatsApp templates, cached for this client's lifetime. When DB reads are injected
@@ -100,6 +111,45 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
         }),
       });
       return { id: m.display_id ?? m.id };
+    },
+
+    /** External journey intake: create a contact and its WhatsApp contact_inbox in one
+     *  Chatwoot transaction. The narrowly-scoped Rails initializer permits this endpoint
+     *  only for the automatically provisioned Drip AgentBot. */
+    createContact: async ({ name, email, phone, inboxId, sourceId, customAttributes = {} }) => {
+      const body = {
+        name: name || phone,
+        phone_number: phone,
+        inbox_id: inboxId,
+        source_id: String(sourceId),
+        custom_attributes: customAttributes,
+      };
+      if (email) body.email = email;
+      const response = await req(`/contacts`, { method: 'POST', body: JSON.stringify(body) });
+      const contact = response?.payload?.contact || response?.contact || response;
+      if (!contact?.id) throw new Error('Chatwoot contact create response is missing id');
+      return { id: contact.id };
+    },
+
+    /** External journey intake: merge lead identifiers without erasing unrelated contact
+     *  attributes already maintained by agents or other integrations. */
+    updateContact: async (contactId, { name, email, phone, customAttributes = {} }) => {
+      let current;
+      if (reads?.getContactAttrs) {
+        current = await reads.getContactAttrs(contactId, accountId);
+      } else {
+        const response = await req(`/contacts/${contactId}`);
+        const contact = response?.payload?.contact || response?.payload || response?.contact || response;
+        current = contact?.custom_attributes || {};
+      }
+      const body = {
+        phone_number: phone,
+        custom_attributes: { ...current, ...customAttributes },
+      };
+      if (name) body.name = name;
+      if (email) body.email = email;
+      await req(`/contacts/${contactId}`, { method: 'PUT', body: JSON.stringify(body) });
+      return { id: contactId };
     },
 
     /**

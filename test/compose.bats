@@ -16,6 +16,11 @@
   [ "$status" -eq 0 ]
 }
 
+@test "external Journey intake secret is env-driven and independently named" {
+  run grep -q 'JOURNEY_INTAKE_SECRET: ${CWPT_JOURNEY_INTAKE_SECRET:-}' docker-compose.addons.yml
+  [ "$status" -eq 0 ]
+}
+
 @test "addons compose service is branded cwpt-engine" {
   run grep -q 'cwpt-engine' docker-compose.addons.yml
   [ "$status" -eq 0 ]

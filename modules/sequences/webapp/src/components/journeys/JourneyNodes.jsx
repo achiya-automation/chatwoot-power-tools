@@ -58,6 +58,7 @@ const M = {
     defaultOut: 'ברירת מחדל',
     tplParams: '{n} פרמטרים',
     noTemplate: 'לא נבחרה תבנית',
+    tplWait: 'ממתין לתשובה',
   },
   en: {
     trigger: 'Trigger',
@@ -89,6 +90,7 @@ const M = {
     defaultOut: 'Default',
     tplParams: '{n} params',
     noTemplate: 'No template selected',
+    tplWait: 'Waiting for reply',
   },
 };
 
@@ -261,6 +263,14 @@ function TemplateNode({ data, selected }) {
       )}
       {nParams ? (
         <span className="text-xxs text-n-slate-10">{t('tplParams', { n: nParams })}</span>
+      ) : null}
+      {data?.waitForReply ? (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="inline-flex rounded bg-n-amber-3 px-1.5 py-0.5 text-xxs font-medium text-n-amber-11">
+            {t('tplWait')}
+          </span>
+          {data?.saveTo?.key ? <KeyChip>{t('saveToChip', { key: data.saveTo.key })}</KeyChip> : null}
+        </div>
       ) : null}
     </NodeShell>
   );

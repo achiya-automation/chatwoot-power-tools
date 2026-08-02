@@ -6,6 +6,9 @@ import { reconcileAccount, paramsResolve } from '../src/reconcile.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
+// Tests that assert a send must not depend on the wall clock (the production gate defers
+// marketing during quiet hours). Thursday noon UTC is outside the default Israel quiet window.
+const testDaytime = () => new Date('2026-06-18T12:00:00Z');
 beforeEach(async () => {
   await setupDb(pool);
   // Scaffold a minimal public.conversations table so enroll-phase tests can run.
@@ -85,7 +88,7 @@ test('due active enrollment sends and advances', async () => {
     incomingSince: async () => false,
     outgoingByHumanSince: async () => false,
   };
-  await reconcileAccount(pool, client, 1, new Date());
+  await reconcileAccount(pool, client, 1, testDaytime());
   assert.deepEqual(sent, ['t1']);
   const e = (await query('SELECT current_step,status FROM drip.enrollments WHERE conversation_id=42'))[0];
   assert.equal(e.current_step, 2);
@@ -171,7 +174,7 @@ test('last step sends and sets completed', async () => {
     incomingSince: async () => false,
     outgoingByHumanSince: async () => false,
   };
-  await reconcileAccount(pool, client, 1, new Date());
+  await reconcileAccount(pool, client, 1, testDaytime());
   assert.deepEqual(sent, ['only']);
   const e = (await query('SELECT status FROM drip.enrollments WHERE conversation_id=55'))[0];
   assert.equal(e.status, 'completed');
@@ -349,7 +352,7 @@ test('no_reply + skip: customer did NOT reply → sends the step, then advances'
     incomingSince: async () => false, // no reply
     outgoingByHumanSince: async () => false,
   };
-  await reconcileAccount(pool, client, 1, new Date());
+  await reconcileAccount(pool, client, 1, testDaytime());
   assert.deepEqual(sent, ['reminder'], 'step is sent when the customer did not reply');
   const e = (await query('SELECT current_step,status FROM drip.enrollments WHERE conversation_id=2002'))[0];
   assert.equal(e.status, 'active');
@@ -406,7 +409,7 @@ test('replied condition: customer replied → sends the step (e.g. a thank-you)'
     incomingSince: async () => true, // replied → condition met
     outgoingByHumanSince: async () => false,
   };
-  await reconcileAccount(pool, client, 1, new Date());
+  await reconcileAccount(pool, client, 1, testDaytime());
   assert.deepEqual(sent, ['thankyou'], 'replied-gated step is sent when the customer replied');
 });
 
@@ -574,7 +577,7 @@ test('RESUME: re-enabling send_enabled continues from the exact step it left off
   assert.deepEqual(sent, [], 'still paused');
   // Re-enable sends → resumes from step 2 (where it paused), NOT step 1.
   await query('UPDATE drip.sequences SET send_enabled=true WHERE id=$1', [seq]);
-  await reconcileAccount(pool, client, 1, new Date());
+  await reconcileAccount(pool, client, 1, testDaytime());
   assert.deepEqual(sent, ['r2'], 'resumes the exact step it was paused on');
   const e = (await query('SELECT current_step,status FROM drip.enrollments WHERE conversation_id=78'))[0];
   assert.equal(e.current_step, 3, 'advanced one step after the resumed send');

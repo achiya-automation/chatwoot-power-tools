@@ -33,6 +33,7 @@ const M = {
     keywordsPh: 'הוסיפו מילה ולחצו Enter',
     keywordsHint: 'הודעה נכנסת שמכילה אחת מהמילים מפעילה את הפלואו.',
     onNewConv: 'הפעלה על כל שיחה חדשה',
+    external: 'הפעלה חיצונית (Make / API)',
     manual: 'הפעלה ידנית ע"י נציג',
     nodeTitle: 'הגדרות הצומת',
     deleteNode: 'מחיקת הצומת',
@@ -126,6 +127,8 @@ const M = {
     tplMedia: 'קישור מדיה לכותרת ({format})',
     tplMediaHint: 'לתבנית עם כותרת מדיה חובה קישור ציבורי — אפשר להעלות קובץ למטה בצומת הודעה ולהעתיק את הקישור.',
     tplPreview: 'תצוגה מקדימה',
+    tplWaitTitle: 'המתנה לתגובה לתבנית',
+    tplWaitHint: 'התבנית כבר כוללת כפתורים; הפלואו ימתין ללחיצה בלי לשלוח הודעה נוספת.',
 
     upload: 'העלאת קובץ',
     uploading: 'מעלה…',
@@ -151,6 +154,7 @@ const M = {
     keywordsPh: 'Type a word and press Enter',
     keywordsHint: 'An incoming message containing one of these words starts the flow.',
     onNewConv: 'Start on every new conversation',
+    external: 'External launch (Make / API)',
     manual: 'Manual launch by an agent',
     nodeTitle: 'Node settings',
     deleteNode: 'Delete node',
@@ -244,6 +248,8 @@ const M = {
     tplMedia: 'Header media URL ({format})',
     tplMediaHint: 'A media-header template requires a public URL — upload a file in a message node and copy its link.',
     tplPreview: 'Preview',
+    tplWaitTitle: 'Wait for the template reply',
+    tplWaitHint: 'The template already contains buttons; the flow waits for a click without sending another message.',
 
     upload: 'Upload file',
     uploading: 'Uploading…',
@@ -529,6 +535,18 @@ function TemplateSection({ data, patch, meta, vars }) {
           onChange={(e) => patch({ mediaUrl: e.target.value })}
         />
       ) : null}
+      <Section>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium text-n-slate-12">{t('tplWaitTitle')}</span>
+          <Switch
+            checked={!!data.waitForReply}
+            aria-label={t('tplWaitTitle')}
+            onChange={(waitForReply) => patch({ waitForReply })}
+          />
+        </div>
+        <p className="m-0 text-xs text-n-slate-11">{t('tplWaitHint')}</p>
+      </Section>
+      {data.waitForReply ? <SaveToEditor data={data} patch={patch} /> : null}
     </>
   );
 }
@@ -748,6 +766,14 @@ function TriggerPanel({ name, onName, trigger, onTrigger, inboxes }) {
             checked={!!trigger.on_new_conversation}
             aria-label={t('onNewConv')}
             onChange={(v) => onTrigger({ ...trigger, on_new_conversation: v })}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-n-slate-12">{t('external')}</span>
+          <Switch
+            checked={!!trigger.external}
+            aria-label={t('external')}
+            onChange={(v) => onTrigger({ ...trigger, external: v })}
           />
         </div>
         <div className="flex items-center justify-between">

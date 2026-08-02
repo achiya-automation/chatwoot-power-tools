@@ -62,6 +62,10 @@ services:
       # public.webhooks — only the per-account HMAC does. Empty secret = no hook (tick-scan only).
       JOURNEY_HOOK_SECRET: ${CWPT_JOURNEY_HOOK_SECRET:-}
       JOURNEY_HOOK_BASE: http://cwpt-engine:3100
+      # External Journey intake (for example Make/Facebook Lead Ads). This secret is
+      # independent of the Chatwoot event-hook secret; the caller sends an account-scoped
+      # HMAC as an HTTP Basic password, never in the URL. Empty = endpoint disabled.
+      JOURNEY_INTAKE_SECRET: ${CWPT_JOURNEY_INTAKE_SECRET:-}
     volumes:
       - cwpt_media:/app/media
     ports:

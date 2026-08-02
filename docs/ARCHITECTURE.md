@@ -62,9 +62,10 @@ directory (`modules/sequences/engine/test`, `modules/sequences/webapp/test`,
    engine's Docker build context lives next to Chatwoot's own compose files.
 6. **Write addons environment variables** into Chatwoot's own `.env`:
    `CWPT_DATABASE_URL` (written by `provision_db` itself), `CWPT_CHATWOOT_BASE_URL`
-   (derived from the detected rails container name), and `CWPT_PUBLIC_BASE_URL` (derived
+   (derived from the detected rails container name), `CWPT_PUBLIC_BASE_URL` (derived
    from Chatwoot's own `FRONTEND_URL` — this must be an absolute `https://` origin, since
-   Meta has to be able to fetch WhatsApp template media from it).
+   Meta has to be able to fetch WhatsApp template media from it), and independent random
+   secrets for the Journey event hook and optional external Journey intake endpoint.
 7. **Build and start `cwpt-engine`** — `docker compose -f docker-compose.yml -f
    chatwoot-power-tools/docker-compose.addons.yml up -d --build cwpt-engine`, joining
    Chatwoot's own compose project and network.
