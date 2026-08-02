@@ -145,6 +145,7 @@ test('startRun: pending → message with placeholder → question → waiting_an
   const client = fakeClient();
   const run = await startRun(ctxWith(client), j, { accountId: 1, displayId: 101, contactId: 7 });
   assert.ok(run);
+  assert.equal(run.status, 'waiting_answer', 'startRun returns the persisted post-execution state');
 
   const names = client.calls.map((c) => c.name);
   assert.deepEqual(names, ['toggleStatus', 'sendText', 'sendText']);
@@ -486,6 +487,93 @@ test('template node sends a WhatsApp template with rendered params', async () =>
   });
   const [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 400`);
   assert.equal(run.status, 'done'); // המשיך ל-handoff
+});
+
+test('template waitForReply pauses after the template, saves the Quick Reply, then continues', async () => {
+  const confirmation = 'הפרטים שלך נקלטו בהצלחה אצלנו במשרד 📝';
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'tp', type: 'template', data: {
+        name: 'initial_consultation', language: 'he', category: 'MARKETING',
+        params: [], waitForReply: true, validation: 'text',
+        saveTo: { scope: 'contact', key: 'callback_window' },
+      } },
+      { id: 'ok', type: 'message', data: { text: confirmation } },
+    ],
+    edges: [{ source: 't', target: 'tp' }, { source: 'tp', target: 'ok' }],
+  };
+  const j = await makeJourney(g);
+  const client = fakeClient();
+
+  await startRun(ctxWith(client), j, {
+    accountId: 1,
+    displayId: 470,
+    contactId: 7,
+    initialAnswers: {
+      _intake_source: 'facebook_lead_ads',
+      _intake_external_id: 'fb-470',
+      _intake_airtable_lead_id: 'rec-470',
+    },
+  });
+
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 470`);
+  assert.equal(run.status, 'waiting_answer');
+  assert.equal(run.current_node, 'tp');
+  assert.equal(run.answers._intake_external_id, 'fb-470', 'intake identity survives run creation');
+  assert.equal(run.answers._intake_airtable_lead_id, 'rec-470');
+  assert.equal(client.calls.filter((c) => c.name === 'sendTemplate').length, 1);
+  assert.ok(!client.calls.some((c) => c.name === 'sendText' && c.args[1] === confirmation),
+    'confirmation is not sent before the customer replies');
+
+  await Promise.all([
+    feedAnswer(ctxWith(client), run, j, { id: 9470, content: '12:00-15:00' }),
+    feedAnswer(ctxWith(client), run, j, { id: 9470, content: '12:00-15:00' }),
+  ]);
+
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 470`);
+  assert.equal(run.status, 'done');
+  assert.equal(run.answers.callback_window, '12:00-15:00');
+  assert.equal(run.answers._intake_external_id, 'fb-470');
+  assert.equal(run.answers._intake_airtable_lead_id, 'rec-470');
+  const saves = client.calls.filter((c) => c.name === 'patchContactAttrs');
+  assert.equal(saves.length, 1, 'webhook + reconciliation race claims the reply only once');
+  const [saved] = saves;
+  assert.deepEqual(saved.args, [7, { callback_window: '12:00-15:00' }]);
+  assert.equal(client.calls.filter((c) => c.name === 'sendText' && c.args[1] === confirmation).length, 1);
+});
+
+test('webhook non-2xx fails the run and does not send the following confirmation', async () => {
+  const originalFetch = globalThis.fetch;
+  const confirmation = 'נדבר בקרוב 🤍';
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'w', type: 'webhook', data: { url: 'https://8.8.8.8/make-callback' } },
+      { id: 'ok', type: 'message', data: { text: confirmation } },
+    ],
+    edges: [{ source: 't', target: 'w' }, { source: 'w', target: 'ok' }],
+  };
+  const j = await makeJourney(g);
+  const client = fakeClient();
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 503,
+    text: async () => JSON.stringify({ ok: false }),
+  });
+
+  try {
+    const started = await startRun(ctxWith(client), j, { accountId: 1, displayId: 471, contactId: 7 });
+    assert.equal(started.status, 'failed', 'synchronous callers can detect the failed first node');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 471`);
+  assert.equal(run.status, 'failed');
+  assert.match(run.last_error, /webhook returned HTTP 503/);
+  assert.ok(!client.calls.some((c) => c.name === 'sendText' && c.args[1] === confirmation),
+    'the customer must not receive success after Make/Airtable failed');
 });
 
 test('buttons: per-option branch routes via opt:<id>; option without an edge takes the default', async () => {

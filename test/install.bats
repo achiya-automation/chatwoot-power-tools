@@ -120,6 +120,7 @@ EOF
   # the fallback-to-literal-"rails" case.
   grep -q '^CWPT_CHATWOOT_BASE_URL=http://chatwoot-rails-1:3000$' "$DIR/.env"
   grep -q '^CWPT_DATABASE_URL=postgres://drip_engine:' "$DIR/.env"
+  grep -q '^CWPT_JOURNEY_INTAKE_SECRET=' "$DIR/.env"
   [ -d "$DIR/chatwoot-power-tools/modules" ]
   [ -f "$DIR/chatwoot-power-tools/docker-compose.addons.yml" ]
   # smart-import assets must be merged into the webapp dist for the engine's static
@@ -219,6 +220,7 @@ EOF
   [ "$(grep -c '^CWPT_DATABASE_URL=' "$DIR/.env")" -eq 1 ]
   [ "$(grep -c '^CWPT_PUBLIC_BASE_URL=' "$DIR/.env")" -eq 1 ]
   [ "$(grep -c '^CWPT_CHATWOOT_BASE_URL=' "$DIR/.env")" -eq 1 ]
+  [ "$(grep -c '^CWPT_JOURNEY_INTAKE_SECRET=' "$DIR/.env")" -eq 1 ]
 }
 
 @test "a full mocked install run adds the caddy route when caddy-host is detected" {

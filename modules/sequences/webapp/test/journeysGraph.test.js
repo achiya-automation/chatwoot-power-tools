@@ -28,6 +28,13 @@ test('node type set matches the engine runtime', () => {
 
 test('defaultDataFor covers every addable type with engine-shaped fields', () => {
   assert.deepEqual(defaultDataFor('message'), { text: '', mediaUrl: '' });
+  assert.deepEqual(defaultDataFor('template'), {
+    name: '', language: '', category: '', params: [], mediaUrl: '',
+    waitForReply: false,
+    saveTo: { scope: 'contact', key: '' },
+    validation: 'text',
+    retryMessage: '',
+  });
   assert.equal(defaultDataFor('question').saveTo.scope, 'contact');
   assert.equal(defaultDataFor('question').validation, 'text');
   assert.equal(defaultDataFor('buttons').options.length, 1);
@@ -266,12 +273,19 @@ test('collectAttributeKeys: dedupes by scope+key, skips empties', () => {
       { id: 'c', type: 'question', data: { saveTo: { scope: 'conversation', key: 'budget' } } },
       { id: 'd', type: 'question', data: { saveTo: { scope: 'contact', key: ' ' } } },
       { id: 'e', type: 'webhook', data: { saveResponseTo: 'crm_id' } }, // answers-only, not an attribute
+      { id: 'f', type: 'template', data: {
+        waitForReply: true, saveTo: { scope: 'contact', key: 'callback_window' },
+      } },
+      { id: 'g', type: 'template', data: {
+        waitForReply: false, saveTo: { scope: 'contact', key: 'ignored_template_key' },
+      } },
     ],
     edges: [],
   };
   assert.deepEqual(collectAttributeKeys(g), [
     { key: 'budget', scope: 'contact' },
     { key: 'budget', scope: 'conversation' },
+    { key: 'callback_window', scope: 'contact' },
   ]);
 });
 
@@ -283,11 +297,29 @@ test('normalizeData: template node coerces params to strings and trims ids', () 
   const d = normalizeData('template', {
     name: ' welcome_lead ', language: 'he', category: 'MARKETING',
     params: ['{{שם}}', 7, null], mediaUrl: ' https://x/y.jpg ',
+    waitForReply: true,
+    saveTo: { scope: 'conversation', key: ' callback_window ' },
+    validation: 'email',
+    retryMessage: ' שוב ',
   });
   assert.deepEqual(d, {
     name: 'welcome_lead', language: 'he', category: 'MARKETING',
     params: ['{{שם}}', '7', ''], mediaUrl: 'https://x/y.jpg',
+    waitForReply: true,
+    saveTo: { scope: 'conversation', key: 'callback_window' },
+    validation: 'email',
+    retryMessage: ' שוב ',
   });
+});
+
+test('normalizeData: template reply settings use safe defaults', () => {
+  const d = normalizeData('template', {
+    name: 'initial_consultation', validation: 'unknown', saveTo: { scope: 'other', key: ' answer ' },
+  });
+  assert.equal(d.waitForReply, false);
+  assert.deepEqual(d.saveTo, { scope: 'contact', key: 'answer' });
+  assert.equal(d.validation, 'text');
+  assert.equal(d.retryMessage, '');
 });
 
 test('validateGraph: template node requires a chosen template', () => {
@@ -300,6 +332,21 @@ test('validateGraph: template node requires a chosen template', () => {
   };
   const errs = validateGraph(g);
   assert.ok(errs.some((e) => e.code === 'tpl_name' && e.nodeId === 'n1'));
+});
+
+test('validateGraph: reply-waiting template requires saveTo.key', () => {
+  const mk = (waitForReply, key) => ({
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'n1', type: 'template', data: {
+        name: 'initial_consultation', waitForReply, saveTo: { scope: 'contact', key },
+      } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'n1' }],
+  });
+  assert.deepEqual(validateGraph(mk(true, '')), [{ code: 'tpl_key', nodeId: 'n1' }]);
+  assert.deepEqual(validateGraph(mk(true, 'callback_window')), []);
+  assert.deepEqual(validateGraph(mk(false, '')), []);
 });
 
 test('newOptionId is stable across delete/re-add', () => {

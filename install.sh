@@ -224,6 +224,21 @@ _cwpt_write_addons_env() {
       echo "    journeys will run on the 60s tick scan only (no real-time hook)." >&2
     fi
   fi
+
+  # External Journey intake has a separate master secret from the Chatwoot event hook.
+  # Keeping the purposes independent means exposing or rotating one credential cannot open
+  # the other entry point. The account-specific Basic password is derived at integration time.
+  if ! grep -q '^CWPT_JOURNEY_INTAKE_SECRET=' "$env_file" 2>/dev/null; then
+    local intake_secret=""
+    intake_secret="$(openssl rand -hex 32 2>/dev/null)" || intake_secret=""
+    if [ -n "$intake_secret" ]; then
+      _cwpt_upsert_env_var "$env_file" CWPT_JOURNEY_INTAKE_SECRET "$intake_secret"
+      echo "  CWPT_JOURNEY_INTAKE_SECRET=(generated)"
+    else
+      echo "  WARNING: openssl unavailable — CWPT_JOURNEY_INTAKE_SECRET not generated;" >&2
+      echo "    external journey intake will remain disabled." >&2
+    fi
+  fi
 }
 
 # _cwpt_find_nginx_conf

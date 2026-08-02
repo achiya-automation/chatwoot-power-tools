@@ -207,6 +207,15 @@ export async function executeFrom(ctx, run, journey, nodeId) {
             params,
             ...(d.mediaUrl ? { mediaUrl: d.mediaUrl } : {}),
           });
+          // A WhatsApp template may already contain Quick Reply buttons. Waiting on the
+          // template itself avoids sending a second, duplicate buttons/question message.
+          if (d.waitForReply) {
+            await updateRun(query, run.id, {
+              status: 'waiting_answer', current_node: currentId, answers,
+              retry_count: 0, waiting_since: new Date(), next_action_at: null,
+            });
+            return;
+          }
           currentId = nextNodeId(graph, currentId);
           break;
         }
@@ -355,6 +364,9 @@ async function postWebhook(url, payload) {
     });
     // קיצוץ: התשובה נשמרת ב-answers (jsonb) — שירות שמחזיר מגה-בייטים לא ינפח את שורת הריצה.
     const text = (await r.text()).slice(0, 8192);
+    // The next graph node must run only after the remote system accepted the update. In
+    // particular, Daniel's confirmation message must not be sent after a failed Airtable write.
+    if (!r.ok) throw new Error(`webhook returned HTTP ${r.status}`);
     try { return JSON.parse(text); } catch { return text || null; }
   } finally {
     clearTimeout(t);
@@ -367,7 +379,9 @@ async function postWebhook(url, payload) {
 // ("היי" ואז "אני צריך X") — שמזהה שלה גבוה יותר — עדיין תיקלט כתשובה לשאלה הראשונה.
 // בלי sinceMessageId (הפעלה ידנית) לוקחים את מקסימום ההודעות הקיימות: כל ההיסטוריה
 // שקדמה להפעלה אינה תשובה.
-export async function startRun(ctx, journey, { accountId, displayId, contactId, sinceMessageId }) {
+export async function startRun(ctx, journey, {
+  accountId, displayId, contactId, sinceMessageId, initialAnswers = {},
+}) {
   const { query } = ctx;
   const client = ctx.client || await ctx.makeClientFor(accountId);
   const first = startNodeOf(journey.graph);
@@ -396,9 +410,12 @@ export async function startRun(ctx, journey, { accountId, displayId, contactId, 
   let run;
   try {
     const rows = await query(
-      `INSERT INTO drip.journey_runs (journey_id, account_id, display_id, contact_id, status, current_node, last_inbound_message_id)
-       VALUES ($1, $2, $3, $4, 'active', $5, $6) RETURNING *`,
-      [journey.id, accountId, displayId, contactId || null, first, initialWatermark]
+      `INSERT INTO drip.journey_runs
+         (journey_id, account_id, display_id, contact_id, status, current_node,
+          last_inbound_message_id, answers)
+       VALUES ($1, $2, $3, $4, 'active', $5, $6, $7::jsonb) RETURNING *`,
+      [journey.id, accountId, displayId, contactId || null, first, initialWatermark,
+        JSON.stringify(initialAnswers || {})]
     );
     run = rows[0];
   } catch (e) {
@@ -408,7 +425,11 @@ export async function startRun(ctx, journey, { accountId, displayId, contactId, 
   // הבוט לוקח בעלות: השיחה עוברת ל-pending (הנציגים רואים שהבוט מטפל).
   try { await client.toggleStatus(displayId, 'pending'); } catch { /* ערוץ בלי סטטוס — ממשיכים */ }
   await executeFrom({ ...ctx, client }, run, journey, first);
-  return run;
+  // executeFrom records node failures on the run instead of throwing because normal webhook
+  // processing must stay isolated. Return the persisted state so synchronous external intake
+  // can distinguish a successfully waiting flow from a failed initial template send.
+  const refreshed = await query('SELECT * FROM drip.journey_runs WHERE id = $1 LIMIT 1', [run.id]);
+  return toRun(refreshed[0] || run);
 }
 
 // ── קליטת הודעה נכנסת לריצה ממתינה ──
@@ -425,6 +446,21 @@ export async function feedAnswer(ctx, run, journey, message) {
   const node = nodeById(graph, run.current_node);
   if (!node) return;
   const d = node.data || {};
+  // The real-time webhook and the 60s reconciliation scan can observe the same inbound row.
+  // Claim the waiting run before any contact write, Make webhook, or confirmation send. Only
+  // one caller can move waiting_answer → active for this message; every concurrent copy exits.
+  const claimed = (await query(
+    `UPDATE drip.journey_runs
+        SET status = 'active',
+            last_inbound_message_id = CASE WHEN $2 > 0 THEN $2 ELSE last_inbound_message_id END,
+            updated_at = now()
+      WHERE id = $1::uuid AND status = 'waiting_answer'
+        AND ($2 = 0 OR last_inbound_message_id < $2)
+      RETURNING *`,
+    [run.id, messageId]
+  ))[0];
+  if (!claimed) return;
+  run = toRun(claimed);
   let answers = run.answers || {};
 
   // מילת עצירה (הסר וכו') — הפלואו נעצר; ההסרה החשבונית מטופלת ב-compliance הרגיל.
@@ -444,14 +480,19 @@ export async function feedAnswer(ctx, run, journey, message) {
         return;
       }
       const contact = await reads.getContact(run.display_id, run.account_id).catch(() => ({}));
-      await client.sendText(run.display_id,
-        d.retryMessage || numberedFallback(renderText(d.text, { contact, answers }), d.options || []));
-      await updateRun(query, run.id, { retry_count: retries, last_inbound_message_id: messageId });
+      try {
+        await client.sendText(run.display_id,
+          d.retryMessage || numberedFallback(renderText(d.text, { contact, answers }), d.options || []));
+      } finally {
+        await updateRun(query, run.id, {
+          status: 'waiting_answer', retry_count: retries, last_inbound_message_id: messageId,
+        });
+      }
       return;
     }
     value = String(opt.value ?? opt.title);
     matchedOption = opt;
-  } else { // question
+  } else { // question, or a template configured to wait for its Quick Reply
     const kind = d.validation || 'text';
     if (!validateAnswer(kind, text)) {
       const retries = (run.retry_count || 0) + 1;
@@ -459,8 +500,13 @@ export async function feedAnswer(ctx, run, journey, message) {
         await updateRun(query, run.id, { status: 'stopped', last_error: 'too many invalid answers', last_inbound_message_id: messageId });
         return;
       }
-      await client.sendText(run.display_id, d.retryMessage || defaultRetryMessage(kind));
-      await updateRun(query, run.id, { retry_count: retries, last_inbound_message_id: messageId });
+      try {
+        await client.sendText(run.display_id, d.retryMessage || defaultRetryMessage(kind));
+      } finally {
+        await updateRun(query, run.id, {
+          status: 'waiting_answer', retry_count: retries, last_inbound_message_id: messageId,
+        });
+      }
       return;
     }
     value = text;
