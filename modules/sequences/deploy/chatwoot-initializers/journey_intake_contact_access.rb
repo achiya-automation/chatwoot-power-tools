@@ -34,4 +34,8 @@ module JourneyIntakeContactAccess
   end
 end
 
-AccessTokenAuthHelper.prepend(JourneyIntakeContactAccess) unless AccessTokenAuthHelper.ancestors.include?(JourneyIntakeContactAccess)
+Rails.application.config.to_prepare do
+  require_dependency Rails.root.join('app/controllers/concerns/access_token_auth_helper').to_s
+
+  AccessTokenAuthHelper.prepend(JourneyIntakeContactAccess) unless AccessTokenAuthHelper.ancestors.include?(JourneyIntakeContactAccess)
+end
