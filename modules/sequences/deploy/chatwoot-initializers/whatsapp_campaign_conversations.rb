@@ -115,7 +115,7 @@ module WhatsappCampaignAutomationActionService
     ).perform
   end
 
-  # A mobile macro adds a short-lived label, and its AutomationRule calls this action.
+  # A Web/Mobile macro calls this guard directly (legacy AutomationRules may call it too).
   # The explicit action may replace a human assignment, but only after proving that the
   # contact has a recorded campaign opener. This preserves the campaign-only bot boundary.
   # Params: [agent_bot_id, inbox_id, opener_marker_1, opener_marker_2, ...]
@@ -189,6 +189,48 @@ module WhatsappCampaignAutomationActionService
   end
 end
 
+# Chatwoot macros historically accept only human ids in the built-in `assign_agent`
+# action. The dashboard overlay represents an AgentBot as `AgentBot:<id>` so User and
+# AgentBot ids can never collide, while every legacy macro payload keeps its original
+# behaviour through `super`.
+#
+# Bot 12 is deliberately campaign-only. Keeping this policy here (rather than only in
+# the dashboard) means a macro executed from Web, Mobile or the API cannot bypass it.
+module WhatsappCampaignMacroActionService
+  CAMPAIGN_ONLY_AGENT_BOTS = {
+    [11, 12] => {
+      inbox_id: 38,
+      markers: ['חשבת אולי למכור', 'רציתי לשאול בנוגע לדירה']
+    }
+  }.freeze
+
+  private
+
+  def assign_agent(agent_ids)
+    encoded_assignee = Array(agent_ids).first.to_s
+    match = encoded_assignee.match(/\AAgentBot:(\d+)\z/)
+    return super unless match
+
+    agent_bot_id = match[1].to_i
+    policy = CAMPAIGN_ONLY_AGENT_BOTS[[@account.id, agent_bot_id]]
+    if policy
+      return assign_agent_bot_for_campaign_contact(
+        [agent_bot_id, policy[:inbox_id], *policy[:markers]]
+      )
+    end
+
+    return unless AgentBot.accessible_to(@account).exists?(id: agent_bot_id)
+
+    @conversation.with_lock do
+      Conversations::AssignmentService.new(
+        conversation: @conversation,
+        assignee_id: agent_bot_id,
+        assignee_type: 'AgentBot'
+      ).perform
+    end
+  end
+end
+
 module WhatsappCampaignAutomationRuleActions
   def actions_attributes
     super + %w[assign_agent_bot_if_unassigned assign_agent_bot_for_campaign_contact remove_specific_agent_bot]
@@ -205,6 +247,24 @@ Rails.application.config.after_initialize do
 
     unless AutomationRules::ActionService.ancestors.include?(WhatsappCampaignAutomationActionService)
       AutomationRules::ActionService.prepend(WhatsappCampaignAutomationActionService)
+    end
+
+    # `remove_specific_agent_bot` is a direct macro action. Register it additively,
+    # preserving every upstream action and failing loudly if the registry shape changes.
+    macro_actions = Macro.const_get(:ACTIONS_ATTRS, false)
+    raise 'Macro::ACTIONS_ATTRS changed upstream' unless macro_actions.is_a?(Array)
+
+    unless macro_actions.include?('remove_specific_agent_bot')
+      Macro.send(:remove_const, :ACTIONS_ATTRS)
+      Macro.const_set(:ACTIONS_ATTRS, (macro_actions + ['remove_specific_agent_bot']).uniq.freeze)
+    end
+
+    unless Macros::ExecutionService.ancestors.include?(WhatsappCampaignAutomationActionService)
+      Macros::ExecutionService.prepend(WhatsappCampaignAutomationActionService)
+    end
+
+    unless Macros::ExecutionService.ancestors.include?(WhatsappCampaignMacroActionService)
+      Macros::ExecutionService.prepend(WhatsappCampaignMacroActionService)
     end
 
     svc = Whatsapp::OneoffCampaignService

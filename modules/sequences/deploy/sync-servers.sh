@@ -250,6 +250,9 @@ verify() {
     raise 'mobile bot assign action missing' unless actions.include?('assign_agent_bot_for_campaign_contact')
     raise 'mobile bot unassign action missing' unless actions.include?('remove_specific_agent_bot')
     raise 'automation action patch missing' unless AutomationRules::ActionService.ancestors.include?(WhatsappCampaignAutomationActionService)
+    raise 'macro bot unassign action missing' unless Macro::ACTIONS_ATTRS.include?('remove_specific_agent_bot')
+    raise 'macro action patch missing' unless Macros::ExecutionService.ancestors.include?(WhatsappCampaignAutomationActionService)
+    raise 'macro assignee patch missing' unless Macros::ExecutionService.ancestors.include?(WhatsappCampaignMacroActionService)
   \"" >/dev/null 2>&1 || die "$server: campaign patch is not active"
   ok "campaign patch active"
 }
