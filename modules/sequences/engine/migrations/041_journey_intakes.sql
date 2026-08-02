@@ -30,6 +30,5 @@ DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'drip_engine') THEN
     GRANT SELECT, INSERT, UPDATE ON drip.journey_intakes TO drip_engine;
-    GRANT SELECT (id, account_id, name) ON public.agent_bots TO drip_engine;
   END IF;
 END $$;

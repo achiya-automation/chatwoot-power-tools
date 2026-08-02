@@ -277,9 +277,6 @@ async function recoverSentInitialTemplate(query, key, journey, run) {
     `SELECT m.id
        FROM public.messages m
        JOIN public.conversations c ON c.id = m.conversation_id
-       JOIN public.agent_bots ab
-         ON ab.id = m.sender_id AND ab.account_id = c.account_id
-        AND ab.name = '🤖 רצפי הודעות'
       WHERE c.account_id = $1 AND c.display_id = $2
         AND m.message_type = 1 AND m.sender_type = 'AgentBot'
         AND m.private IS NOT TRUE AND COALESCE(m.status, 0) <> 3
