@@ -20,6 +20,9 @@
 #    no phone, no template params, blank Liquid, or a send Meta rejected. Without them a
 #    recipient simply vanishes from the report with no reason attached — that is how 39
 #    phone-less contacts sat in a campaign audience and received nothing, unnoticed.
+# 6. Applies the optional campaign assignee from trigger_rules. The WhatsApp campaign form
+#    stores { assignee: { type: 'User'|'AgentBot', id: N } }; every created/reused conversation
+#    is assigned before its outgoing campaign message is recorded.
 #
 # Mounted read-only via docker-compose into rails + sidekiq (survives image updates).
 # Created: 2026-02-18 | Rewritten: 2026-06-10 for Chatwoot v4.14.1
@@ -425,6 +428,7 @@ Rails.application.config.after_initialize do
             end
           end
 
+          assign_campaign_conversation(conversation)
           attach_campaign_send_snapshot(whatsapp_message_id, conversation)
 
           template_text = build_template_text(template_params)
@@ -455,6 +459,32 @@ Rails.application.config.after_initialize do
         rescue StandardError => e
           Rails.logger.error "Campaign #{campaign.id}: Conversation creation failed for #{contact.phone_number}: #{e.message}"
           Rails.logger.error e.backtrace.first(5).join("\n")
+        end
+
+        def assign_campaign_conversation(conversation)
+          assignee = campaign.trigger_rules&.dig('assignee')
+          return if assignee.blank?
+
+          assignee_id = assignee['id'].to_i
+          assignee_type = assignee['type'].to_s
+          valid_assignee = if assignee_type == 'AgentBot'
+                             AgentBot.accessible_to(campaign.account).exists?(id: assignee_id)
+                           elsif assignee_type == 'User'
+                             campaign.account.users.exists?(id: assignee_id)
+                           else
+                             false
+                           end
+
+          unless valid_assignee
+            Rails.logger.error "Campaign #{campaign.id}: Invalid #{assignee_type} assignee #{assignee_id}"
+            return
+          end
+
+          Conversations::AssignmentService.new(
+            conversation: conversation,
+            assignee_id: assignee_id,
+            assignee_type: assignee_type
+          ).perform
         end
 
         # Renders the template body using the per-contact (Liquid-resolved)
