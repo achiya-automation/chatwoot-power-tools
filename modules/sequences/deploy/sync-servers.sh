@@ -246,6 +246,10 @@ verify() {
     svc = Whatsapp::OneoffCampaignService
     raise 'patch not applied' unless svc.instance_method(:send_whatsapp_template_message).parameters.map(&:last) == [:to, :template_params, :error_sink]
     raise 'status hook missing' unless Whatsapp::IncomingMessageBaseService.ancestors.include?(WhatsappCampaignIncomingStatusPatch)
+    actions = AutomationRule.new.actions_attributes
+    raise 'mobile bot assign action missing' unless actions.include?('assign_agent_bot_for_campaign_contact')
+    raise 'mobile bot unassign action missing' unless actions.include?('remove_specific_agent_bot')
+    raise 'automation action patch missing' unless AutomationRules::ActionService.ancestors.include?(WhatsappCampaignAutomationActionService)
   \"" >/dev/null 2>&1 || die "$server: campaign patch is not active"
   ok "campaign patch active"
 }

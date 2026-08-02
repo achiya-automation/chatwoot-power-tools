@@ -114,11 +114,84 @@ module WhatsappCampaignAutomationActionService
       assignee_type: 'AgentBot'
     ).perform
   end
+
+  # A mobile macro adds a short-lived label, and its AutomationRule calls this action.
+  # The explicit action may replace a human assignment, but only after proving that the
+  # contact has a recorded campaign opener. This preserves the campaign-only bot boundary.
+  # Params: [agent_bot_id, inbox_id, opener_marker_1, opener_marker_2, ...]
+  def assign_agent_bot_for_campaign_contact(params = [])
+    agent_bot_id, inbox_id, *campaign_markers = Array(params)
+    agent_bot_id = agent_bot_id.to_i
+    inbox_id = inbox_id.to_i
+
+    return if agent_bot_id.zero? || inbox_id.zero?
+    return unless @conversation.inbox_id == inbox_id
+    return unless AgentBot.accessible_to(@account).exists?(id: agent_bot_id)
+
+    @conversation.with_lock do
+      unless campaign_contact?(inbox_id, campaign_markers)
+        Rails.logger.info(
+          "[CUSTOM] Campaign bot assignment skipped for conversation #{@conversation.id}: contact is not campaign-eligible"
+        )
+        next
+      end
+
+      Conversations::AssignmentService.new(
+        conversation: @conversation,
+        assignee_id: agent_bot_id,
+        assignee_type: 'AgentBot'
+      ).perform
+    end
+  end
+
+  # Removes only the requested AgentBot. Human and team assignments are never changed.
+  # Params: [agent_bot_id]
+  def remove_specific_agent_bot(agent_bot_ids = [])
+    agent_bot_id = Array(agent_bot_ids).first.to_i
+    return if agent_bot_id.zero?
+
+    @conversation.with_lock do
+      next unless @conversation.assignee_agent_bot_id == agent_bot_id
+
+      Conversations::AssignmentService.new(
+        conversation: @conversation,
+        assignee_id: nil,
+        assignee_type: 'User'
+      ).perform
+    end
+  end
+
+  def campaign_contact?(inbox_id, campaign_markers)
+    return false if @conversation.contact_id.blank?
+
+    related_conversations = @account.conversations.where(inbox_id: inbox_id, contact_id: @conversation.contact_id)
+    if @conversation.contact_inbox_id.present?
+      same_contact_inbox = @account.conversations.where(
+        inbox_id: inbox_id,
+        contact_inbox_id: @conversation.contact_inbox_id
+      )
+      related_conversations = related_conversations.or(same_contact_inbox)
+    end
+
+    return true if related_conversations.where.not(campaign_id: nil).exists?
+
+    campaign_messages = Message.reorder(nil).where(
+      account_id: @account.id,
+      conversation_id: related_conversations.select(:id),
+      message_type: :outgoing
+    )
+    return true if campaign_messages.where("messages.content_attributes::jsonb ? 'campaign_id'").exists?
+
+    campaign_markers.compact_blank.any? do |marker|
+      escaped_marker = ActiveRecord::Base.sanitize_sql_like(marker.to_s)
+      campaign_messages.where('messages.content ILIKE ?', "%#{escaped_marker}%").exists?
+    end
+  end
 end
 
 module WhatsappCampaignAutomationRuleActions
   def actions_attributes
-    super + %w[assign_agent_bot_if_unassigned]
+    super + %w[assign_agent_bot_if_unassigned assign_agent_bot_for_campaign_contact remove_specific_agent_bot]
   end
 end
 
