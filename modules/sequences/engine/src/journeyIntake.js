@@ -1,5 +1,5 @@
 /**
- * Secure external entry point for visual journeys (Make / Facebook Lead Ads).
+ * Secure external entry point for visual journeys (Make / Facebook Lead Ads / Airtable status).
  *
  * The caller supplies a stable external lead id plus the current lead details. We resolve the
  * contact by the WhatsApp channel identity first, open/reuse the official WhatsApp conversation,
@@ -12,6 +12,7 @@ import { executeFrom, startRun } from './journeys.js';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const E164_RE = /^\+[1-9]\d{7,14}$/;
 const ALLOWED_ATTRIBUTES = new Set(['airtable_lead_id', 'facebook_lead_id', 'lead_source']);
+const ALLOWED_SOURCES = new Set(['facebook_lead_ads', 'airtable_status']);
 const INTAKE_LEASE_SECONDS = 120;
 
 export class IntakeError extends Error {
@@ -70,7 +71,7 @@ export function normalizeIntakePayload(payload = {}) {
   const inboxId = Number(payload.inbox_id);
   if (!UUID_RE.test(journeyId)) throw new IntakeError('invalid_journey_id');
   if (!Number.isInteger(inboxId) || inboxId <= 0) throw new IntakeError('invalid_inbox_id');
-  if (source !== 'facebook_lead_ads') throw new IntakeError('unsupported_source');
+  if (!ALLOWED_SOURCES.has(source)) throw new IntakeError('unsupported_source');
   if (!externalId) throw new IntakeError('external_id_required');
 
   const contact = payload.contact || {};
@@ -84,14 +85,26 @@ export function normalizeIntakePayload(payload = {}) {
     const clean = bounded(value, 500);
     if (clean) customAttributes[key] = clean;
   }
-  // One stable Facebook identity drives both idempotency and contact resolution. Letting these
-  // values diverge could resolve lead B by attribute and then overwrite it with lead A's phone.
-  if (customAttributes.facebook_lead_id && customAttributes.facebook_lead_id !== externalId) {
-    throw new IntakeError('facebook_lead_id_mismatch');
+  if (source === 'facebook_lead_ads') {
+    // One stable Facebook identity drives both idempotency and contact resolution. Letting these
+    // values diverge could resolve lead B by attribute and then overwrite it with lead A's phone.
+    if (customAttributes.facebook_lead_id && customAttributes.facebook_lead_id !== externalId) {
+      throw new IntakeError('facebook_lead_id_mismatch');
+    }
+    customAttributes.facebook_lead_id = externalId;
+    customAttributes.lead_source ||= 'Facebook Lead Ads';
+    if (!customAttributes.airtable_lead_id) throw new IntakeError('airtable_lead_id_required');
+  } else {
+    // A status transition starts from the Airtable record itself. Its record id is the stable
+    // identity and idempotency key. Never accept a Facebook id on this route: doing so would
+    // overwrite the original acquisition identity/source when an existing contact is updated.
+    if (customAttributes.airtable_lead_id && customAttributes.airtable_lead_id !== externalId) {
+      throw new IntakeError('airtable_lead_id_mismatch');
+    }
+    customAttributes.airtable_lead_id = externalId;
+    delete customAttributes.facebook_lead_id;
+    delete customAttributes.lead_source;
   }
-  customAttributes.facebook_lead_id = externalId;
-  customAttributes.lead_source ||= 'Facebook Lead Ads';
-  if (!customAttributes.airtable_lead_id) throw new IntakeError('airtable_lead_id_required');
 
   return {
     journeyId,
