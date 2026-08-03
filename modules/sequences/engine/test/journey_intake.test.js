@@ -14,6 +14,7 @@ import {
   normalizeLeadPhone,
   perAccountIntakeToken,
   resolveOrCreateContact,
+  stopSupersededRuns,
   validIntakeAuthorization,
 } from '../src/journeyIntake.js';
 
@@ -129,6 +130,33 @@ test('normalizeIntakePayload requires a direct Airtable record id and validates 
     external_id: 'rec-1',
     custom_attributes: { airtable_lead_id: 'rec-2' },
   }), (e) => e instanceof IntakeError && e.code === 'airtable_lead_id_mismatch');
+});
+
+test('stopSupersededRuns is opt-in and stops only another live flow on the same conversation', async () => {
+  const calls = [];
+  const mockQuery = async (sql, params) => {
+    calls.push({ sql, params });
+    return [{ id: 'old-run' }];
+  };
+
+  assert.equal(await stopSupersededRuns(mockQuery, {
+    accountId: 14,
+    displayId: 900,
+    journeyId: JOURNEY_ID,
+    enabled: false,
+  }), 0);
+  assert.equal(calls.length, 0, 'ordinary intakes never stop another flow');
+
+  assert.equal(await stopSupersededRuns(mockQuery, {
+    accountId: 14,
+    displayId: 900,
+    journeyId: JOURNEY_ID,
+    enabled: true,
+  }), 1);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /journey_id <> \$3::uuid/);
+  assert.match(calls[0].sql, /waiting_answer/);
+  assert.deepEqual(calls[0].params, [14, 900, JOURNEY_ID]);
 });
 
 async function insertJourney(id = JOURNEY_ID) {

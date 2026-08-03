@@ -403,6 +403,26 @@ export async function ensureConversation({ query, client, accountId, inboxId, co
   return { displayId };
 }
 
+/**
+ * A deliberate CRM status transition may replace an older waiting flow on the same conversation.
+ * This is opt-in per journey; ordinary external intakes keep the one-live-flow safety invariant.
+ */
+export async function stopSupersededRuns(query, {
+  accountId, displayId, journeyId, enabled = false,
+}) {
+  if (!enabled) return 0;
+  const rows = await query(
+    `UPDATE drip.journey_runs
+        SET status = 'stopped', updated_at = now()
+      WHERE account_id = $1 AND display_id = $2
+        AND journey_id <> $3::uuid
+        AND status IN ('active', 'waiting_answer', 'waiting_delay')
+      RETURNING id`,
+    [accountId, displayId, journeyId]
+  );
+  return rows.length;
+}
+
 export async function handleJourneyIntake(ctx, payload, accountId) {
   const { query } = ctx;
   const input = normalizeIntakePayload(payload);
@@ -498,6 +518,12 @@ export async function handleJourneyIntake(ctx, payload, accountId) {
       query, client, accountId, inboxId: input.inboxId, contactId, sourceId,
     });
     await renewAttempt(query, key, attemptId);
+    await stopSupersededRuns(query, {
+      accountId,
+      displayId,
+      journeyId: input.journeyId,
+      enabled: input.source === 'airtable_status' && journey.trigger?.replace_active === true,
+    });
     const run = await startRun({ ...ctx, client }, journey, {
       accountId,
       displayId,
