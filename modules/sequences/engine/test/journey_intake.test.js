@@ -85,6 +85,26 @@ test('normalizeIntakePayload keeps only the lead identifiers the intake is allow
   assert.equal('arbitrary_admin_field' in normalized.customAttributes, false);
 });
 
+test('normalizeIntakePayload uses the Airtable record as identity without overwriting Facebook attribution', () => {
+  const normalized = normalizeIntakePayload({
+    journey_id: JOURNEY_ID,
+    inbox_id: 40,
+    source: 'airtable_status',
+    external_id: 'rec-airtable-9',
+    contact: { name: 'דנה לוי', phone: '972501234567' },
+    custom_attributes: {
+      facebook_lead_id: 'must-not-overwrite-the-original',
+      lead_source: 'Airtable – אין מענה',
+    },
+  });
+
+  assert.deepEqual(normalized.customAttributes, {
+    airtable_lead_id: 'rec-airtable-9',
+  });
+  assert.equal(normalized.source, 'airtable_status');
+  assert.equal(normalized.externalId, 'rec-airtable-9');
+});
+
 test('normalizeIntakePayload requires a direct Airtable record id and validates routing fields', () => {
   const base = {
     journey_id: JOURNEY_ID,
@@ -103,6 +123,12 @@ test('normalizeIntakePayload requires a direct Airtable record id and validates 
     ...base,
     custom_attributes: { airtable_lead_id: 'rec-1', facebook_lead_id: 'different-facebook-lead' },
   }), (e) => e instanceof IntakeError && e.code === 'facebook_lead_id_mismatch');
+  assert.throws(() => normalizeIntakePayload({
+    ...base,
+    source: 'airtable_status',
+    external_id: 'rec-1',
+    custom_attributes: { airtable_lead_id: 'rec-2' },
+  }), (e) => e instanceof IntakeError && e.code === 'airtable_lead_id_mismatch');
 });
 
 async function insertJourney(id = JOURNEY_ID) {
