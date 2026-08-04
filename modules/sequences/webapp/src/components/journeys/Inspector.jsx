@@ -40,6 +40,9 @@ const M = {
 
     msgText: 'טקסט ההודעה',
     msgTextPh: 'אפשר לשלב {{שם}}, {{טלפון}} או {{answers.key}}',
+    pmText: 'ההודעה הפרטית',
+    pmTextPh: 'היי {{שם}}, ראיתי שהגבת — הנה הפרטים...',
+    pmHint: 'פייסבוק מתירה הודעה פרטית אחת בלבד לכל תגובה, ורק עד 7 ימים ממנה. מרגע שהאדם עונה, השיחה ממשיכה כרגיל.',
     mediaUrl: 'קישור למדיה (אופציונלי)',
     mediaUrlPh: 'https://…',
 
@@ -161,6 +164,9 @@ const M = {
 
     msgText: 'Message text',
     msgTextPh: 'You can use {{name}}, {{phone}} or {{answers.key}}',
+    pmText: 'Private message',
+    pmTextPh: 'Hi {{name}}, saw your comment — here are the details...',
+    pmHint: 'Facebook allows only one private message per comment, within 7 days. Once the person replies, the conversation continues normally.',
     mediaUrl: 'Media URL (optional)',
     mediaUrlPh: 'https://…',
 
@@ -860,6 +866,19 @@ export default function Inspector({
             accountId={accountId}
             onChange={(v) => patch({ mediaUrl: v })}
           />
+        </>
+      ) : null}
+
+      {node.type === 'private_reply' ? (
+        <>
+          <Textarea
+            label={t('pmText')}
+            value={d.text || ''}
+            placeholder={t('pmTextPh')}
+            vars={vars}
+            onChange={(e) => patch({ text: e.target.value })}
+          />
+          <p className="m-0 text-xxs leading-relaxed text-n-slate-10">{t('pmHint')}</p>
         </>
       ) : null}
 

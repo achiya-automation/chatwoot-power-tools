@@ -196,6 +196,18 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           currentId = nextNodeId(graph, currentId);
           break;
         }
+        case 'private_reply': {
+          // Meta מתירה הודעה פרטית אחת בלבד לכל תגובה, עד 7 ימים ממנה.
+          // האכיפה עצמה ב-social_comments (שם ה-Page Token); כאן רק מדווחים ומתקדמים —
+          // כישלון לא עוצר את הפלואו, כדי שצמתים כמו תיוג או תשובה פומבית עדיין ירוצו.
+          const pm = await client.sendPrivateReply(run.display_id, {
+            accountId: run.account_id,
+            text: renderText(d.text, rctx),
+          });
+          if (!pm.ok) console.warn(`[journeys] private_reply failed on conv ${run.display_id}: ${pm.error}`);
+          currentId = nextNodeId(graph, currentId);
+          break;
+        }
         case 'template': {
           // הודעת תבנית WhatsApp — הדרך היחידה לפתוח שיחה מחוץ לחלון ה-24ש.
           // הפרמטרים עוברים דרך renderText, כך ש-{{שם}} וכו' עובדים גם בתבניות.

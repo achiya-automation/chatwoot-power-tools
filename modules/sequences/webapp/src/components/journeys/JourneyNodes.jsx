@@ -2,6 +2,7 @@ import { Handle, Position } from '@xyflow/react';
 import {
   Zap,
   MessageSquare,
+  Lock,
   LayoutTemplate,
   HelpCircle,
   MousePointerClick,
@@ -31,6 +32,7 @@ const M = {
   he: {
     trigger: 'טריגר',
     message: 'הודעה',
+    private_reply: 'הודעה פרטית למגיב',
     template: 'תבנית וואטסאפ',
     question: 'שאלה',
     buttons: 'כפתורים',
@@ -63,6 +65,7 @@ const M = {
   en: {
     trigger: 'Trigger',
     message: 'Message',
+    private_reply: 'Private reply to commenter',
     template: 'WhatsApp template',
     question: 'Question',
     buttons: 'Buttons',
@@ -98,6 +101,7 @@ const M = {
 export const NODE_META = {
   trigger: { icon: Zap, color: 'teal' },
   message: { icon: MessageSquare, color: 'blue' },
+  private_reply: { icon: Lock, color: 'violet' },
   template: { icon: LayoutTemplate, color: 'blue' },
   question: { icon: HelpCircle, color: 'violet' },
   buttons: { icon: MousePointerClick, color: 'violet' },
@@ -349,10 +353,20 @@ function HandoffNode({ data, selected }) {
   );
 }
 
+function PrivateReplyNode({ data, selected }) {
+  const t = useT(M);
+  return (
+    <NodeShell type="private_reply" selected={selected}>
+      <Snippet text={data?.text} fallback={t('empty')} />
+    </NodeShell>
+  );
+}
+
 // Registered once at module level — React Flow requires a stable reference.
 export const nodeTypes = {
   trigger: TriggerNode,
   message: MessageNode,
+  private_reply: PrivateReplyNode,
   template: TemplateNode,
   question: QuestionNode,
   buttons: ButtonsNode,
