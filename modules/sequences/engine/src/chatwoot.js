@@ -285,6 +285,33 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       return { id: m.id, content };
     },
 
+    /** journeys: Private Reply — הודעה פרטית למי שהגיב על פוסט בפייסבוק/אינסטגרם.
+     *  לא עובר דרך ה-API של Chatwoot אלא דרך תוסף social_comments, כי שם שמור
+     *  ה-Page Token ושם נאכפות שתי המגבלות של Meta: הודעה אחת לכל תגובה, וחלון 7 ימים.
+     *  מחזיר { ok, error } — הקורא מחליט אם להמשיך בפלואו. */
+    sendPrivateReply: async (cid, { accountId, text }) => {
+      const base = (process.env.CHATWOOT_BASE_URL || '').replace(/\/+$/, '');
+      if (!base) return { ok: false, error: 'CHATWOOT_BASE_URL not set' };
+
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 8000);
+      try {
+        const r = await fetch(`${base}/social-comments/private-reply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation: { display_id: cid }, account_id: accountId, text }),
+          signal: ac.signal,
+          redirect: 'error',
+        });
+        const body = await r.json().catch(() => ({}));
+        return r.ok ? { ok: true, mid: body.mid } : { ok: false, error: body.error || `HTTP ${r.status}` };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+
     /** journeys: plain text message (already-rendered content, no template involved). */
     sendText: async (cid, content) => {
       const m = await req(`/conversations/${cid}/messages`, {

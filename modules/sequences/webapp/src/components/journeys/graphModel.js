@@ -15,7 +15,7 @@
  */
 
 export const NODE_TYPES = [
-  'trigger', 'message', 'template', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
+  'trigger', 'message', 'private_reply', 'template', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
 ];
 
 // Types the palette can add (exactly one trigger exists, created by emptyGraph).
@@ -31,6 +31,10 @@ export function defaultDataFor(type) {
   switch (type) {
     case 'message':
       return { text: '', mediaUrl: '' };
+    // Private Reply — הודעה פרטית למי שהגיב על פוסט. אין mediaUrl: Meta מתירה
+    // הודעה אחת בלבד לכל תגובה, ומדיה מצריכה קריאה שנייה.
+    case 'private_reply':
+      return { text: '' };
     case 'template':
       // WhatsApp template message — the only first message allowed outside the 24h window.
       return {
@@ -139,6 +143,8 @@ export function normalizeData(type, d = {}) {
   switch (type) {
     case 'message':
       return { text: String(d.text || ''), mediaUrl: String(d.mediaUrl || '').trim() };
+    case 'private_reply':
+      return { text: String(d.text || '') };
     case 'template':
       return {
         name: String(d.name || '').trim(),

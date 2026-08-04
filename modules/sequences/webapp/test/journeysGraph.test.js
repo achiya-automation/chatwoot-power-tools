@@ -21,7 +21,7 @@ import {
 
 test('node type set matches the engine runtime', () => {
   assert.deepEqual(NODE_TYPES, [
-    'trigger', 'message', 'template', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
+    'trigger', 'message', 'private_reply', 'template', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
   ]);
   assert.ok(!ADDABLE_TYPES.includes('trigger')); // exactly one trigger, not addable
 });
