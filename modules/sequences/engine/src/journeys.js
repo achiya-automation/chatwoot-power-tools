@@ -481,6 +481,18 @@ export async function feedAnswer(ctx, run, journey, message) {
     return;
   }
 
+  // הודעה נכנסת בלי טקסט = קובץ, תמונה, הודעה קולית, סטיקר או מיקום: Chatwoot מוסר אותה
+  // עם content ריק. זו לעולם לא תשובה תקפה לשאלה או לכפתור, אבל היא כן אדם חי שמנסה לדבר —
+  // ולכן מוסרים לנציג בשקט במקום להשיב "לא הצלחתי להבין" לתוך שיחה אנושית שכבר רצה.
+  if (!text) {
+    try { await client.toggleStatus(run.display_id, 'open'); } catch { /* ערוץ בלי סטטוס */ }
+    await updateRun(query, run.id, {
+      status: 'done', answers, next_action_at: null, waiting_since: null,
+      last_inbound_message_id: messageId, last_error: 'media answer → handoff',
+    });
+    return;
+  }
+
   let value = null;
   let matchedOption = null;
   if (node.type === 'buttons') {

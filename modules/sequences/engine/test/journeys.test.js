@@ -204,6 +204,21 @@ test('feedAnswer: duplicate message id is ignored (dedupe)', async () => {
   assert.equal(client.calls.length, callCount); // שום שליחה נוספת
 });
 
+test('feedAnswer: attachment-only message hands off instead of re-prompting', async () => {
+  const j = await makeJourney();
+  const client = fakeClient();
+  await startRun(ctxWith(client), j, { accountId: 1, displayId: 106 });
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 106`);
+  const before = client.calls.length;
+  // PDF/תמונה/הודעה קולית מגיעים מ-Chatwoot עם content ריק
+  await feedAnswer(ctxWith(client), run, j, { id: 700, content: '' });
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 106`);
+  assert.equal(run.status, 'done');
+  assert.equal(run.retry_count, 0);
+  assert.equal(client.calls.slice(before).filter((c) => c.name === 'sendText').length, 0);
+  assert.deepEqual(client.calls.at(-1), { name: 'toggleStatus', args: [106, 'open'] });
+});
+
 test('feedAnswer: opt-out word stops the run', async () => {
   const j = await makeJourney();
   const client = fakeClient();
