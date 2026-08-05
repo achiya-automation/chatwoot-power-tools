@@ -200,7 +200,7 @@ module WhatsappCampaignMacroActionService
   CAMPAIGN_ONLY_AGENT_BOTS = {
     [11, 12] => {
       inbox_id: 38,
-      markers: ['חשבת אולי למכור', 'רציתי לשאול בנוגע לדירה']
+      markers: ['חשבת אולי למכור', 'רציתי לשאול בנוגע לדירה', 'חשבתם אולי למכור']
     }
   }.freeze
 
