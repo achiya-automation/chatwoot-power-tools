@@ -5,6 +5,7 @@
  * (no top-level message_type/content_type — the brief had those but n8n omits them)
  */
 import { readFile } from 'node:fs/promises';
+import { isHumanOutgoing } from './reads.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -535,14 +536,15 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       );
     },
 
-    /** Returns true if a human agent (outgoing, sender 'User' — not our AgentBot) messaged
-     *  after sinceISO. Signals a human took over, so the sequence should stand down. */
+    /** Returns true if a human messaged after sinceISO — a Chatwoot agent, or the business
+     *  phone itself under coexistence (see isHumanOutgoing). Not our AgentBot. Signals a
+     *  human took over, so the sequence should stand down. */
     outgoingByHumanSince: async (cid, sinceISO) => {
       if (reads?.outgoingByHumanSince) return reads.outgoingByHumanSince(cid, sinceISO, accountId);
       const r = await req(`/conversations/${cid}/messages`);
       const since = new Date(sinceISO);
       return (r.payload || []).some(
-        (m) => m.message_type === 1 && m.sender_type === 'User' && new Date(m.created_at * 1000) > since
+        (m) => isHumanOutgoing(m) && new Date(m.created_at * 1000) > since
       );
     },
 

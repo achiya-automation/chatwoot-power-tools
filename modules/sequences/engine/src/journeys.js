@@ -17,6 +17,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { isOptOut } from './compliance.js';
 import { isNoSendNow } from './schedule.js';
+import { HUMAN_OUTGOING_SQL } from './reads.js';
 
 const LIVE = ['active', 'waiting_answer', 'waiting_delay'];
 
@@ -618,7 +619,7 @@ export async function handleJourneyHook(ctx, event) {
   const convState = async () => {
     const r = await query(
       `SELECT count(*) FILTER (WHERE m.message_type = 0 AND m.private IS NOT TRUE) AS inbound,
-              count(*) FILTER (WHERE m.message_type = 1 AND m.sender_type = 'User') AS human_out,
+              count(*) FILTER (WHERE ${HUMAN_OUTGOING_SQL}) AS human_out,
               COALESCE(min(m.id) FILTER (WHERE m.message_type = 0 AND m.private IS NOT TRUE), 0) AS first_inbound_id
          FROM public.messages m JOIN public.conversations c ON c.id = m.conversation_id
         WHERE c.account_id = $1 AND c.display_id = $2`,
