@@ -229,3 +229,22 @@ test('call.js returns .forbidden=true on 403 for sequencesApi', async () => {
     assert.strictEqual(err.forbidden, true);
   }
 });
+
+test('call.js surfaces the engine error on 500 instead of the bare status', async () => {
+  const reason = 'Content in This Language Already Exists — There is already Hebrew content for this template.';
+  mockFetch = async () => new Response(JSON.stringify({ ok: false, error: reason }), { status: 500 });
+
+  await assert.rejects(
+    templatesApi.createTemplate(7, 38, { name: 'property_owner_opener' }),
+    (err) => err.message === reason && !err.forbidden,
+  );
+});
+
+test('call.js falls back to the status message when the body carries no reason', async () => {
+  mockFetch = async () => new Response('gateway blew up', { status: 502 });
+
+  await assert.rejects(
+    templatesApi.createTemplate(7, 38, { name: 'x' }),
+    (err) => /502/.test(err.message),
+  );
+});

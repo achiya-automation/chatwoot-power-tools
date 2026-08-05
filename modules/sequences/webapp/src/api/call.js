@@ -34,15 +34,19 @@ export async function call(action, payload, accountId) {
     body: JSON.stringify({ action, payload: payload || {} }),
   });
 
-  // Handle 403 Forbidden — mark with .forbidden for UI to show admin-only state
-  if (res.status === 403) {
+  // Any failure status: the engine answers { ok:false, error } with the real reason —
+  // Meta's rejection ("Content in This Language Already Exists"), a validation failure —
+  // so read the body first and fall back to the bare status only when it has nothing.
+  // Showing "API tpl_create נכשל (500)" while the actual reason sits in the body is how
+  // a self-explanatory error turns into a log dig.
+  if (!res.ok) {
     const json = await res.json().catch(() => ({}));
     const err = new Error(json.error || translate(M, 'apiFailedStatus', { action, status: res.status }));
-    err.forbidden = true;
+    // 403 stays marked so the UI can render its admin-only state rather than a plain error.
+    if (res.status === 403) err.forbidden = true;
     throw err;
   }
 
-  if (!res.ok) throw new Error(translate(M, 'apiFailedStatus', { action, status: res.status }));
   const json = await res.json();
   // json.error comes from the engine (already bilingual per ?locale=); fall back to localized string if absent.
   if (json && json.ok === false) throw new Error(json.error || translate(M, 'apiFailed', { action }));
