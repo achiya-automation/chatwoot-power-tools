@@ -8,6 +8,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
+import { isHumanOutgoing } from '../src/reads.js';
 import {
   startNodeOf, nextNodeId, renderText, validateAnswer, matchOption,
   numberedFallback, keywordMatch, startRun, feedAnswer, handleJourneyHook,
@@ -738,6 +739,37 @@ test('message_created does NOT start on_new_conversation when a human agent alre
     account: { id: 1 }, conversation: { display_id: 441 }, inbox: { id: 31 },
   });
   assert.equal((await query(`SELECT count(*)::int AS n FROM drip.journey_runs WHERE display_id = 441`))[0].n, 0);
+});
+
+test('message_created does NOT start on_new_conversation when the business answered from the phone', async () => {
+  await makeJourney(GRAPH, { on_new_conversation: true });
+  const client = fakeClient();
+  const ctx = ctxWith(client);
+  await query(`INSERT INTO public.conversations (id, display_id, account_id, inbox_id) VALUES (442, 442, 1, 31)
+    ON CONFLICT (id) DO NOTHING`);
+  await query(`DELETE FROM public.messages WHERE conversation_id = 442`);
+  // coexistence: הודעה מאפליקציית הנייד חוזרת כ-echo — בלי sender_type, רק הדגל.
+  // content_attributes נשמר כמחרוזת JSON בתוך עמודת json, בדיוק כמו בפרודקשן.
+  await query(`INSERT INTO public.messages (id, conversation_id, account_id, message_type, content, sender_type, content_attributes)
+    VALUES (8420, 442, 1, 1, 'כבר עניתי לך מהנייד', NULL, to_json('{"external_echo":true}'::text)),
+           (8421, 442, 1, 0, 'תודה!', NULL, NULL)`);
+
+  await handleJourneyHook(ctx, {
+    event: 'message_created', message_type: 'incoming', id: 8421, content: 'תודה!',
+    account: { id: 1 }, conversation: { display_id: 442 }, inbox: { id: 31 },
+  });
+  assert.equal((await query(`SELECT count(*)::int AS n FROM drip.journey_runs WHERE display_id = 442`))[0].n, 0);
+});
+
+test('isHumanOutgoing: agent and phone-echo count as human, AgentBot and inbound do not', () => {
+  assert.equal(isHumanOutgoing({ message_type: 1, sender_type: 'User' }), true);
+  // ה-API מחזיר content_attributes כמחרוזת (לפעמים כפולה) או כאובייקט — כל הצורות נתמכות
+  assert.equal(isHumanOutgoing({ message_type: 1, content_attributes: { external_echo: true } }), true);
+  assert.equal(isHumanOutgoing({ message_type: 1, content_attributes: '{"external_echo":true}' }), true);
+  assert.equal(isHumanOutgoing({ message_type: 1, content_attributes: '"{\\"external_echo\\":true}"' }), true);
+  assert.equal(isHumanOutgoing({ message_type: 1, sender_type: 'AgentBot' }), false);
+  assert.equal(isHumanOutgoing({ message_type: 0, content_attributes: { external_echo: true } }), false);
+  assert.equal(isHumanOutgoing({ message_type: 1, content_attributes: 'לא JSON בכלל' }), false);
 });
 
 test('jrn_launch refuses manual=false and a graph without a start node', async () => {
