@@ -20,6 +20,17 @@ const GRAPH = 'https://graph.facebook.com/v21.0';
 
 // "מקליד" של Meta פג אחרי 25 שניות. מרעננים ב-20 כדי להשאיר מרווח לרשת.
 const TYPING_TTL_MS = 20_000;
+
+// ⭐ 06.08.2026 — למה יש בכלל לולאת רענון: ירייה אחת של "מקליד" מתה 25ש' אחרי
+// שנשלחה, בעוד שהתשובה מגיעה מ-n8n אחרי 10-15ש' (תשובה פשוטה) ועד 5 דקות (שאלת
+// מחיר שמריצה מחקר). נמדד חי בשיחה 297: על "כמה אקבל עליו?" ה"מקליד" כבה 3:46
+// דקות לפני התשובה, ועל תשובות קצרות הוא נדלק 3 שניות לפניה — כלומר בפועל לא נראה.
+// לכן: מרעננים עד שיוצאת הודעה חדשה בשיחה. הרענון ב-26-32ש' ולא ב-20 בכוונה —
+// הפסק הקצר בין מחזורים נקרא כמו אדם שעוצר לחשוב, במקום "מקליד" רצוף של 5 דקות.
+const TYPING_REFRESH_MIN_S = 26;
+const TYPING_REFRESH_MAX_S = 32;
+// תקרה: מעבר לזה משהו תקוע בצד ששולח, ואדם שמקליד רבע שעה הוא לא אדם.
+const TYPING_MAX_WAIT_MS = 6 * 60_000;
 // כמה הודעות לעבד בסבב אחד. תקרה שמונעת מסבב ראשון אחרי downtime לפתוח מאות
 // טיימרים בבת אחת; היתרה נאספת בסבב הבא.
 const BATCH = 200;
@@ -75,7 +86,22 @@ export async function settingsFor(query, accountId, inboxId) {
 }
 
 /**
- * מטפל בהודעה נכנסת אחת: המתנה → נקרא → (במצב auto) המתנה → מקליד.
+ * האם כבר יצאה הודעה חדשה יותר בשיחה — תשובת הבוט, נציג, או הודעה נוספת מהלקוח
+ * (שתקבל לולאת "מקליד" משל עצמה). זה סימן העצירה של הרענון.
+ */
+async function hasNewerMessage(query, conversationId, messageId) {
+  if (!conversationId) return true; // בלי מזהה שיחה אין איך לדעת מתי לעצור — לא מרעננים
+  const rows = await query(
+    `SELECT 1 FROM public.messages
+      WHERE conversation_id = $1 AND id > $2 AND private = false
+      LIMIT 1`,
+    [conversationId, messageId]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * מטפל בהודעה נכנסת אחת: המתנה → נקרא → (במצב auto) המתנה → מקליד → רענון עד התשובה.
  * רץ מנותק מהלולאה — סבב המשיכה לא ממתין לאף טיימר.
  */
 async function handleIncoming(deps, msg) {
@@ -103,7 +129,24 @@ async function handleIncoming(deps, msg) {
     log(`[presence] typing inbox=${msg.inbox_id} (auto)`);
   } catch (e) {
     log(`[presence] typing failed inbox=${msg.inbox_id}: ${e.message}`);
+    return;
   }
+
+  // מחזיקים את "מקליד" חי עד שהתשובה באמת יוצאת (ראה TYPING_REFRESH_MIN_S)
+  const deadline = Date.now() + TYPING_MAX_WAIT_MS;
+  let cycles = 0;
+  while (Date.now() < deadline) {
+    await sleep(jitter(TYPING_REFRESH_MIN_S, TYPING_REFRESH_MAX_S));
+    if (await hasNewerMessage(query, msg.conversation_id, msg.id)) return;
+    try {
+      await send({ ...target, typing: true }, deps.fetchImpl);
+      cycles += 1;
+    } catch (e) {
+      log(`[presence] typing refresh failed inbox=${msg.inbox_id}: ${e.message}`);
+      return;
+    }
+  }
+  log(`[presence] typing timeout inbox=${msg.inbox_id} after ${cycles} refreshes`);
 }
 
 /**
@@ -157,7 +200,7 @@ export async function tickPresence(deps) {
   const from = Number(cur[0].last_message_id);
 
   const rows = await query(
-    `SELECT m.id, m.account_id, m.inbox_id, m.source_id,
+    `SELECT m.id, m.account_id, m.inbox_id, m.source_id, m.conversation_id,
             cw.provider_config->>'phone_number_id' AS phone_id,
             cw.provider_config->>'api_key'         AS token
        FROM public.messages m
@@ -274,4 +317,7 @@ export async function handlePresenceAction(deps, action, payload = {}, accountId
   throw new Error(`unknown presence action: ${action}`);
 }
 
-export const _internals = { send, jitter, DEFAULTS, TYPING_TTL_MS, lastTyping };
+export const _internals = {
+  send, jitter, DEFAULTS, TYPING_TTL_MS, lastTyping,
+  hasNewerMessage, TYPING_REFRESH_MIN_S, TYPING_REFRESH_MAX_S, TYPING_MAX_WAIT_MS,
+};
