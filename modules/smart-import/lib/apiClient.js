@@ -54,5 +54,12 @@ export function createApiClient(accountId, headers, fetchImpl = fetch) {
     createLabel: (title) => req('POST', '/labels', { label: { title } }),
     listCustomAttributes: () => req('GET', '/custom_attribute_definitions?attribute_model=contact_attribute'),
     createCustomAttribute: (def) => req('POST', '/custom_attribute_definitions', { custom_attribute_definition: def }),
+    // Server-side import (custom smart_import_server.rb initializer). A 404 from any of
+    // these means the initializer is not live on this server — callers fall back to the
+    // legacy in-browser runner.
+    smartImportPreview: (contacts) => req('POST', '/smart_import/preview', { contacts }),
+    smartImportStart: (body) => req('POST', '/smart_import', body),
+    smartImportStatus: (jobId) => req('GET', `/smart_import/${jobId}`),
+    smartImportCancel: (jobId) => req('DELETE', `/smart_import/${jobId}`),
   };
 }
