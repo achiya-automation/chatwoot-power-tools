@@ -32,10 +32,12 @@ function fakeFetch(ok = true) {
   return fn;
 }
 
-test('ברירת מחדל שמרנית: קריאה כן, "מקליד" רק מנציג', async () => {
+// עודכן 06.08.2026 יחד עם a256633: ברירת המחדל הפכה לכבויה לגמרי אחרי שתיבות
+// לקוחות ירשו סימון-נקרא שאיש לא ביקש. הפעלה — רק במפורש פר-תיבה.
+test('ברירת מחדל: הכל כבוי — בלי נקרא ובלי מקליד', async () => {
   const s = await settingsFor(fakeQuery([[]]), 1, 38);
-  assert.equal(s.read_receipts, true);
-  assert.equal(s.typing_mode, 'agent');
+  assert.equal(s.read_receipts, false);
+  assert.equal(s.typing_mode, 'off');
 });
 
 test('שורת התיבה גוברת על ברירת המחדל של החשבון', async () => {
@@ -120,4 +122,39 @@ test('הסינון תופס רק נכנסות, לא-פרטיות, whatsapp_cloud
   assert.match(sel, /m\.private = false/);
   assert.match(sel, /m\.source_id LIKE 'wamid\.%'/);
   assert.match(sel, /cw\.provider = 'whatsapp_cloud'/);
+});
+
+// ── לולאת רענון ה"מקליד" (06.08.2026) ────────────────────────────────────
+// הבאג שנמדד חי: ירייה אחת של "מקליד" מתה 25ש' אחרי שנשלחה, בעוד שתשובת הבוט
+// מגיעה אחרי 10-15ש' עד 5 דקות. בלי conversation_id בשליפה אין למה לרענן.
+
+test('השליפה מביאה conversation_id — בלעדיו לולאת הרענון מתה בשקט', async () => {
+  const q = fakeQuery([[{ last_message_id: 0 }], [], [{ id: 0 }]]);
+  await tickPresence({ query: q, fetchImpl: fakeFetch(), log: noop });
+  assert.match(q.calls[1].sql, /m\.conversation_id/);
+});
+
+test('סימן העצירה: הודעה חדשה יותר בשיחה עוצרת את הרענון', async () => {
+  const q = fakeQuery([[{ '?column?': 1 }]]);
+  assert.equal(await _internals.hasNewerMessage(q, 900, 500), true);
+  assert.match(q.calls[0].sql, /id > \$2/);
+  assert.match(q.calls[0].sql, /private = false/); // פתק פנימי של נציג הוא לא תשובה ללקוח
+  assert.deepEqual(q.calls[0].params, [900, 500]);
+});
+
+test('אין הודעה חדשה → ממשיכים לרענן', async () => {
+  assert.equal(await _internals.hasNewerMessage(fakeQuery([[]]), 900, 500), false);
+});
+
+test('בלי conversation_id לא מרעננים בכלל (אין איך לדעת מתי לעצור)', async () => {
+  const q = fakeQuery([[]]);
+  assert.equal(await _internals.hasNewerMessage(q, null, 500), true);
+  assert.equal(q.calls.length, 0); // לא ניגשים ל-DB סתם
+});
+
+test('הרענון מתוזמן אחרי תפוגת ה-25ש\' של Meta, ולא לפניה', async () => {
+  // רענון מוקדם מדי = "מקליד" רצוף בלי נשימה; מאוחר מדי = חורים ארוכים
+  assert.ok(_internals.TYPING_REFRESH_MIN_S > 25, 'חייב להיות אחרי התפוגה');
+  assert.ok(_internals.TYPING_REFRESH_MAX_S <= 35, 'פסק ארוך מדי נראה כמו נטישה');
+  assert.ok(_internals.TYPING_MAX_WAIT_MS >= 5 * 60_000, 'חייב לכסות את ההשהיה העמוקה של הבוט (עד 5 דק\')');
 });

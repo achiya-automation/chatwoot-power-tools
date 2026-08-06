@@ -244,9 +244,12 @@ setInterval(() => tick().catch((e) => console.error('[drip] tick error:', e.mess
 
 // ── Presence loop — "נקרא"/"מקליד" ─────────────────────────────────────────
 // לולאה נפרדת ומהירה מה-reconcile: ✓✓ שמופיע דקה אחרי ההודעה מרגיש מוזר.
-// 5 שניות + ההשהיה האנושית שבהגדרות = חוויה טבעית. ראה presence.js על למה
-// משיכה ולא webhook (SafeFetch חוסם יעדים פנימיים).
-const PRESENCE_INTERVAL_MS = Number(process.env.PRESENCE_INTERVAL_MS || 5000);
+// ההשהיה האנושית שבהגדרות נוספת על זה. ראה presence.js על למה משיכה ולא webhook
+// (SafeFetch חוסם יעדים פנימיים).
+// 06.08.2026: 5000 → 2000. הסריקה מוסיפה 0-5ש' לפני שההשהיות בכלל מתחילות, ולכן
+// ה"מקליד" נדלק עד 14ש' אחרי ההודעה — אחרי שהבוט כבר ענה (נמדד: 3 שניות גלוי).
+// שאילתת id > cursor על מפתח ראשי, אז 2ש' לא עולים כלום.
+const PRESENCE_INTERVAL_MS = Number(process.env.PRESENCE_INTERVAL_MS || 2000);
 setInterval(
   () => tickPresence({ query, log: (m) => console.log(m) })
     .catch((e) => console.error('[presence] tick error:', e.message)),
