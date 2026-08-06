@@ -24,9 +24,12 @@ const TYPING_TTL_MS = 20_000;
 // טיימרים בבת אחת; היתרה נאספת בסבב הבא.
 const BATCH = 200;
 
+// ⛔ שני השדות הראשונים חייבים להישאר כבויים: ב-Cloud API גם payload של "מקליד"
+// נושא status:"read", כך ש-typing_mode פעיל מסמן נקרא גם כש-read_receipts כבוי.
+// הפעלה — רק במפורש, פר-חשבון/תיבה, מהדשבורד (הוחלט 06.08.2026).
 const DEFAULTS = {
-  read_receipts: true,
-  typing_mode: 'agent',
+  read_receipts: false,
+  typing_mode: 'off',
   read_delay_min: 2,
   read_delay_max: 5,
   typing_delay_min: 2,
