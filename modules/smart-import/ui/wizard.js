@@ -4,6 +4,7 @@ import { buildContactPayload } from '../lib/fieldMapper.js';
 import { createImportJob } from '../lib/importRunner.js';
 import { createApiClient } from '../lib/apiClient.js';
 import { batchDedup } from '../lib/dedup.js';
+import { createServerJob, wireRow } from '../lib/serverImport.js';
 import { vendorUrl } from '../lib/basepath.js';
 import { isValidLabelTitle, normalizeLabelTitle } from '../lib/labelTitle.js';
 import { STYLES } from './styles.js';
@@ -61,6 +62,7 @@ const I18N = {
     bgCancelled: 'הייבוא הופסק', bgError: 'הייבוא נעצר עקב שגיאה',
     stopImport: 'עצירת הייבוא',
     bgHint: 'אפשר להמשיך לעבוד בינתיים — רק אל תסגרו את הטאב עד לסיום',
+    bgHintServer: (m) => (m ? `אפשר לסגור את הטאב — סיכום יישלח ל־${m}` : 'אפשר לסגור את הטאב — סיכום יישלח למייל בסיום'),
     dupInFile: 'כפולים בקובץ (ימוזגו)',
     headerEchoSkipped: (rows) =>
       `שורות כותרת בתוך הקובץ זוהו ודולגו (שורות: ${rows}) — נראה שהקובץ מורכב מכמה רשימות שהודבקו יחד. הן לא ייובאו כאנשי קשר.`,
@@ -110,6 +112,7 @@ const I18N = {
     bgCancelled: 'Import stopped', bgError: 'Import stopped due to an error',
     stopImport: 'Stop import',
     bgHint: 'You can keep working — just don\'t close this tab until it finishes',
+    bgHintServer: (m) => (m ? `You can close this tab — a summary will be emailed to ${m}` : 'You can close this tab — a summary will be emailed when it finishes'),
     dupInFile: 'duplicates in file (will be merged)',
     headerEchoSkipped: (rows) =>
       `Header rows inside the file were detected and skipped (rows: ${rows}) — the file looks like several lists pasted together. They will not be imported as contacts.`,
@@ -150,7 +153,7 @@ function loadXlsx(assetBase) {
 export function openWizard({ accountId, authHeaders, assetBase }) {
   injectStyles();
   const api = createApiClient(accountId, authHeaders);
-  const state = { table: null, mapping: [], customMap: [], labelTitle: '', labelNeedsCreation: false, waInboxId: null };
+  const state = { table: null, mapping: [], customMap: [], labelTitle: '', labelNeedsCreation: false, waInboxId: null, serverMode: false };
 
   // Resolve the WhatsApp inbox once, up front: every imported contact is linked to it
   // so Chatwoot opens future conversations on the IMPORTED contact (real name) instead
@@ -785,22 +788,33 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     state.contacts = contacts;
     const N = contacts.length;
 
-    // Full dedup — batched OR-filter calls (a handful of requests instead of one
-    // per row) so runImport can skip per-row filters and the preview shows fast.
+    // Dedup counts — one POST to the server backend when it is live (SQL matching, and
+    // the probe doubles as stepRun's mode switch), else the legacy batched OR-filter
+    // calls. Any probe failure (404 = initializer not deployed, network, 5xx) simply
+    // means "run the whole import in the browser like before".
     let dedupOk = true;
+    state.serverMode = false;
+    let serverCounts = null;
     try {
-      await batchDedup(contacts, api, (d, tot) => {
-        status.textContent = `${t('checkingDupes')} ${d}/${tot}`;
-      });
-    } catch {
-      // Partial batch state is unreliable — clear it; the runner falls back to a
-      // fresh per-row filter for every row during the import itself.
-      dedupOk = false;
-      contacts.forEach((c) => { delete c.__match; delete c.__dupTail; });
+      serverCounts = await api.smartImportPreview(contacts.map(wireRow));
+      state.serverMode = true;
+    } catch { /* backend absent or unreachable — legacy path below */ }
+
+    if (!state.serverMode) {
+      try {
+        await batchDedup(contacts, api, (d, tot) => {
+          status.textContent = `${t('checkingDupes')} ${d}/${tot}`;
+        });
+      } catch {
+        // Partial batch state is unreliable — clear it; the runner falls back to a
+        // fresh per-row filter for every row during the import itself.
+        dedupOk = false;
+        contacts.forEach((c) => { delete c.__match; delete c.__dupTail; });
+      }
     }
 
-    const dupes = contacts.filter((c) => c.__dupTail).length;
-    const existing = contacts.filter((c) => c.__match).length;
+    const dupes = state.serverMode ? (serverCounts.dup_in_file || 0) : contacts.filter((c) => c.__dupTail).length;
+    const existing = state.serverMode ? serverCounts.existing : contacts.filter((c) => c.__match).length;
     const created = N - existing - dupes;
     status.textContent = dedupOk
       ? `${t('readyToImport')} ${N} · ${created} ${t('newWord')} · ${existing} ${t('existingWillUpdate')}` +
@@ -888,15 +902,38 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // the user keeps working in Chatwoot while it runs (SPA navigation is safe —
   // the job lives on window and the pill on <body>). Closing the tab mid-run is
   // guarded by beforeunload inside mountPill.
-  function stepRun() {
+  let startingImport = false;
+  async function stepRun() {
+    if (startingImport) return; // the await below opens a double-click window
     if (window.__cwImportJob && ['running', 'cancelling'].includes(window.__cwImportJob.progress.state)) {
       showError(t('alreadyRunning'));
       return;
     }
-    const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
-    window.__cwImportJob = job;
-    mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
-    close();
+    startingImport = true;
+    try {
+      if (state.serverMode) {
+        try {
+          const res = await api.smartImportStart({
+            contacts: state.contacts.map(wireRow),
+            label_title: state.labelTitle,
+            wa_inbox_id: state.waInboxId,
+            locale: DRIP_LOCALE,
+          });
+          const job = createServerJob({
+            api, jobId: res.job_id, total: state.contacts.length,
+            email: res.email, labelTitle: state.labelTitle,
+          });
+          window.__cwImportJob = job;
+          mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
+          close();
+          return;
+        } catch { /* server refused the start — the in-browser runner still works */ }
+      }
+      const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
+      window.__cwImportJob = job;
+      mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
+      close();
+    } finally { startingImport = false; }
   }
 
   // ── DOM helpers ──────────────────────────────────────────────────────────────
@@ -987,14 +1024,17 @@ function mountPill(job, { dark, rtl }) {
   track.appendChild(fill);
 
   const detail = el('div', 'text-xs text-n-slate-11');
-  const hint = elWithText('div', 'text-xs text-n-slate-11', t('bgHint'));
+  const hint = elWithText('div', 'text-xs text-n-slate-11',
+    job.serverMode ? t('bgHintServer')(job.emailTo) : t('bgHint'));
   const actions = el('div', 'flex items-center gap-2');
   actions.style.display = 'none';
   pill.append(head, track, detail, hint, actions);
   document.body.appendChild(pill);
 
+  // A server-side job survives the tab — the unload guard exists only for the legacy
+  // in-browser runner, where closing the tab really does stop the import.
   function warnUnload(e) { e.preventDefault(); e.returnValue = ''; }
-  window.addEventListener('beforeunload', warnUnload);
+  if (!job.serverMode) window.addEventListener('beforeunload', warnUnload);
 
   function dismiss() {
     off();
@@ -1020,6 +1060,8 @@ function mountPill(job, { dark, rtl }) {
       title.textContent = p.state === 'running' ? t('bgImporting') : t('bgCancelling');
       xBtn.title = t('stopImport');
       detail.textContent = `${p.done}/${p.total} · ${counts}`;
+      // The email address arrives with the first status poll — keep the hint current.
+      if (job.serverMode) hint.textContent = t('bgHintServer')(job.emailTo);
       return;
     }
     // Finished: done / cancelled / error
