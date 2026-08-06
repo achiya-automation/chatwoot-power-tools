@@ -489,11 +489,14 @@ SmartImportServer::DEFINE = proc do
   end
 
   class ::SmartImportMailer < ::ApplicationMailer
-    # Plain-text body passed directly (no template lookup, no layout); the BOM on the CSV
-    # attachment keeps Hebrew readable when Excel opens it.
-    def summary(to, subject, body, csv)
+    # format.text + render plain (NOT the body:/content_type: shortcut — with attachments
+    # present that shortcut silently drops the body text). The BOM on the CSV attachment
+    # keeps Hebrew readable when Excel opens it.
+    def summary(to, subject, body_text, csv)
       attachments['import-log.csv'] = { mime_type: 'text/csv', content: "﻿" + csv } if csv
-      mail(to: to, subject: subject, body: body, content_type: 'text/plain')
+      mail(to: to, subject: subject) do |format|
+        format.text { render plain: body_text }
+      end
     end
   end
 end
