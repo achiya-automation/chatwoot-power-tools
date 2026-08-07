@@ -3,8 +3,9 @@ import { createApp } from './api.js';
 import { getPool, query } from './db.js';
 import { runMigrations } from './migrate.js';
 import { reconcileAccount } from './reconcile.js';
-import { refreshHealth } from './meta.js';
+import { refreshHealth, fetchNumberHealth } from './meta.js';
 import { notifyNewLeads } from './notify.js';
+import { watchNumberQuality } from './qualityWatch.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 import { pollTemplateStatuses } from './templates.js';
@@ -250,6 +251,19 @@ setInterval(() => {
     .catch((e) => console.error('[drip] tick error:', e.message))
     .finally(() => { tickRunning = false; });
 }, config.reconcileIntervalMs);
+
+// ── תצפית על דירוג האיכות של כל המספרים ──────────────────────────────────
+// כל שעה, ומיד בעלייה. סורק גם מספרים שהמנוע לא שולח מהם — שם בדיוק התגלה מספר
+// ב-RED שאיש לא ידע עליו. אין נעילה כי הסבב קצר וההפרש בין ריצות ענק.
+const QUALITY_WATCH_MS = Number(process.env.QUALITY_WATCH_MS || 3600000);
+const runQualityWatch = () =>
+  watchNumberQuality(pool, { fetchNumberHealthFn: fetchNumberHealth, webhookUrl: config.notifyWebhookUrl })
+    .then(({ checked, alerts }) => {
+      if (alerts) console.log(`[quality-watch] ${checked} numbers checked, ${alerts} alert(s) sent`);
+    })
+    .catch((e) => console.error('[quality-watch] sweep failed:', e.message));
+runQualityWatch();
+setInterval(runQualityWatch, QUALITY_WATCH_MS);
 
 // ── כיבוי מסודר ───────────────────────────────────────────────────────────
 // docker stop / פריסה מחדש שולחים SIGTERM, ו-Node יוצא מיד. בלי זה אפשר להיקטע
