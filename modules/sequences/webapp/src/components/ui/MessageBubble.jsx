@@ -1,5 +1,6 @@
 import { Image, Video, FileText } from 'lucide-react';
 import { useMemo } from 'react';
+import HeaderMedia from './HeaderMedia.jsx';
 import useT, { useLocale } from '../../useT.js';
 import { translate } from '../../i18n.js';
 
@@ -7,6 +8,7 @@ import { translate } from '../../i18n.js';
  * MessageBubble — בועת הודעה נכנסת בסגנון WhatsApp. מציגה את גוף התבנית
  * כשכל {{N}} מוחלף בערך שהוזן (או בצ'יפ placeholder לשדה מערכת / דוגמה).
  * משותף לעורך (StepCard) ולתצוגת הרצף המלאה (SequencePreview).
+ * ⚠️ המראה הירוק הוא מוקאפ מכוון של וואטסאפ (כמו ChatBubble) — לא העתק של Chatwoot.
  */
 
 // מילון co-located (he/en)
@@ -99,22 +101,19 @@ export default function MessageBubble({ template, params = [], mediaUrl = '', cl
     <div
       className={`max-w-sm rounded-lg bg-n-teal-3 px-3 py-2 text-sm text-n-slate-12 shadow-sm ${className}`}
     >
-      {/* header מדיה — תצוגה מקדימה של התמונה אם יש URL, אחרת חיווי */}
+      {/* header מדיה — המדיה עצמה כפי שהלקוח יראה אותה; בלי קישור (או בכישלון טעינה) חיווי */}
       {headerMediaFmt(template) ? (
-        headerMediaFmt(template) === 'IMAGE' && mediaUrl ? (
-          <img
-            src={mediaUrl}
-            alt=""
-            className="mb-2 max-h-44 w-full rounded-md object-cover"
-            onError={(e) => { e.currentTarget.style.display = 'none'; }}
-          />
-        ) : (
-          <div className="mb-2 flex items-center gap-1.5 rounded-md bg-n-alpha-2 px-2 py-3 text-xs text-n-slate-11">
-            {(() => { const MediaIcon = MEDIA_ICON[headerMediaFmt(template)]; return MediaIcon ? <MediaIcon size={14} aria-hidden="true" className="shrink-0" /> : null; })()}
-            {t(MEDIA_HDR[headerMediaFmt(template)])} {t('inHeader')}
-            {mediaUrl ? '' : ` ${t('linkWillBeSet')}`}
-          </div>
-        )
+        <HeaderMedia
+          format={headerMediaFmt(template)}
+          sources={[mediaUrl]}
+          fallback={
+            <div className="mb-2 flex items-center gap-1.5 rounded-md bg-n-alpha-2 px-2 py-3 text-xs text-n-slate-11">
+              {(() => { const MediaIcon = MEDIA_ICON[headerMediaFmt(template)]; return MediaIcon ? <MediaIcon size={14} aria-hidden="true" className="shrink-0" /> : null; })()}
+              {t(MEDIA_HDR[headerMediaFmt(template)])} {t('inHeader')}
+              {mediaUrl ? '' : ` ${t('linkWillBeSet')}`}
+            </div>
+          }
+        />
       ) : null}
 
       {template?.header_text ? (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, Layers, Loader2, X, RotateCcw, CheckCircle2, XCircle, Circle, ChevronDown, Clock, Image, Video, FileText } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Dropdown from './ui/Dropdown.jsx';
@@ -61,7 +61,7 @@ const M = {
     replaceConfirm: 'החלף סדרה',
     startTitle: 'להתחיל את הסדרה?',
     startDesc: '{who} יתחיל לקבל את הודעות הסדרה «{name}».',
-    startDescDisabled: ' הסדרה כבויה כרגע — השליחה תתחיל כשתופעל.',
+    startDescDisabled: ' הסדרה סגורה כרגע לצירוף לידים חדשים — הליד ימתין ויצטרף כשתיפתח.',
     startConfirm: 'התחל סדרה',
     restartTitle: 'להתחיל את הסדרה מחדש?',
     restartDescCompleted: 'הליד כבר השלים את «{name}». הפעלה מחדש תשלח לו שוב את כל ההודעות מהשלב הראשון.',
@@ -70,7 +70,7 @@ const M = {
     startOver: 'התחל מחדש',
     startOverFromFirst: 'התחל מחדש מהשלב הראשון',
     noSequence: '— ללא סדרה —',
-    offWillStart: 'כבוי — יתחיל כשתופעל',
+    offWillStart: 'סגורה לצירוף — הליד ימתין עד שתיפתח',
     seqLabel: 'סדרת הודעות',
     saving: 'שומר…',
     selectAria: 'בחירת סדרת הודעות לליד',
@@ -81,8 +81,8 @@ const M = {
     stepXofY: 'שלב {cur} מתוך {tot}',
     phone: 'טלפון',
     disabledPre: 'הסדרה משויכת אך ',
-    disabledWord: 'כבויה',
-    disabledPost: ' — הפעילו אותה בלשונית "רצפים" וההודעות יתחילו להישלח אוטומטית.',
+    disabledWord: 'סגורה לצירוף לידים חדשים',
+    disabledPost: ' — הליד ממתין. פתחו "צירוף לידים חדשים" בלשונית "רצפים" וההצטרפות תתבצע אוטומטית.',
     processingAssign: 'השיוך יעובד תוך כדקה…',
     removeFromSequenceBtn: 'הסר מהרצף',
     firstMsgInSeq: 'ההודעה הראשונה בסדרה:',
@@ -117,7 +117,7 @@ const M = {
     replaceConfirm: 'Replace sequence',
     startTitle: 'Start the sequence?',
     startDesc: '{who} will start receiving messages from the sequence «{name}».',
-    startDescDisabled: ' The sequence is currently off — sending will begin when it is turned on.',
+    startDescDisabled: ' The sequence is currently closed to new enrolments — the lead will wait and join once it reopens.',
     startConfirm: 'Start sequence',
     restartTitle: 'Restart the sequence?',
     restartDescCompleted: 'The lead has already completed «{name}». Restarting will send them all the messages again from the first step.',
@@ -126,7 +126,7 @@ const M = {
     startOver: 'Start over',
     startOverFromFirst: 'Start over from the first step',
     noSequence: '— No sequence —',
-    offWillStart: 'Off — will start when turned on',
+    offWillStart: 'Closed to new enrolments — the lead will wait',
     seqLabel: 'Message sequence',
     saving: 'Saving…',
     selectAria: 'Select a message sequence for the lead',
@@ -137,8 +137,8 @@ const M = {
     stepXofY: 'Step {cur} of {tot}',
     phone: 'Phone',
     disabledPre: 'The sequence is assigned but ',
-    disabledWord: 'off',
-    disabledPost: ' — turn it on in the "Sequences" tab and messages will start sending automatically.',
+    disabledWord: 'closed to new enrolments',
+    disabledPost: ' — the lead is waiting. Turn on "Enrol new leads" in the "Sequences" tab and they will join automatically.',
     processingAssign: 'The assignment will be processed within a minute…',
     removeFromSequenceBtn: 'Remove from sequence',
     firstMsgInSeq: 'The first message in the sequence:',
@@ -211,12 +211,22 @@ export default function ConversationStatus({ conversationId, accountId }) {
   const [error, setError] = useState('');
   const [confirm, setConfirm] = useState(null); // { tone, title, description, confirmLabel, preview, onConfirm }
 
+  // ⚠️ Chatwoot דוחף שיחה חדשה לאותו iframe בלי לפרק את הרכיב. תשובה שחוזרת אחרי
+  // שהנציג כבר עבר לשיחה אחרת חייבת להיזרק — אחרת הפאנל מצייר את הנתונים של הליד
+  // הקודם ונראה עקבי לחלוטין (status.sequence_key ו-selected מגיעים מאותה תשובה),
+  // ואז "הפעל מחדש" רץ על השיחה הנוכחית עם הסדרה של הקודמת.
+  const shownRef = useRef(null);
+  // רענון מושהה אחרי set_sequence — מוחזק ב-ref כדי לבטלו בהחלפת שיחה / פירוק.
+  const refreshTimer = useRef(null);
+
   const loadStatus = useCallback(async () => {
+    const mine = `${accountId}:${conversationId}`;
     const [data, hist, proj] = await Promise.all([
       getEnrollmentStatus(conversationId, accountId),
       getSentHistory(conversationId, accountId).catch(() => []),
       getProjectedSchedule(conversationId, accountId).catch(() => []),
     ]);
+    if (shownRef.current !== mine) return null; // השיחה הוחלפה בזמן הבקשה
     setStatus(data || null);
     setHistory(Array.isArray(hist) ? hist : []);
     setProjected(scheduleMap(proj));
@@ -228,10 +238,11 @@ export default function ConversationStatus({ conversationId, accountId }) {
   useEffect(() => {
     let cancelled = false;
     if (conversationId == null || accountId == null) return undefined;
+    shownRef.current = `${accountId}:${conversationId}`;
     setLoading(true);
     setError('');
     Promise.all([
-      listSequences(accountId), // כל הסדרות (כולל כבויות) — ניתן לשייך גם כבויה (תתחיל כשתופעל)
+      listSequences(accountId), // כל הסדרות (גם סגורות לצירוף) — משייכים, והליד ימתין עד שתיפתח
       getEnrollmentStatus(conversationId, accountId),
       getSentHistory(conversationId, accountId).catch(() => []),
       listTemplates(accountId).catch(() => []), // גוף התבניות — לתצוגה מקדימה
@@ -248,7 +259,11 @@ export default function ConversationStatus({ conversationId, accountId }) {
       })
       .catch((e) => !cancelled && setError(e.message || translate(M, 'errLoadStatus')))
       .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+    };
   }, [conversationId, accountId]);
 
   // ── תצוגה מקדימה של ההודעה הראשונה בסדרה (לדיאלוג הבטיחות) ──
@@ -272,7 +287,9 @@ export default function ConversationStatus({ conversationId, accountId }) {
       await apiSetSequence(conversationId, key, accountId);
       setSelected(key);
       await loadStatus().catch(() => {});
-      setTimeout(() => { loadStatus().catch(() => {}); }, 4000);
+      // ה-reconciler משייך בטיק הבא (~דקה) — רענון שני מאוחר כדי לתפוס את השינוי.
+      clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => { loadStatus().catch(() => {}); }, 4000);
     } catch (e) {
       setError(e.message || translate(M, 'errAction'));
     } finally {
@@ -326,7 +343,7 @@ export default function ConversationStatus({ conversationId, accountId }) {
     }
 
     // התחלה (משיוך חדש, או אחרי השלמה/עצירה)
-    const disabled = targetSeq && targetSeq.enabled === false;
+    const disabled = targetSeq && targetSeq.enrollEnabled === false;
     setConfirm({
       tone: 'info',
       title: translate(M, 'startTitle'),
@@ -370,7 +387,9 @@ export default function ConversationStatus({ conversationId, accountId }) {
     ...sequences.map((s) => ({
       value: s.key,
       label: s.name || s.key,
-      description: s.enabled ? undefined : t('offWillStart'),
+      // ⚠️ enrollEnabled ולא enabled — `enabled` הוא נגזרת (enrollEnabled || sendEnabled),
+      // ורצף שנסגר לצירוף אך ממשיך לשלוח לקיימים נראה דרכה פתוח. ההחלטה כאן היא "מי יצטרף".
+      description: s.enrollEnabled ? undefined : t('offWillStart'),
     })),
   ];
   // הסדרה שנבחרה אך עדיין אינה ברשימה — נוסיף כדי שלא "תיעלם"
@@ -379,7 +398,9 @@ export default function ConversationStatus({ conversationId, accountId }) {
   }
 
   const assigned = !!selected;
-  const selectedDisabled = assigned && selectedSeq && !selectedSeq.enabled;
+  // הליד משויך אך אין לו רישום — הסיבה היחידה שתלויה בהגדרה היא סגירת הצירוף
+  // (reconcile.js מדלג על שיוך כשה-enroll_enabled כבוי; sendEnabled לא חוסם הצטרפות).
+  const selectedDisabled = assigned && selectedSeq && !selectedSeq.enrollEnabled;
   const st = isPending
     ? { label: t('pending'), color: 'amber' }
     : statusMatchesSelection

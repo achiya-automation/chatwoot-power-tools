@@ -17,6 +17,21 @@
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
+// ⚠️ מטא יכולה לבלוע חיבור בלי לענות ובלי לנתק. index.js עובר על החשבונות אחד-אחרי-
+// השני ומחכה ל-refreshHealth בתוך הלולאה, כך שקריאה תקועה אחת עוצרת את *כל* הלקוחות
+// שאחריה — בלי שגיאה ובלי לוג. ברירת המחדל היא fetch עם תקציב זמן, כמו ב-chatwoot.js;
+// בדיקות שמזריקות fetchImpl משלהן לא מושפעות.
+const GRAPH_TIMEOUT_MS = 15_000;
+async function timedFetch(url, opts = {}) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), GRAPH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...opts, signal: opts.signal || ac.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // מדרגות המכסה של מטא → מקסימום שיחות שהעסק יוזם ב-24h מתגלגלות.
 // TIER_50 ו-TIER_1K כבר לא מוקצות לחשבונות חדשים, אבל נשארות במפה כי חשבון ותיק
 // עשוי עדיין להחזיר אותן.
@@ -50,7 +65,7 @@ export function tierToCap(tier) {
  *
  * @returns {Promise<{tier: string|null, quality: string|null}>}
  */
-export async function fetchNumberHealth(phoneId, token, fetchImpl = fetch) {
+export async function fetchNumberHealth(phoneId, token, fetchImpl = timedFetch) {
   const fields = 'whatsapp_business_manager_messaging_limit,messaging_limit_tier,quality_rating';
   const r = await fetchImpl(`${GRAPH}/${phoneId}?fields=${fields}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -71,7 +86,7 @@ export async function fetchNumberHealth(phoneId, token, fetchImpl = fetch) {
  *
  * @returns {Promise<{name:string,language:string,status:string|null,quality:string,category:string|null}[]>}
  */
-export async function fetchTemplateHealth(wabaId, token, fetchImpl = fetch) {
+export async function fetchTemplateHealth(wabaId, token, fetchImpl = timedFetch) {
   const out = [];
   let url = `${GRAPH}/${wabaId}/message_templates`
     + `?fields=name,language,status,category,quality_score&limit=200`;
@@ -106,7 +121,7 @@ export async function fetchTemplateHealth(wabaId, token, fetchImpl = fetch) {
  *
  * @returns {Promise<{name:string, id:string, status:string}>}
  */
-export async function createTemplateCopy(wabaId, token, sourceName, burnName, fetchImpl = fetch) {
+export async function createTemplateCopy(wabaId, token, sourceName, burnName, fetchImpl = timedFetch) {
   if (!wabaId || !token) throw new Error('חסרים פרטי חיבור וואטסאפ (WABA/טוקן) לחשבון');
   // 1. שליפת המקור עם ה-components המלאים (הפורמט המדויק שנדרש ליצירה).
   const gr = await fetchImpl(

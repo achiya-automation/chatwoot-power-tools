@@ -1,7 +1,11 @@
 const STATUSES = ['created', 'updated', 'skipped', 'failed'];
 
 function csvCell(v) {
-  const s = v == null ? '' : String(v);
+  let s = v == null ? '' : String(v);
+  // ⚠️ שמות מגיעים מהקובץ שהלקוח העלה. ערך שמתחיל ב-‎= + - @ (או טאב/CR) מתפרש
+  // באקסל וב-Sheets כנוסחה ורץ בפתיחת הדוח — גם זה שיורד וגם זה שנשלח במייל.
+  // גרש מוביל מנטרל בלי לשנות את מה שהקורא רואה.
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 

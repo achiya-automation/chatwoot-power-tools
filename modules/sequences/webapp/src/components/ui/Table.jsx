@@ -41,7 +41,10 @@ export function TH({ children, className = '', align = 'start' }) {
     <th
       scope="col"
       className={[
-        'py-4 pe-4 first:ps-4 text-heading-3 text-n-slate-12',
+        // BaseTable.vue:37 — ריפוד בצד הסוגר בלבד. אין ריפוד פותח בעמודה הראשונה:
+        // במקור התא הראשון צמוד לשוליים, ו-first:ps-4 הזיז אותו פנימה מול כל טבלה
+        // אחרת בדשבורד. capitalize הוא של המקור (אין לו אפקט בעברית).
+        'py-4 pe-4 text-heading-3 text-n-slate-12 capitalize',
         align === 'end' ? 'text-end' : 'text-start',
         className,
       ]
@@ -57,7 +60,7 @@ export function TD({ children, className = '', align = 'start' }) {
   return (
     <td
       className={[
-        'py-3 pe-4 first:ps-4 text-body-main align-middle',
+        'py-3 pe-4 text-body-main align-middle',
         align === 'end' ? 'text-end' : 'text-start',
         className,
       ]

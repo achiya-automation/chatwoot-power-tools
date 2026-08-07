@@ -39,6 +39,7 @@ import {
 import useT, { useLocale } from '../useT.js';
 import { translate } from '../i18n.js';
 import { alertText, haltText } from '../lib/alertText.js';
+import { sendBudget } from '../lib/sendBudget.js';
 
 /*
  * ComplianceView — שכבת הציות של מטא: בריאות המספר (tier/דירוג/עצירה), התראות פתוחות,
@@ -80,6 +81,11 @@ const M = {
     tier: 'רמת שליחה',
     cap: 'תקרה יומית',
     unlimited: 'ללא הגבלה',
+    remainingToday: 'נותרו לשליחה היום',
+    usedOfCap: 'נשלחו {used} מתוך {cap}',
+    usedUnlimited: 'נשלחו {used} ב-24 השעות האחרונות',
+    fromNumber: 'מהמספר {name}',
+    usageNoInbox: 'לא נבחר מספר לרצפים — אי אפשר לדעת לאיזה מספר הנתונים האלה שייכים.',
     checkedAt: 'נבדק לאחרונה',
     qGREEN: 'ירוק',
     qYELLOW: 'צהוב',
@@ -238,6 +244,11 @@ const M = {
     tier: 'Messaging tier',
     cap: 'Daily cap',
     unlimited: 'Unlimited',
+    remainingToday: 'Left to send today',
+    usedOfCap: '{used} of {cap} sent',
+    usedUnlimited: '{used} sent in the last 24 hours',
+    fromNumber: 'From {name}',
+    usageNoInbox: 'No number is selected for sequences — these figures cannot be attributed to a number.',
     checkedAt: 'Last checked',
     qGREEN: 'Green',
     qYELLOW: 'Yellow',
@@ -465,6 +476,9 @@ export default function ComplianceView({ accountId }) {
   useEffect(() => { load(); }, [load]);
 
   const health = data?.health || {};
+  // תקציב השליחה של 24 השעות האחרונות. מנוע ישן לא שולח usage כלל → null, והמסך
+  // מתנהג בדיוק כמו קודם. נשלח גם תחת health בחלק מהגרסאות — מקבלים את שניהם.
+  const budget = sendBudget(data?.usage || health.usage);
   const contacts = data?.contacts || {};
   const alerts = data?.alerts || [];
   const templates = data?.templates || [];
@@ -693,14 +707,36 @@ export default function ComplianceView({ accountId }) {
           <span className="mt-1 text-xs text-n-slate-11">{t('quality')}</span>
         </div>
 
+        {/* תקציב השליחה. עם usage מהמנוע מוצג *מה שנשאר* (השאלה האמיתית), עם הכמות
+            שכבר נשלחה ועם המספר שהנתונים שייכים לו — לחשבון יש כמה מספרי וואטסאפ,
+            ומספר בלי ייחוס אינו מידע. בלי usage (מנוע ישן) התצוגה נשארת כשהייתה. */}
         <div className="flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak">
           <span className="text-2xl font-semibold leading-none text-n-slate-12">
-            {health.cap === -1 ? t('unlimited') : (health.cap ?? '—')}
+            {budget
+              ? (budget.unlimited ? t('unlimited') : budget.remaining)
+              : (health.cap === -1 ? t('unlimited') : (health.cap ?? '—'))}
           </span>
           <span className="mt-1 text-xs text-n-slate-11">
-            {t('cap')}
+            {budget ? t('remainingToday') : t('cap')}
             {health.tier ? <> · <span className="font-mono text-n-slate-10">{health.tier}</span></> : null}
           </span>
+          {budget ? (
+            <span className="mt-1 text-xs text-n-slate-10">
+              {budget.unlimited
+                ? t('usedUnlimited', { used: budget.used })
+                : t('usedOfCap', { used: budget.used, cap: budget.cap })}
+            </span>
+          ) : null}
+          {budget ? (
+            budget.inbox ? (
+              <span className="mt-1 truncate text-xs text-n-slate-10">
+                {t('fromNumber', { name: budget.inbox.name || '' })}
+                {budget.inbox.phone ? <> <span dir="ltr" className="font-mono">{budget.inbox.phone}</span></> : null}
+              </span>
+            ) : (
+              <span className="mt-1 text-xs font-medium text-n-amber-11">{t('usageNoInbox')}</span>
+            )
+          ) : null}
         </div>
 
         <div className="flex flex-col items-start rounded-xl bg-n-alpha-1 px-4 py-3 ring-1 ring-n-weak">
