@@ -555,7 +555,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         //
         // ⭐ ...except for the lead's FIRST message, which ignores quiet hours entirely —
         // see gateFor(). It is the reply to a form submitted minutes ago, not a broadcast.
-        const gateArgs = gateFor(seq, e.current_step, now, windows);
+        const gateArgs = gateFor(seq, e.current_step, now, windows, cSettings);
         if (isNoSendNow(gateArgs)) {
           const edge = quietWindowEnd(gateArgs);
           if (edge) {

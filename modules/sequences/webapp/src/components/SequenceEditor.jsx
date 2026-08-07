@@ -80,6 +80,8 @@ const M = {
     stopTitle: 'עצירה כשהנמען מגיב', stopDesc: 'הרצף ייעצר אוטומטית אם הנמען שולח הודעה',
     shabbatTitle: 'אל תשלח בשבת ובחגים', shabbatDesc: 'ההודעות יושהו אוטומטית בשבתות ובימי חג (שעון ישראל)',
     quietHours: 'שעות שקט (לא נשלחות הודעות)', quietStart: 'מתחילות', quietEnd: 'מסתיימות',
+    quietInherits: 'ריק — הרצף משתמש בשעות השקט של החשבון (הגדרות ← ציות).',
+    quietOverrides: 'הרצף הזה חורג משעות השקט של החשבון.',
     // שלבים
     stepsHeading: 'שלבי הרצף ({count})', expandAll: 'הרחב הכול', collapseAll: 'כווץ הכול',
     fullPreview: 'תצוגה מלאה', addStep: 'הוסף שלב',
@@ -146,6 +148,8 @@ const M = {
     stopTitle: 'Stop when the recipient replies', stopDesc: 'The sequence stops automatically if the recipient sends a message',
     shabbatTitle: "Don't send on Shabbat and holidays", shabbatDesc: 'Messages are paused automatically on Shabbat and holidays (Israel time)',
     quietHours: 'Quiet hours (no messages sent)', quietStart: 'Start', quietEnd: 'End',
+    quietInherits: 'Empty — this sequence uses the account quiet hours (Settings → Compliance).',
+    quietOverrides: 'This sequence overrides the account quiet hours.',
     stepsHeading: 'Sequence steps ({count})', expandAll: 'Expand all', collapseAll: 'Collapse all',
     fullPreview: 'Full preview', addStep: 'Add step',
     durationPrefix: 'Sequence duration:', durationSuffix: 'from enrollment to the last message',
@@ -579,6 +583,11 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
                 onChange={(e) => update({ quietHoursEnd: e.target.value })}
               />
             </div>
+            {/* ריק = יורש מהחשבון. בלי המשפט הזה שדה ריק נראה כמו "אין הגנה",
+                וזה בדיוק מה שהיה נכון עד 7.8 — ועכשיו כבר לא. */}
+            <p className="mt-1.5 text-xs text-n-slate-10">
+              {!draft.quietHoursStart && !draft.quietHoursEnd ? t('quietInherits') : t('quietOverrides')}
+            </p>
           </div>
         </section>
 
