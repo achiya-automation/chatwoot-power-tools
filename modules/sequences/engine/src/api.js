@@ -364,6 +364,13 @@ export function createApp(config) {
       payload.__isAdmin = admin;
     }
 
+    // שליחה מחדש לנכשלים בקמפיין — פעולת outbound אמיתית (הודעות יוצאות ללקוחות),
+    // ולכן שמורה לאדמינים של החשבון, כמו קמפיינים ב-Chatwoot עצמו. הסטטוס פתוח לכל
+    // חבר — הוא מחזיר את אותם נתונים שדוח הקמפיין ממילא מציג.
+    if (action === 'campaign_resend' && !isTplAdmin(req.dripAccess, accountId)) {
+      return res.status(403).json({ ok: false, error: 'administrator role required' });
+    }
+
     // Presence: קריאה/כתיבה של הגדרות "נקרא"/"מקליד" — אדמינים בלבד. שני חריגים
     // פתוחים לכל חבר: prs_typing (ממסר הקלדה מתוך שיחה — נציג מקליד, לא מגדיר) ו-
     // prs_get (המסך רק מציג). זהות מהשרת, לא מהלקוח — אותו כלל כמו tpl_/jrn_.
