@@ -20,6 +20,9 @@
 #    no phone, no template params, blank Liquid, or a send Meta rejected. Without them a
 #    recipient simply vanishes from the report with no reason attached — that is how 39
 #    phone-less contacts sat in a campaign audience and received nothing, unnoticed.
+# 6. Applies the optional campaign assignee from trigger_rules. The WhatsApp campaign form
+#    stores { assignee: { type: 'User'|'AgentBot', id: N } }; every created/reused conversation
+#    is assigned before its outgoing campaign message is recorded.
 #
 # Mounted read-only via docker-compose into rails + sidekiq (survives image updates).
 # Created: 2026-02-18 | Rewritten: 2026-06-10 for Chatwoot v4.14.1
@@ -92,10 +95,178 @@ class WhatsappCampaignErrorSink
   end
 end
 
+# The campaign opener automation must assign the selected/default bot before its webhook is
+# queued. Doing this in Chatwoot closes the race where n8n receives the outgoing opener while
+# the conversation is still unassigned. Existing User/AgentBot assignments always win, so a
+# campaign-level selection or a human takeover is never overwritten.
+module WhatsappCampaignAutomationActionService
+  private
+
+  def assign_agent_bot_if_unassigned(agent_bot_ids = [])
+    return if @conversation.assignee_id.present? || @conversation.assignee_agent_bot_id.present?
+
+    agent_bot_id = Array(agent_bot_ids).first.to_i
+    return if agent_bot_id.zero?
+
+    Conversations::AssignmentService.new(
+      conversation: @conversation,
+      assignee_id: agent_bot_id,
+      assignee_type: 'AgentBot'
+    ).perform
+  end
+
+  # A Web/Mobile macro calls this guard directly (legacy AutomationRules may call it too).
+  # The explicit action may replace a human assignment, but only after proving that the
+  # contact has a recorded campaign opener. This preserves the campaign-only bot boundary.
+  # Params: [agent_bot_id, inbox_id, opener_marker_1, opener_marker_2, ...]
+  def assign_agent_bot_for_campaign_contact(params = [])
+    agent_bot_id, inbox_id, *campaign_markers = Array(params)
+    agent_bot_id = agent_bot_id.to_i
+    inbox_id = inbox_id.to_i
+
+    return if agent_bot_id.zero? || inbox_id.zero?
+    return unless @conversation.inbox_id == inbox_id
+    return unless AgentBot.accessible_to(@account).exists?(id: agent_bot_id)
+
+    @conversation.with_lock do
+      unless campaign_contact?(inbox_id, campaign_markers)
+        Rails.logger.info(
+          "[CUSTOM] Campaign bot assignment skipped for conversation #{@conversation.id}: contact is not campaign-eligible"
+        )
+        next
+      end
+
+      Conversations::AssignmentService.new(
+        conversation: @conversation,
+        assignee_id: agent_bot_id,
+        assignee_type: 'AgentBot'
+      ).perform
+    end
+  end
+
+  # Removes only the requested AgentBot. Human and team assignments are never changed.
+  # Params: [agent_bot_id]
+  def remove_specific_agent_bot(agent_bot_ids = [])
+    agent_bot_id = Array(agent_bot_ids).first.to_i
+    return if agent_bot_id.zero?
+
+    @conversation.with_lock do
+      next unless @conversation.assignee_agent_bot_id == agent_bot_id
+
+      Conversations::AssignmentService.new(
+        conversation: @conversation,
+        assignee_id: nil,
+        assignee_type: 'User'
+      ).perform
+    end
+  end
+
+  def campaign_contact?(inbox_id, campaign_markers)
+    return false if @conversation.contact_id.blank?
+
+    related_conversations = @account.conversations.where(inbox_id: inbox_id, contact_id: @conversation.contact_id)
+    if @conversation.contact_inbox_id.present?
+      same_contact_inbox = @account.conversations.where(
+        inbox_id: inbox_id,
+        contact_inbox_id: @conversation.contact_inbox_id
+      )
+      related_conversations = related_conversations.or(same_contact_inbox)
+    end
+
+    return true if related_conversations.where.not(campaign_id: nil).exists?
+
+    campaign_messages = Message.reorder(nil).where(
+      account_id: @account.id,
+      conversation_id: related_conversations.select(:id),
+      message_type: :outgoing
+    )
+    return true if campaign_messages.where("messages.content_attributes::jsonb ? 'campaign_id'").exists?
+
+    campaign_markers.compact_blank.any? do |marker|
+      escaped_marker = ActiveRecord::Base.sanitize_sql_like(marker.to_s)
+      campaign_messages.where('messages.content ILIKE ?', "%#{escaped_marker}%").exists?
+    end
+  end
+end
+
+# Chatwoot macros historically accept only human ids in the built-in `assign_agent`
+# action. The dashboard overlay represents an AgentBot as `AgentBot:<id>` so User and
+# AgentBot ids can never collide, while every legacy macro payload keeps its original
+# behaviour through `super`.
+#
+# Bot 12 is deliberately campaign-only. Keeping this policy here (rather than only in
+# the dashboard) means a macro executed from Web, Mobile or the API cannot bypass it.
+module WhatsappCampaignMacroActionService
+  CAMPAIGN_ONLY_AGENT_BOTS = {
+    [11, 12] => {
+      inbox_id: 38,
+      markers: ['חשבת אולי למכור', 'רציתי לשאול בנוגע לדירה', 'חשבתם אולי למכור']
+    }
+  }.freeze
+
+  private
+
+  def assign_agent(agent_ids)
+    encoded_assignee = Array(agent_ids).first.to_s
+    match = encoded_assignee.match(/\AAgentBot:(\d+)\z/)
+    return super unless match
+
+    agent_bot_id = match[1].to_i
+    policy = CAMPAIGN_ONLY_AGENT_BOTS[[@account.id, agent_bot_id]]
+    if policy
+      return assign_agent_bot_for_campaign_contact(
+        [agent_bot_id, policy[:inbox_id], *policy[:markers]]
+      )
+    end
+
+    return unless AgentBot.accessible_to(@account).exists?(id: agent_bot_id)
+
+    @conversation.with_lock do
+      Conversations::AssignmentService.new(
+        conversation: @conversation,
+        assignee_id: agent_bot_id,
+        assignee_type: 'AgentBot'
+      ).perform
+    end
+  end
+end
+
+module WhatsappCampaignAutomationRuleActions
+  def actions_attributes
+    super + %w[assign_agent_bot_if_unassigned assign_agent_bot_for_campaign_contact remove_specific_agent_bot]
+  end
+end
+
 Rails.application.config.after_initialize do
   Rails.logger.info '[CUSTOM] Loading WhatsApp campaign conversation patch...'
 
   begin
+    unless AutomationRule.ancestors.include?(WhatsappCampaignAutomationRuleActions)
+      AutomationRule.prepend(WhatsappCampaignAutomationRuleActions)
+    end
+
+    unless AutomationRules::ActionService.ancestors.include?(WhatsappCampaignAutomationActionService)
+      AutomationRules::ActionService.prepend(WhatsappCampaignAutomationActionService)
+    end
+
+    # `remove_specific_agent_bot` is a direct macro action. Register it additively,
+    # preserving every upstream action and failing loudly if the registry shape changes.
+    macro_actions = Macro.const_get(:ACTIONS_ATTRS, false)
+    raise 'Macro::ACTIONS_ATTRS changed upstream' unless macro_actions.is_a?(Array)
+
+    unless macro_actions.include?('remove_specific_agent_bot')
+      Macro.send(:remove_const, :ACTIONS_ATTRS)
+      Macro.const_set(:ACTIONS_ATTRS, (macro_actions + ['remove_specific_agent_bot']).uniq.freeze)
+    end
+
+    unless Macros::ExecutionService.ancestors.include?(WhatsappCampaignAutomationActionService)
+      Macros::ExecutionService.prepend(WhatsappCampaignAutomationActionService)
+    end
+
+    unless Macros::ExecutionService.ancestors.include?(WhatsappCampaignMacroActionService)
+      Macros::ExecutionService.prepend(WhatsappCampaignMacroActionService)
+    end
+
     svc = Whatsapp::OneoffCampaignService
 
     expected_send_signature = [%i[keyreq to], %i[keyreq template_params]]
@@ -425,6 +596,7 @@ Rails.application.config.after_initialize do
             end
           end
 
+          assign_campaign_conversation(conversation)
           attach_campaign_send_snapshot(whatsapp_message_id, conversation)
 
           template_text = build_template_text(template_params)
@@ -455,6 +627,32 @@ Rails.application.config.after_initialize do
         rescue StandardError => e
           Rails.logger.error "Campaign #{campaign.id}: Conversation creation failed for #{contact.phone_number}: #{e.message}"
           Rails.logger.error e.backtrace.first(5).join("\n")
+        end
+
+        def assign_campaign_conversation(conversation)
+          assignee = campaign.trigger_rules&.dig('assignee')
+          return if assignee.blank?
+
+          assignee_id = assignee['id'].to_i
+          assignee_type = assignee['type'].to_s
+          valid_assignee = if assignee_type == 'AgentBot'
+                             AgentBot.accessible_to(campaign.account).exists?(id: assignee_id)
+                           elsif assignee_type == 'User'
+                             campaign.account.users.exists?(id: assignee_id)
+                           else
+                             false
+                           end
+
+          unless valid_assignee
+            Rails.logger.error "Campaign #{campaign.id}: Invalid #{assignee_type} assignee #{assignee_id}"
+            return
+          end
+
+          Conversations::AssignmentService.new(
+            conversation: conversation,
+            assignee_id: assignee_id,
+            assignee_type: assignee_type
+          ).perform
         end
 
         # Renders the template body using the per-contact (Liquid-resolved)
