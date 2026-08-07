@@ -17,12 +17,23 @@
 -- option): the build takes a lock that blocks writes to public.messages for its duration
 -- (one scan of the table). Deploy at a quiet moment, not mid-campaign.
 
-CREATE INDEX IF NOT EXISTS drip_messages_campaign_id_idx
-  ON public.messages (
-    account_id,
-    ((((content_attributes::jsonb #>> '{}')::jsonb ->> 'campaign_id')::int))
-  )
-  WHERE ((content_attributes::jsonb #>> '{}')::jsonb ->> 'campaign_id') ~ '^[0-9]+$';
+-- ⚠️ כושל-רך בכוונה (07.08.2026). `public.messages` בבעלות תפקיד האפליקציה של Chatwoot,
+-- ובפריסה מוקשחת המנוע מתחבר כ-drip_engine — שאינו הבעלים, ולכן CREATE INDEX נדחה
+-- ב-"must be owner of table messages". מיגרציה שנכשלת עוצרת את האתחול, וכך אינדקס
+-- *לשיפור ביצועים* הפיל את המנוע בלולאת קריסה בפרודקשן. זה לא שווה את זה: בלי
+-- האינדקס דוח הקמפיינים איטי, בלעדיו של המנוע אין מוצר.
+-- מי שכן רוצה את האינדקס בפריסה מוקשחת — יוצר אותו ידנית כבעלים (ראה ההערה למטה).
+DO $$
+BEGIN
+  CREATE INDEX IF NOT EXISTS drip_messages_campaign_id_idx
+    ON public.messages (
+      account_id,
+      ((((content_attributes::jsonb #>> '{}')::jsonb ->> 'campaign_id')::int))
+    )
+    WHERE ((content_attributes::jsonb #>> '{}')::jsonb ->> 'campaign_id') ~ '^[0-9]+$';
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE WARNING '[drip] campaign-report index skipped: % (create it as the table owner: see migrations/045)', SQLERRM;
+END $$;
 
 -- Campaign resend writes retry attempts to the send ledger from the engine process.
 -- The engine normally connects as the same role that owns the schema (CWPT_DATABASE_URL),
