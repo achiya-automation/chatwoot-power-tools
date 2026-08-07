@@ -97,7 +97,9 @@ export default function CampaignsView({ accountId, onSelect }) {
   const [statusSel, setStatusSel] = useState(() => new Set());
   const [sort, setSort] = useState({ key: 'date', dir: 'desc' });
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // איפוס בגוף האפקט ולא רק ב-cleanup — אחרת ה-double-mount של StrictMode משאיר את
+  // הדגל false לתמיד והתשובות של ה-fetch נזרקות (skeleton נצחי בפיתוח).
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const load = useCallback(() => {
     if (accountId == null) return;

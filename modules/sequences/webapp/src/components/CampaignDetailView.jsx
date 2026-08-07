@@ -166,7 +166,9 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   const [resendBusy, setResendBusy] = useState(false);
   const [resendJob, setResendJob] = useState(null);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // איפוס בגוף האפקט ולא רק ב-cleanup — אחרת ה-double-mount של StrictMode משאיר את
+  // הדגל false לתמיד והתשובות של ה-fetch נזרקות (skeleton נצחי בפיתוח).
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const load = useCallback(() => {
     if (accountId == null || campaignId == null) return;
@@ -416,21 +418,28 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
             </div>
           ) : null}
           <div className="flex flex-col gap-1.5">
-            {failGroups.map((g) => (
-              <button
-                key={`${g.statusKey}|${g.error_title}`}
-                type="button"
-                onClick={() => setStatusSel(new Set([g.statusKey]))}
-                title={g.error_title}
-                className="flex w-full items-center gap-3 rounded-lg px-2 py-1 text-start hover:bg-n-alpha-2"
-              >
-                <span className={`h-2 w-2 shrink-0 rounded-full ${g.statusKey === 'notsent' ? 'bg-n-amber-9' : 'bg-n-ruby-9'}`} aria-hidden="true" />
-                <span className={`min-w-0 flex-1 truncate text-xs ${g.statusKey === 'notsent' ? 'text-n-amber-11' : 'text-n-ruby-11'}`}>
-                  {errorLabel(g.error_title) || t(`s_${g.statusKey}`)}
-                </span>
-                <span className="shrink-0 text-xs font-semibold tabular-nums text-n-slate-12">{g.count}</span>
-              </button>
-            ))}
+            {failGroups.map((g) => {
+              const share = Math.round((g.count / Math.max(1, failGroups.reduce((s, x) => s + x.count, 0))) * 100);
+              return (
+                <button
+                  key={`${g.statusKey}|${g.error_title}`}
+                  type="button"
+                  onClick={() => setStatusSel(new Set([g.statusKey]))}
+                  title={g.error_title}
+                  className="flex w-full items-center gap-3 rounded-lg px-2 py-1 text-start hover:bg-n-alpha-2"
+                >
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${g.statusKey === 'notsent' ? 'bg-n-amber-9' : 'bg-n-ruby-9'}`} aria-hidden="true" />
+                  <span className={`min-w-0 flex-1 truncate text-xs ${g.statusKey === 'notsent' ? 'text-n-amber-11' : 'text-n-ruby-11'}`}>
+                    {errorLabel(g.error_title) || t(`s_${g.statusKey}`)}
+                  </span>
+                  {/* חלקה של הסיבה מכלל הכשלים — אותו דפוס bar-list של כרטיס ההשוואה */}
+                  <span className="h-2 w-28 shrink-0 rounded-full bg-n-alpha-3 sm:w-40" aria-hidden="true">
+                    <span className={`block h-2 rounded-full ${g.statusKey === 'notsent' ? 'bg-n-amber-9' : 'bg-n-ruby-9'}`} style={{ width: `${share}%` }} />
+                  </span>
+                  <span className="w-8 shrink-0 text-end text-xs font-semibold tabular-nums text-n-slate-12">{g.count}</span>
+                </button>
+              );
+            })}
           </div>
           {failGroups.some((g) => g.statusKey === 'notsent') ? (
             <p className="mb-0 mt-2 text-xs text-n-slate-10">{t('skippedNote')}</p>
