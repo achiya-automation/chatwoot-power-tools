@@ -3,7 +3,13 @@
 // the Chatwoot page and auto-adapt to dark mode, so no body.dark overrides here.
 export const STYLES = `
 dialog.cwi-dlg{padding:0;border:0;background:transparent;width:100%;max-width:42rem;max-height:90vh;overflow:visible;color:inherit}
-dialog.cwi-dlg::backdrop{background:rgba(0,0,0,.5);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+/* הרקע מאחורי החלון — זהה ל-Dialog.vue של Chatwoot (bg-n-alpha-black1 + blur 4px).
+   ‎--black-alpha-1 הוא 12% במצב בהיר ו-30% בכהה; קודם היה כאן 50% קבוע, כלומר כהה
+   פי ארבעה מהמקור וללא התאמה לערכת הנושא. */
+dialog.cwi-dlg::backdrop{background:rgba(0,0,0,.12);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+/* wizard.js מוסיף את המחלקה dark על ה-dialog עצמו (ראה שם: הוא ב-top layer ולא
+   יורש מהדף), ולכן הסלקטור חייב להיות על אותו אלמנט ולא על אב. */
+dialog.cwi-dlg.dark::backdrop{background:rgba(0,0,0,.3)}
 dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 @keyframes cwiBackdrop{from{opacity:0}to{opacity:1}}
 /* Animate the inner card, NOT the <dialog>: a transform on the dialog would make it
@@ -15,7 +21,10 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 /* הרקע מגיע ממחלקת bg-n-brand של Chatwoot (הכחול הרשמי) — לא ממשתנה:
    --color-n-brand לא קיים ב-CSS המקומפל וה-fallback צבע את הפס באינדיגו זר. */
 .cwi-prog-fill{height:100%;transition:width .2s}
-.cwi-tbl-cell{border-bottom:1px solid}
+/* ⚠️ border-bottom בלי צבע = currentColor לפי מפרט CSS, וכיוון שהגיליון הזה מוזרק
+   ל-head בזמן ריצה הוא בא *אחרי* הגיליון של Chatwoot ומנצח את border-n-weak שעל התא.
+   התוצאה הייתה קווי טבלה בצבע הטקסט — כהים בהרבה מכל טבלה אחרת בדשבורד. */
+.cwi-tbl-cell{border-bottom:1px solid rgb(var(--border-weak))}
 .cwi-cs-panel{transition:opacity .2s ease-out}
 /* Background-import pill — fixed to the bottom start corner (dir-aware via
    inset-inline-start; the pill carries its own dir attribute). Below the browser

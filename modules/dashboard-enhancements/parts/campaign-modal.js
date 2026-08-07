@@ -215,10 +215,14 @@
   }
 
   function enhanceCampaign() {
-    // Match Chatwoot's own variable-input placeholder in BOTH locales — "הזן ערך עבור {…}"
-    // (he) and "Enter value for {…}" (en). Anchoring on only the Hebrew text silently broke
-    // the whole feature for English users (the inputs were never found).
-    var inputs = document.querySelectorAll('input[placeholder^="הזן ערך"], input[placeholder^="Enter value"]');
+    // ⚠️ המחרוזת האמיתית של Chatwoot היא "Enter {variable} value" — כלומר "Enter 1 value",
+    // שאינו מתחיל ב-"Enter value". התוצאה: בעברית זה עבד ובאנגלית הצ'יפים לא הופיעו
+    // מעולם, בניגוד למה שההערה כאן הבטיחה. מפתח התרגום: whatsappTemplates → VARIABLE_PLACEHOLDER.
+    // עוגן על *הצורה* ולא על הנוסח: תווית שנפתחת ב"הזן ערך"/"Enter" ומסתיימת ב"value",
+    // כך שגם שינוי ניסוח אצלם לא ישבור את זה שוב בשקט.
+    var inputs = document.querySelectorAll(
+      'input[placeholder^="הזן ערך"], input[placeholder^="Enter"][placeholder$=" value"]'
+    );
     for (var i = 0; i < inputs.length; i++) {
       if (inputs[i].getAttribute('data-drip-var')) continue;
       inputs[i].setAttribute('data-drip-var', '1');
