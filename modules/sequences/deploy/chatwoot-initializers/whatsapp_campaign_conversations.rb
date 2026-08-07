@@ -475,8 +475,20 @@ Rails.application.config.after_initialize do
         end
       end
 
-      unless Whatsapp::IncomingMessageBaseService.ancestors.include?(WhatsappCampaignIncomingStatusPatch)
-        Whatsapp::IncomingMessageBaseService.prepend(WhatsappCampaignIncomingStatusPatch)
+      # שומר גרסה, כמו לפאטצ' על OneoffCampaignService למעלה. update_message_with_status
+      # היא מתודה פרטית ופנימית של Chatwoot — שינוי שם בגרסה עתידית היה הופך את ה-prepend
+      # ל-no-op שקט: הרישום ל-campaign_send_snapshots נפסק, ודוחות הקמפיינים קופאים בלי
+      # שאף אחד יידע. עדיף לצעוק בלוג מאשר לדווח מספרים ישנים כאילו הם נכונים.
+      if Whatsapp::IncomingMessageBaseService.private_method_defined?(:update_message_with_status) ||
+         Whatsapp::IncomingMessageBaseService.method_defined?(:update_message_with_status)
+        unless Whatsapp::IncomingMessageBaseService.ancestors.include?(WhatsappCampaignIncomingStatusPatch)
+          Whatsapp::IncomingMessageBaseService.prepend(WhatsappCampaignIncomingStatusPatch)
+        end
+      else
+        Rails.logger.error '[CUSTOM] WhatsApp status-snapshot patch NOT applied: ' \
+                           'Whatsapp::IncomingMessageBaseService#update_message_with_status is gone (upstream renamed it). ' \
+                           'Campaign delivery/read statuses will STOP updating and reports will go stale. ' \
+                           'Review /opt/chatwoot/custom-initializers/whatsapp_campaign_conversations.rb against the new Chatwoot version!'
       end
 
       Rails.logger.info '[CUSTOM] WhatsApp campaign conversation patch loaded successfully (v4.14.1 Liquid-aware)'

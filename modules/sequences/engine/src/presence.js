@@ -54,7 +54,20 @@ const jitter = (min, max) => (Number(min) + Math.random() * (Number(max) - Numbe
  * שולח פעולת presence אחת. `typing` מוסיף את המחוון לאותה קריאה שמסמנת כנקרא —
  * זה מבנה ה-payload של Meta, לא קיצור דרך שלנו.
  */
-async function send({ phoneId, token, wamid, typing }, fetchImpl = fetch) {
+// ⚠️ לולאת הנוכחות רצה כל 2 שניות. קריאה בלי תקציב זמן שנתקעת מול מטא נשארת תלויה
+// לנצח וגוררת איתה את התור — לכן ברירת המחדל היא fetch עם ביטול אוטומטי.
+const PRESENCE_TIMEOUT_MS = 10_000;
+async function timedFetch(url, opts = {}) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), PRESENCE_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...opts, signal: opts.signal || ac.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function send({ phoneId, token, wamid, typing }, fetchImpl = timedFetch) {
   const body = { messaging_product: 'whatsapp', status: 'read', message_id: wamid };
   if (typing) body.typing_indicator = { type: 'text' };
   const res = await fetchImpl(`${GRAPH}/${phoneId}/messages`, {

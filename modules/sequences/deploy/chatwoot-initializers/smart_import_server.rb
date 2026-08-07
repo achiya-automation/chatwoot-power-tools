@@ -222,6 +222,9 @@ module SmartImportServer
 
   def csv_cell(value)
     s = value.nil? ? '' : value.to_s
+    # ⚠️ חייב להישאר זהה ל-csvCell ב-importLog.js: שם מהקובץ שהלקוח העלה שמתחיל
+    # ב-‎= + - @ מתפרש כנוסחה ורץ כשפותחים את הצרופה באקסל. גרש מוביל מנטרל.
+    s = "'" + s if s.match?(/\A[=+\-@\t\r]/)
     /[",\n]/.match?(s) ? '"' + s.gsub('"', '""') + '"' : s
   end
 

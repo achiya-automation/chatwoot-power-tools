@@ -59,7 +59,7 @@ if (!windows.length) { try { windows = await loadWindows(pool); } catch { /* emp
 // Listen on 0.0.0.0 INSIDE the container so the docker port mapping reaches it.
 // Host-side exposure is limited to 127.0.0.1 by the override's port mapping
 // ("127.0.0.1:3100:3100") — so the engine is still loopback-only from the host.
-createApp(config).listen(config.port, '0.0.0.0', () =>
+const server = createApp(config).listen(config.port, '0.0.0.0', () =>
   console.log(`drip-engine listening on :${config.port}`)
 );
 
@@ -239,8 +239,44 @@ async function tick() {
   try { await pollTemplateStatuses(); } catch (e) { console.error('[tpl] poll error:', e.message); }
 }
 
-setInterval(() => tick().catch((e) => console.error('[drip] tick error:', e.message)),
-  config.reconcileIntervalMs);
+// ⚠️ נעילת ריצה כפולה. טיק אחד יכול להימשך יותר מהמרווח (חשבון רב, או קריאה שתקועה
+// מול מטא), ובלי הנעילה טיק חדש נערם מעליו — כל אחד תופס חיבורים מבריכה של 5, עד
+// שגם הפאנל מפסיק להגיב. דילוג הוא הדבר הנכון: הטיק הבא יטפל באותה עבודה ממילא.
+let tickRunning = false;
+setInterval(() => {
+  if (tickRunning) { console.warn('[drip] previous tick still running — skipping this cycle'); return; }
+  tickRunning = true;
+  tick()
+    .catch((e) => console.error('[drip] tick error:', e.message))
+    .finally(() => { tickRunning = false; });
+}, config.reconcileIntervalMs);
+
+// ── כיבוי מסודר ───────────────────────────────────────────────────────────
+// docker stop / פריסה מחדש שולחים SIGTERM, ו-Node יוצא מיד. בלי זה אפשר להיקטע
+// בדיוק בין "ההודעה נשלחה" לבין "השלב התקדם" — הלקוח מקבל, המערכת לא יודעת.
+// ממתינים לטיק שבאוויר, ואם הוא לא מסיים בזמן — יוצאים בכל זאת (דוקר הורג ב-10ש').
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[drip] ${signal} — finishing in-flight work before exit`);
+  const hardExit = setTimeout(() => {
+    console.error('[drip] shutdown timed out — exiting anyway');
+    process.exit(1);
+  }, 8000);
+  hardExit.unref();
+  try {
+    server.close();
+    const deadline = Date.now() + 7000;
+    while (tickRunning && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+    await pool.end().catch(() => {});
+  } finally {
+    clearTimeout(hardExit);
+    process.exit(0);
+  }
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // ── Presence loop — "נקרא"/"מקליד" ─────────────────────────────────────────
 // לולאה נפרדת ומהירה מה-reconcile: ✓✓ שמופיע דקה אחרי ההודעה מרגיש מוזר.

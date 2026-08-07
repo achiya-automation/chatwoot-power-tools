@@ -377,6 +377,9 @@ const COMPLIANCE = {
     // code+params — ה-UI מרכיב את המשפט בשפת הנציג. message הוא ה-fallback בלבד.
     { id: 1, level: 'warn', code: 'template_paused', params: { template: 'offer_discount' }, message: 'התבנית offer_discount מושהית ע"י מטא.', created_at: '2026-06-22 07:40', acked_at: null },
   ],
+  // usage — תקציב 24 השעות מול התקרה, כולל המספר שהנתונים שייכים לו (לחשבון יש כמה).
+  // cap: -1 = ללא הגבלה. מנוע ישן לא מחזיר את הבלוק הזה כלל, והמסך מתנהג כמו קודם.
+  usage: { used_24h: 312, cap: 2000, inbox: { id: 21, name: 'מכירות', phone: '+972501234567' } },
   contacts: { known: 412, with_consent: 386, suppressed: 19, stale: 7 },
   // הכיסוי נמדד על מי שנמצא ברצף בלבד (386 + 26), לא על כל 412 אנשי הקשר — מכנה
   // שכולל אנשי קשר שמחוץ לרצף היה מדלל את האחוז ומסתיר את הפער האמיתי.

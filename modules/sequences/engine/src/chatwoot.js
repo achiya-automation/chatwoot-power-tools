@@ -14,6 +14,20 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
   const h = { 'Content-Type': 'application/json', api_access_token: token };
   const REQUEST_TIMEOUT_MS = 15_000;
 
+  // fetch עם תקציב זמן, למסלולים שלא עוברים דרך req() (העלאות multipart, MM Lite).
+  // בלי זה קריאה שנתקעת לא חוזרת לעולם, והטיק כולו נעצר איתה.
+  // ⚠️ העלאת מדיה איטית מטבעה — תקציב נפרד וארוך יותר, אחרת סרטון תקין ייקטע.
+  const UPLOAD_TIMEOUT_MS = 60_000;
+  const timedFetch = async (url, opts = {}, timeoutMs = REQUEST_TIMEOUT_MS) => {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...opts, signal: opts.signal || ac.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   const req = async (path, opts = {}) => {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
@@ -276,11 +290,11 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       fd.append('content', content);
       fd.append('attachments[]', new Blob([buf]), file);
       // No Content-Type header on purpose — fetch must set the multipart boundary itself.
-      const r = await fetch(`${base}/conversations/${cid}/messages`, {
+      const r = await timedFetch(`${base}/conversations/${cid}/messages`, {
         method: 'POST',
         headers: { api_access_token: token },
         body: fd,
-      });
+      }, UPLOAD_TIMEOUT_MS);
       if (!r.ok) throw new Error(`Chatwoot POST freeform /conversations/${cid}/messages → ${r.status}`);
       const m = await r.json();
       return { id: m.id, content };
@@ -293,13 +307,18 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
     sendPrivateReply: async (cid, { accountId, text }) => {
       const base = (process.env.CHATWOOT_BASE_URL || '').replace(/\/+$/, '');
       if (!base) return { ok: false, error: 'CHATWOOT_BASE_URL not set' };
+      // ⚠️ הנקודה הזו מפעילה שליחה החוצה ולכן אינה פתוחה: התוסף בצד Chatwoot דורש את
+      // הסוד המשותף ונכשל סגור בלעדיו. אם הוא חסר כאן, נכשלים מקומית עם סיבה ברורה
+      // במקום לירות בקשה שממילא תיענה ב-401 ותיראה בלוג כמו תקלת רשת.
+      const internalToken = process.env.SOCIAL_COMMENTS_TOKEN || '';
+      if (!internalToken) return { ok: false, error: 'SOCIAL_COMMENTS_TOKEN not set' };
 
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), 8000);
       try {
         const r = await fetch(`${base}/social-comments/private-reply`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Internal-Token': internalToken },
           body: JSON.stringify({ conversation: { display_id: cid }, account_id: accountId, text }),
           signal: ac.signal,
           redirect: 'error',
@@ -356,11 +375,11 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       const fd = new FormData();
       if (content) fd.append('content', content);
       fd.append('attachments[]', new Blob([buf]), file);
-      const r = await fetch(`${base}/conversations/${cid}/messages`, {
+      const r = await timedFetch(`${base}/conversations/${cid}/messages`, {
         method: 'POST',
         headers: { api_access_token: token },
         body: fd,
-      });
+      }, UPLOAD_TIMEOUT_MS);
       if (!r.ok) throw new Error(`Chatwoot POST media /conversations/${cid}/messages → ${r.status}`);
       const m = await r.json();
       return { id: m.id, content };
@@ -475,7 +494,7 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
         });
       }
 
-      const r = await fetch(`${GRAPH}/${creds.phoneId}/marketing_messages`, {
+      const r = await timedFetch(`${GRAPH}/${creds.phoneId}/marketing_messages`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${creds.token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({

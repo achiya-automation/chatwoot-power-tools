@@ -36,7 +36,8 @@ const M = {
     targetSeq: 'רצף יעד',
     selectSeqPlaceholder: 'בחרו רצף…',
     selectSeqAria: 'בחירת רצף',
-    noActiveSeqs: 'אין רצפים פעילים — הפעילו רצף קודם בלשונית "רצפים".',
+    seqHint: 'מוצגים רק רצפים שפתוחים לצירוף לידים חדשים.',
+    noEnrollingSeqs: 'אין רצף שפתוח לצירוף לידים חדשים — הפעילו "צירוף לידים חדשים" ברצף בלשונית "רצפים".',
     bulkWarnContacts: 'אנשי קשר עם התווית',
     bulkWarnReceive: 'יקבלו את הרצף',
     bulkWarnSend: 'הפעולה תתחיל לשלוח להם הודעות WhatsApp.',
@@ -62,7 +63,8 @@ const M = {
     targetSeq: 'Target sequence',
     selectSeqPlaceholder: 'Select sequence…',
     selectSeqAria: 'Select sequence',
-    noActiveSeqs: 'No active sequences — enable a sequence first in the "Sequences" tab.',
+    seqHint: 'Only sequences that are open to new enrolments are listed.',
+    noEnrollingSeqs: 'No sequence is open to new enrolments — turn on "Enrol new leads" for a sequence in the "Sequences" tab.',
     bulkWarnContacts: 'contacts with the label',
     bulkWarnReceive: 'will receive the sequence',
     bulkWarnSend: 'This will start sending them WhatsApp messages.',
@@ -93,9 +95,12 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
       .finally(() => setLoadingLabels(false));
   }, [open, accountId]);
 
-  const enabledSeqs = useMemo(() => (sequences || []).filter((s) => s.enabled), [sequences]);
+  // ⚠️ `enabled` הוא נגזרת (enrollEnabled || sendEnabled) — רצף שנסגר לצירוף לידים חדשים
+  // אבל ממשיך לשלוח לקיימים נראה דרכה "פעיל", וכאן ההחלטה היא בדיוק "מי יצטרף". המנוע
+  // בודק enroll_enabled בלבד (reconcile.js), ולכן זה גם המסנן היחיד הנכון כאן.
+  const enrollingSeqs = useMemo(() => (sequences || []).filter((s) => s.enrollEnabled), [sequences]);
   const selectedLabel = labels.find((l) => l.label === label);
-  const selectedSeq = enabledSeqs.find((s) => s.key === seqKey);
+  const selectedSeq = enrollingSeqs.find((s) => s.key === seqKey);
   const count = selectedLabel?.count || 0;
 
   const run = async () => {
@@ -119,7 +124,7 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
   ];
   const seqOptions = [
     { value: '', label: t('selectSeqOption') },
-    ...enabledSeqs.map((s) => ({ value: s.key, label: s.name || s.key })),
+    ...enrollingSeqs.map((s) => ({ value: s.key, label: s.name || s.key })),
   ];
 
   const footer = result ? (
@@ -206,11 +211,13 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
               placeholder={t('selectSeqPlaceholder')}
               ariaLabel={t('selectSeqAria')}
             />
-            {enabledSeqs.length === 0 ? (
+            {enrollingSeqs.length === 0 ? (
               <p className="mt-1 text-xs text-n-amber-11">
-                {t('noActiveSeqs')}
+                {t('noEnrollingSeqs')}
               </p>
-            ) : null}
+            ) : (
+              <p className="mt-1 text-xs text-n-slate-11">{t('seqHint')}</p>
+            )}
           </div>
 
           {label && seqKey && count > 0 ? (

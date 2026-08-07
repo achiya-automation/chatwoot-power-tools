@@ -1393,17 +1393,25 @@ function MediaUrlField({ format, value, accountId, onChange }) {
           <p className="mt-2 text-xs text-n-blue-11">{t('localProcessing')}</p>
         </div>
       ) : (
+        /* ⛔ גרירת קובץ שני באמצע העלאה מריצה handleFile מקבילה, ומי שמסתיים אחרון מנצח —
+            כך הקובץ הלא-נכון נדבק לשלב ששולח בוואטסאפ. הגרירה נעולה כמו הלחיצה, והאזור
+            נראה מושבת כדי שהתעלמות מגרירה תהיה גלויה ולא שקטה. */
         <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragOver={(e) => { e.preventDefault(); if (!busy) setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer?.files?.[0]); }}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!busy) handleFile(e.dataTransfer?.files?.[0]); }}
           onClick={() => !busy && inputRef.current?.click()}
           onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !busy) inputRef.current?.click(); }}
           role="button"
           tabIndex={0}
+          aria-disabled={busy || undefined}
           aria-label={t('uploadAria', { label })}
-          className={`flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-3 py-5 text-center outline-none transition-colors focus-visible:border-n-brand ${
-            dragOver ? 'border-n-brand bg-n-brand/5' : 'border-n-amber-7 bg-n-alpha-1 hover:bg-n-alpha-2'
+          className={`flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-3 py-5 text-center outline-none transition-colors focus-visible:border-n-brand ${
+            busy
+              ? 'cursor-not-allowed border-n-weak bg-n-alpha-1 opacity-60'
+              : dragOver
+                ? 'cursor-pointer border-n-brand bg-n-brand/5'
+                : 'cursor-pointer border-n-amber-7 bg-n-alpha-1 hover:bg-n-alpha-2'
           }`}
         >
           {uploading ? (

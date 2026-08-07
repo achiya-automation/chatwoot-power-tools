@@ -29,8 +29,8 @@ const M = {
     addTitle: 'הוספת ליד לסדרה',
     noSeqOption: 'ללא סדרה (הסרה)',
     noSeqOptionDesc: 'הליד לא יקבל הודעות סדרה',
-    offParen: '(כבוי)',
-    seqOffHint: 'הסדרה כבויה — השליחה תתחיל כשתופעל',
+    offParen: '(סגורה לצירוף)',
+    seqOffHint: 'הסדרה סגורה לצירוף לידים חדשים — הליד ימתין ויצטרף כשתיפתח',
     actionFailed: 'הפעולה נכשלה',
     theLead: 'הליד',
     removeTitle: 'להסיר את הליד מהסדרה?',
@@ -45,7 +45,7 @@ const M = {
     startTitle: 'להתחיל את הסדרה?',
     startDesc: '{who} יתחיל לקבל את הודעות הסדרה «{name}»{offNote}.',
     startConfirm: 'התחל סדרה',
-    seqOffNote: ' (הסדרה כבויה — השליחה תתחיל כשתופעל)',
+    seqOffNote: ' (הסדרה סגורה לצירוף לידים חדשים — הליד ימתין ויצטרף כשתיפתח)',
     change: 'שינוי',
     searchPlaceholder: 'חיפוש איש קשר לפי שם, טלפון או אימייל…',
     searchAria: 'חיפוש איש קשר',
@@ -64,8 +64,8 @@ const M = {
     addTitle: 'Add lead to sequence',
     noSeqOption: 'No sequence (remove)',
     noSeqOptionDesc: 'The lead will not receive sequence messages',
-    offParen: '(off)',
-    seqOffHint: 'The sequence is off — sending will start once it is enabled',
+    offParen: '(closed to new leads)',
+    seqOffHint: 'This sequence is closed to new enrolments — the lead will wait and join once it reopens',
     actionFailed: 'The action failed',
     theLead: 'the lead',
     removeTitle: 'Remove the lead from the sequence?',
@@ -80,7 +80,7 @@ const M = {
     startTitle: 'Start the sequence?',
     startDesc: '{who} will start receiving messages from the sequence «{name}»{offNote}.',
     startConfirm: 'Start sequence',
-    seqOffNote: ' (the sequence is off — sending will start once it is enabled)',
+    seqOffNote: ' (the sequence is closed to new enrolments — the lead will wait and join once it reopens)',
     change: 'Change',
     searchPlaceholder: 'Search contact by name, phone, or email…',
     searchAria: 'Search contact',
@@ -147,12 +147,14 @@ export default function AssignSequenceModal({ open, onClose, accountId, sequence
     return () => { alive = false; clearTimeout(t); };
   }, [q, open, fixedContact, accountId]);
 
+  // ⚠️ הסימון הוא על "האם הליד יצטרף", ולכן enrollEnabled בלבד. `enabled` הוא נגזרת
+  // (enrollEnabled || sendEnabled) ורצף שנסגר לצירוף אך ממשיך לשלוח לקיימים נראה דרכה תקין.
   const seqOptions = [
     { value: '', label: t('noSeqOption'), description: t('noSeqOptionDesc') },
     ...sequences.map((s) => ({
       value: s.key,
-      label: s.enabled ? s.name : `${s.name} ${t('offParen')}`,
-      description: s.enabled ? undefined : t('seqOffHint'),
+      label: s.enrollEnabled ? s.name : `${s.name} ${t('offParen')}`,
+      description: s.enrollEnabled ? undefined : t('seqOffHint'),
     })),
   ];
 
@@ -209,7 +211,7 @@ export default function AssignSequenceModal({ open, onClose, accountId, sequence
       });
       return;
     }
-    const offNote = target && target.enabled === false ? translate(M, 'seqOffNote') : '';
+    const offNote = target && target.enrollEnabled === false ? translate(M, 'seqOffNote') : '';
     setConfirm({
       tone: 'info',
       title: translate(M, 'startTitle'),

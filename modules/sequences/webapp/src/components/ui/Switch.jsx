@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import { useId } from 'react';
 
 /*
  * Switch (toggle) — זהה למתג של Chatwoot v4.
@@ -50,7 +50,11 @@ export default function Switch({
         className={[
           'absolute top-1/2 -translate-y-1/2 ltr:left-0.5 rtl:right-0.5',
           'transition-transform duration-[350ms] ease-[cubic-bezier(0.34,1.56,0.64,1)]',
-          checked ? 'ltr:translate-x-3 rtl:-translate-x-3' : 'translate-x-0',
+          // בלחיצה ה-thumb נמתח (group-active:w-[18px] למטה) ובמקביל נמשך מעט אחורה,
+          // אחרת הקצה המתוח חורג מה-track. שני הקלאסים מגיעים בזוג ב-Switch.vue.
+          checked
+            ? 'ltr:translate-x-3 rtl:-translate-x-3 group-active:ltr:translate-x-[6px] rtl:group-active:-translate-x-[6px]'
+            : 'translate-x-0',
         ].join(' ')}
       >
         <span className="block h-3 w-3 rounded-full bg-n-background shadow-md transition-[width] duration-[180ms] ease-in-out group-active:w-[18px]" />
