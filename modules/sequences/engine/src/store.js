@@ -50,6 +50,7 @@ import { makeDbReads } from './reads.js';
 import { createTemplateCopy } from './meta.js';
 import { projectSchedule } from './schedule.js';
 import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from './campaigns.js';
+import { startResend, resendStatus } from './campaignResend.js';
 import { handleTemplatesAction } from './templates.js';
 import { handleJourneysAction, makeJourneysCtx } from './journeys.js';
 import { handlePresenceAction } from './presence.js';
@@ -156,6 +157,11 @@ export async function handleAction(accountId, action, payload) {
       return { data: await campaignsTrend(query, accId, payload?.days || 14) };
     case 'campaigns_tier':
       return { data: await campaignsTierInfo(query, makeDbReads(query), accId) };
+    // שליחה מחדש לנכשלים — עבודה ברקע; הלקוח מתשאל את הסטטוס. admin-only (נאכף ב-api.js).
+    case 'campaign_resend':
+      return { data: await startResend({ query, makeClientFor: makeAccountClient }, accId, payload?.campaign_id, payload?.locale) };
+    case 'campaign_resend_status':
+      return { data: resendStatus(accId, payload?.campaign_id) };
     case 'contacts':
       return actionContacts(accId, payload);
     case 'template_media':
@@ -192,6 +198,24 @@ export async function handleAction(accountId, action, payload) {
     default:
       throw new Error(`Unknown action: ${action}`);
   }
+}
+
+// Chatwoot client for a specific account — same token source as the journeys ctx
+// (drip.account_tokens, the auto-provisioned AgentBot). Used by campaign resend.
+async function makeAccountClient(accountId) {
+  const rows = await query(
+    `SELECT chatwoot_token, base_url FROM drip.account_tokens WHERE account_id = $1`,
+    [accountId]
+  );
+  const a = rows[0];
+  if (!a) throw new Error('החשבון עדיין לא מחובר למנוע — נסו שוב בעוד רגע');
+  return makeClient({
+    baseUrl: a.base_url || _config?.chatwootBaseUrl || process.env.CHATWOOT_BASE_URL,
+    token: a.chatwoot_token,
+    accountId,
+    reads: makeDbReads(query),
+    query,
+  });
 }
 
 // RPC helpers — the compliance surface is entirely SQL functions, so the JS side is a

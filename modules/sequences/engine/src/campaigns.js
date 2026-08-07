@@ -48,8 +48,15 @@ const sqlPhoneKey = (expr) => `(
 // Campaign ids have existed as both JSON numbers and JSON strings. Comparing ->> as a guarded
 // integer makes both shapes equivalent without accepting substrings or crashing on bad data.
 const campaignIdEquals = (col, param = '$2') => `
-  (${caObj(col)} ->> 'campaign_id') ~ '^[0-9]+$'
+  ${hasCampaignId(col)}
   AND (${caObj(col)} ->> 'campaign_id')::int = ${param}::int`;
+
+// "This message belongs to a campaign" — the one guard every campaign query must use.
+// This exact text is also the partial-index predicate (migration 045); the planner only
+// picks the index when the query predicate provably implies it, so keep them identical.
+// (It also guards the ::int casts above/below — `? 'campaign_id'` alone let a non-numeric
+// value crash the query.)
+const hasCampaignId = (col) => `(${caObj(col)} ->> 'campaign_id') ~ '^[0-9]+$'`;
 
 /** Canonical E.164-ish display for campaign reports (Israeli local numbers get +972). */
 export function normalizeCampaignPhone(value) {
@@ -259,7 +266,7 @@ const AGG_CTE = `
          LIMIT 1
       ) aud ON true
      WHERE m.account_id = $1
-       AND (${caObj('m.content_attributes')} ->> 'campaign_id') ~ '^[0-9]+$'
+       AND ${hasCampaignId('m.content_attributes')}
        AND NOT EXISTS (
          SELECT 1 FROM drip.campaign_send_snapshots s
           WHERE s.account_id = m.account_id
@@ -303,10 +310,15 @@ export async function listCampaigns(query, accountId) {
             coalesce(a.sent, 0)      AS sent,
             coalesce(a.delivered, 0) AS delivered,
             coalesce(a.read, 0)      AS read,
-            coalesce(a.failed, 0)    AS failed
+            coalesce(a.failed, 0)    AS failed,
+            coalesce(aud.n, 0)       AS audience_size
        FROM public.campaigns c
        JOIN public.inboxes i ON i.id = c.inbox_id AND i.channel_type = 'Channel::Whatsapp'
        LEFT JOIN agg a ON a.campaign_id = c.id
+       LEFT JOIN LATERAL (
+         SELECT count(*)::int AS n FROM drip.campaign_audience_snapshots s
+          WHERE s.account_id = c.account_id AND s.campaign_id = c.id
+       ) aud ON true
       WHERE c.account_id = $1
       ORDER BY c.created_at DESC NULLS LAST, c.id DESC`,
     [accountId]
@@ -320,6 +332,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   if (Number.isNaN(id)) return null; // missing/non-numeric campaign_id → clean null, not a DB error
   const campaign = (await query(
     `SELECT c.id, c.title, c.message, c.campaign_type, c.campaign_status, c.audience,
+            c.inbox_id, c.template_params,
             c.template_params ->> 'name'     AS template_name,
             c.template_params ->> 'language' AS language,
             c.template_params ->> 'category' AS category,
@@ -552,7 +565,7 @@ export async function campaignsTierInfo(query, _reads, accountId, deps = {}) {
            FROM public.messages m
           WHERE m.account_id = $1
             AND m.created_at > now() - interval '24 hours'
-            AND ${caObj('m.content_attributes')} ? 'campaign_id'
+            AND ${hasCampaignId('m.content_attributes')}
             AND m.status <> 3
             AND NOT EXISTS (
               SELECT 1 FROM drip.campaign_send_snapshots s
@@ -602,7 +615,7 @@ export async function campaignsTrend(query, accountId, days = 14) {
        SELECT ${localTs('m.created_at')} AS local_created_at, m.status
          FROM public.messages m
         WHERE m.account_id = $1
-          AND ${caObj('m.content_attributes')} ? 'campaign_id'
+          AND ${hasCampaignId('m.content_attributes')}
           AND m.created_at >= (now() AT TIME ZONE '${TZ}')::date - $2::int * interval '1 day'
           AND NOT EXISTS (
             SELECT 1 FROM drip.campaign_send_snapshots s

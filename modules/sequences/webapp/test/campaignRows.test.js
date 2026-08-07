@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRows, countRows, filterRows, statusKeyOf, STATUS_KEYS } from '../src/lib/campaignRows.js';
+import { buildRows, countRows, filterRows, failureGroups, statusKeyOf, STATUS_KEYS } from '../src/lib/campaignRows.js';
 
 const DETAIL = {
   recipients: [
@@ -73,5 +73,23 @@ test('filterRows: בחירה ריקה = הכל; שני הצירים מצטלבי
   assert.equal(readNoReply[0].contact_name, 'נקרא בלי תגובה');
   // חיתוך ריק הוא תוצאה חוקית, לא שגיאה
   assert.equal(filterRows(rows, { statuses: new Set(['notsent']), reply: 'yes' }).length, 0);
+});
+
+test('failureGroups: מקבץ failed+notsent לפי סיבה, ממוין מהגדול לקטן, ומתעלם מהמוצלחים', () => {
+  const rows = [
+    { statusKey: 'failed', error_title: '131049: limit' },
+    { statusKey: 'failed', error_title: '131049: limit' },
+    { statusKey: 'failed', error_title: '131026: undeliverable' },
+    { statusKey: 'notsent', error_title: 'no_phone' },
+    { statusKey: 'read', error_title: '' },
+    { statusKey: 'delivered', error_title: '' },
+  ];
+  const groups = failureGroups(rows);
+  assert.deepEqual(groups, [
+    { statusKey: 'failed', error_title: '131049: limit', count: 2 },
+    { statusKey: 'failed', error_title: '131026: undeliverable', count: 1 },
+    { statusKey: 'notsent', error_title: 'no_phone', count: 1 },
+  ]);
+  assert.deepEqual(failureGroups([]), []);
 });
 

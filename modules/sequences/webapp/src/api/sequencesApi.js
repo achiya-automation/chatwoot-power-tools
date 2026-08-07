@@ -269,6 +269,17 @@ export async function getCampaignsTier(accountId) {
   return call('campaigns_tier', {}, accountId);
 }
 
+// campaign_resend — התנעת שליחה מחדש לכל הנכשלים בקמפיין (עבודת רקע בשרת) → { total }.
+// אדמינים בלבד (403 לכל השאר). ההתקדמות נקראת ב-getCampaignResendStatus.
+export async function resendCampaignFailed(campaignId, accountId, locale) {
+  return call('campaign_resend', { campaign_id: campaignId, locale }, accountId);
+}
+
+// campaign_resend_status — { status:'running'|'done', total, done, sent, failed:[{phone,name,error}] } | null.
+export async function getCampaignResendStatus(campaignId, accountId) {
+  return call('campaign_resend_status', { campaign_id: campaignId }, accountId);
+}
+
 // ── ציות (מטא) ──
 // compliance — תמונת הציות המלאה של החשבון:
 // { health:{tier,cap,quality,halted,halt_reason,halted_at,checked_at}, settings, templates[],
