@@ -16,7 +16,7 @@ import { createHmac } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { isOptOut } from './compliance.js';
-import { isNoSendNow } from './schedule.js';
+import { isNoSendNow, accountQuietWindow } from './schedule.js';
 import { HUMAN_OUTGOING_SQL } from './reads.js';
 
 const LIVE = ['active', 'waiting_answer', 'waiting_delay'];
@@ -722,14 +722,19 @@ export async function handleJourneyHook(ctx, event) {
 // שעות פעילות לפעולות שהבוט יוזם (השהיות/פולואפים): שבת כברירת מחדל (fail-safe,
 // כמו הרצפים), שעות שקט אם הוגדרו בפלואו. תשובות ללקוח שכתב עכשיו לא נחסמות —
 // זה מענה, לא דיוור; רק ה-tick היוזם ממתין.
-function journeyQuietNow(journey, windows, now = new Date()) {
+// ⭐ ירושה מהחשבון (07.08.2026): פלואו בלי שעות שקט משלו יורש את החלון שהוגדר פעם
+// אחת ברמת החשבון, בדיוק כמו רצף (schedule.gateFor). קודם היה כאן מושג זהה בשם
+// אחר ("שעות פעילות") ובלי ברירת מחדל — כלומר כל פלואו שלא הוגדר בו במפורש יכול
+// היה לשלוח בלילה, וההגדרה שבמסך הציות לא נגעה בו.
+function journeyQuietNow(journey, windows, now = new Date(), accountDefaults = null) {
   const q = journey.trigger?.quiet || {};
+  const inherited = accountQuietWindow(accountDefaults);
   return isNoSendNow({
     now,
     windows: windows || [],
     skipShabbat: q.skip_shabbat !== false,
-    quietStart: q.quiet_start || undefined,
-    quietEnd: q.quiet_end || undefined,
+    quietStart: q.quiet_start || inherited?.start || undefined,
+    quietEnd: q.quiet_end || inherited?.end || undefined,
   });
 }
 
@@ -739,6 +744,12 @@ export async function reconcileJourneys(ctx, accountId) {
   const journeys = await activeJourneys(query, accountId);
   if (!journeys.length) return;
   const byId = Object.fromEntries(journeys.map((j) => [j.id, j]));
+
+  // שעות השקט של החשבון — ברירת המחדל שכל פלואו יורש כשלא הוגדר לו חלון משלו.
+  // שאילתה אחת לטיק; אם אין שורת ציות, אין ירושה וההתנהגות כשהייתה.
+  const accountQuiet = (await query(
+    'SELECT quiet_start_hour, quiet_end_hour FROM drip.compliance WHERE account_id = $1', [accountId]
+  ).catch(() => []))[0] || null;
 
   // רישום ה-webhook (אידמפוטנטי; הנתיב נושא סוד ספציפי-לחשבון, לא סוד גלובלי)
   if (config.journeyHookBase && config.journeyHookSecret) {
@@ -760,7 +771,7 @@ export async function reconcileJourneys(ctx, accountId) {
     if (!journey) continue;
     // בשעות שקט/שבת הריצה נשארת due — תעובד בטיק הראשון אחרי סוף החלון.
     // ponytail: אין פיזור-jitter ביציאה מהחלון; בנפחים שיחתיים זה זניח.
-    if (journeyQuietNow(journey, windows)) continue;
+    if (journeyQuietNow(journey, windows, new Date(), accountQuiet)) continue;
     const client = await makeClientFor(accountId);
     const ctx2 = { ...ctx, client };
 
