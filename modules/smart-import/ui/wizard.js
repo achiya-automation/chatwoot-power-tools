@@ -288,7 +288,12 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     });
     tbl.appendChild(thead);
 
-    state.customMap = []; // reset on each entry to mapping step
+    // ⚠️ לא מאפסים. הכניסה לשלב הזה קורית גם ב"חזור" מהתווית/התצוגה המקדימה, ואיפוס
+    // החזיר כל עמודה שמופתה לשדה מותאם ל"התעלם" בלי שום סימן — מי שהמשיך בלי לשים לב
+    // איבד את כל הנתונים בעמודה ההיא, בשקט. שומרים רק מיפויים של עמודות שעדיין קיימות
+    // (העלאת קובץ אחר מחליפה את הטבלה).
+    const colCount = state.table.headers.length;
+    state.customMap = state.customMap.filter((c) => c.index < colCount);
 
     state.table.headers.forEach((colHeader, i) => {
       const sample = (state.table.rows.find((r) => (r[i] || '').trim()) || [])[i] || '';
@@ -307,11 +312,15 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       }
       options.push({ value: '__new__', label: t('createNewField'), icon: 'plus' });
 
-      // Initial selection mirrors the old code: only a matching system field
-      // pre-selects; custom attrs never pre-select on first render.
-      const initial = state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field)
-        ? state.mapping[i].field
-        : '';
+      // הבחירה המשוחזרת: שדה מערכת מגיע מ-state.mapping, ושדה מותאם מ-state.customMap —
+      // הוא לעולם לא נכתב ל-mapping.field (ראה updateMapping/commit), ולכן הסתמכות עליו
+      // בלבד גרמה לבחירה להיעלם בכל חזרה לשלב הזה.
+      const custom = state.customMap.find((c) => c.index === i);
+      const initial = custom
+        ? (custom.create ? '__new__' : 'custom:' + custom.attribute_key)
+        : (state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field)
+          ? state.mapping[i].field
+          : '');
 
       const row = el('tr');
       const tdHeader = el('td', 'px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12');
@@ -331,6 +340,9 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
         },
       });
       tdSel.appendChild(cs.el);
+      // שדה חדש שכבר אושר בכניסה קודמת: מציגים את המצב המאושר, לא את הבורר —
+      // אחרת החזרה לשלב הזה נראית כאילו לא נבחר כלום, בזמן שהמיפוי דווקא קיים.
+      if (custom?.create) showCommittedNewField(i, custom.create.display, tdSel, cs);
 
       const tdSample = el('td', 'px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12');
       tdSample.textContent = sample;
@@ -400,6 +412,26 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     wrap.append(inp, confirmBtn, cancelBtn);
     tdSel.replaceChildren(wrap);
     inp.focus();
+  }
+
+  // מציג את המצב "שדה חדש אושר" (תווית + כפתור שינוי) בלי לפתוח מחדש את תיבת ההקלדה.
+  // משמש בשחזור אחרי "חזור", כדי שהמיפוי שכבר נבחר ייראה — ולא ייראה כאילו אבד.
+  function showCommittedNewField(i, name, tdSel, origCs) {
+    const done = el('div', 'flex items-center gap-1');
+    const lbl = el('span', 'text-sm text-n-slate-12 flex-1 truncate');
+    lbl.textContent = name;
+    const changeBtn = el('button',
+      BTN_BASE + ' text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer');
+    changeBtn.appendChild(icon('x', 'size-4'));
+    changeBtn.title = t('change');
+    changeBtn.addEventListener('click', () => {
+      state.mapping[i] = { index: i, field: null };
+      state.customMap = state.customMap.filter((c) => c.index !== i);
+      origCs.setValue('');
+      tdSel.replaceChildren(origCs.el);
+    });
+    done.append(lbl, changeBtn);
+    tdSel.replaceChildren(done);
   }
 
   function updateMapping(i, value) {
@@ -687,15 +719,21 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     let labels = [];
     try { labels = await api.listLabels().then((r) => r.payload || r); } catch { /* allow new only */ }
 
-    let selValue = ''; // tracks the chosen existing-label value (replaces sel.value)
-
     const options = [{ value: '', label: t('noLabel') }];
     (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
     const existingLabelTitles = new Set((labels || []).map((l) => String(l.title).toLowerCase()));
 
+    // ⚠️ שחזור הבחירה הקודמת. הכניסה לשלב הזה קורית גם ב"חזור" מהתצוגה המקדימה, וטופס
+    // ריק גרם ל-labelTitle להתאפס בהמשך — התווית שנבחרה נעלמה בלי שום סימן.
+    // תווית קיימת חוזרת לבורר; תווית חדשה שטרם נוצרה חוזרת לשדה ההקלדה.
+    const prior = state.labelTitle || '';
+    const priorIsExisting = prior && existingLabelTitles.has(prior.toLowerCase());
+    let selValue = priorIsExisting ? prior : ''; // tracks the chosen existing-label value
+
     const newInput = el('input',
       'h-8 w-full px-3 py-2 text-sm rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand border-0 outline-offset-[-1px]');
     newInput.placeholder = t('newLabelPlaceholder');
+    if (prior && !priorIsExisting) newInput.value = prior;
     const labelError = el('div', 'min-h-5 text-sm text-n-ruby-11');
     newInput.addEventListener('input', () => { labelError.textContent = ''; });
     newInput.addEventListener('blur', () => {
@@ -705,7 +743,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
     const cs = customSelect({
       options,
-      value: '',
+      value: selValue,
       placeholder: t('noLabel'),
       size: 'field', // roomier single-select field for the label step
       onSelect: (v) => {
@@ -928,6 +966,16 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
           close();
           return;
         } catch { /* server refused the start — the in-browser runner still works */ }
+        // ⚠️ נפילה מהשרת חזרה לדפדפן: כשמצב-שרת פעל, דילגנו על batchDedup ולכן אף שורה
+        // לא סומנה __match/__dupTail. הרצת הייבוא כך שולחת גם כפילויות-בתוך-הקובץ
+        // במקביל (concurrency 5), שתיהן לא מוצאות התאמה — ונוצרים שני אנשי קשר.
+        // מריצים את הזיהוי לפני ההעברה; אם גם הוא נכשל, מנקים סימונים חלקיים והרץ
+        // נופל לבדיקה פר-שורה, שאיטית אבל נכונה.
+        try {
+          await batchDedup(state.contacts, api);
+        } catch {
+          state.contacts.forEach((c) => { delete c.__match; delete c.__dupTail; });
+        }
       }
       const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
       window.__cwImportJob = job;

@@ -91,10 +91,23 @@
     } catch (e) { /* never break Chatwoot */ }
   }
 
-  // stable anchor — the contacts header action row, identified via the native filter button's id
+  // עוגן: שורת הפעולות בכותרת אנשי הקשר.
+  //
+  // ⚠️ ההורה הישיר של כפתור הסינון הוא <div class="relative"> — עטיפה שמחזיקה רק אותו
+  // ואת חלונית הסינון שנפתחת ממנו (ContactHeader.vue:64). הזרקה לשם הדביקה את הכפתור
+  // שלנו לכפתור הסינון בלי הרווח הטבעי, והכניסה אלמנט זר לעטיפה שאמורה לעגן את
+  // החלונית. שורת הפעולות האמיתית, עם gap-2 של המקור, היא רמה אחת מעל (:63).
+  //
+  // ⚠️ ועוד: לכפתור הסינון יש v-if — במסכי תווית/סגמנט הוא לא קיים כלל, ולכן הכפתור
+  // שלנו פשוט לא הופיע שם. לכן נופלים לשורת הפעולות של הכותרת גם בלעדיו.
   function findActionBar() {
     var fb = document.getElementById('toggleContactsFilterButton');
-    return fb ? fb.parentElement : null;
+    if (fb && fb.parentElement && fb.parentElement.parentElement) {
+      return fb.parentElement.parentElement;
+    }
+    // אין כפתור סינון (מסך תווית/סגמנט): מאתרים את שורת הפעולות לפי הכפתור שכן קיים בה.
+    var anyAction = document.querySelector('.flex.items-center.gap-2 > button, .flex.items-center.gap-2 > a');
+    return anyAction ? anyAction.parentElement : null;
   }
 
   // ⚠️ לא לקרוא למשתנה הזה t — t() היא פונקציית התרגום למעלה. השמה כאן דורסת אותה במזהה

@@ -752,7 +752,13 @@ var __cwImport = (() => {
   // ui/styles.js
   var STYLES = `
 dialog.cwi-dlg{padding:0;border:0;background:transparent;width:100%;max-width:42rem;max-height:90vh;overflow:visible;color:inherit}
-dialog.cwi-dlg::backdrop{background:rgba(0,0,0,.5);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+/* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D0\u05D7\u05D5\u05E8\u05D9 \u05D4\u05D7\u05DC\u05D5\u05DF \u2014 \u05D6\u05D4\u05D4 \u05DC-Dialog.vue \u05E9\u05DC Chatwoot (bg-n-alpha-black1 + blur 4px).
+   \u200E--black-alpha-1 \u05D4\u05D5\u05D0 12% \u05D1\u05DE\u05E6\u05D1 \u05D1\u05D4\u05D9\u05E8 \u05D5-30% \u05D1\u05DB\u05D4\u05D4; \u05E7\u05D5\u05D3\u05DD \u05D4\u05D9\u05D4 \u05DB\u05D0\u05DF 50% \u05E7\u05D1\u05D5\u05E2, \u05DB\u05DC\u05D5\u05DE\u05E8 \u05DB\u05D4\u05D4
+   \u05E4\u05D9 \u05D0\u05E8\u05D1\u05E2\u05D4 \u05DE\u05D4\u05DE\u05E7\u05D5\u05E8 \u05D5\u05DC\u05DC\u05D0 \u05D4\u05EA\u05D0\u05DE\u05D4 \u05DC\u05E2\u05E8\u05DB\u05EA \u05D4\u05E0\u05D5\u05E9\u05D0. */
+dialog.cwi-dlg::backdrop{background:rgba(0,0,0,.12);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+/* wizard.js \u05DE\u05D5\u05E1\u05D9\u05E3 \u05D0\u05EA \u05D4\u05DE\u05D7\u05DC\u05E7\u05D4 dark \u05E2\u05DC \u05D4-dialog \u05E2\u05E6\u05DE\u05D5 (\u05E8\u05D0\u05D4 \u05E9\u05DD: \u05D4\u05D5\u05D0 \u05D1-top layer \u05D5\u05DC\u05D0
+   \u05D9\u05D5\u05E8\u05E9 \u05DE\u05D4\u05D3\u05E3), \u05D5\u05DC\u05DB\u05DF \u05D4\u05E1\u05DC\u05E7\u05D8\u05D5\u05E8 \u05D7\u05D9\u05D9\u05D1 \u05DC\u05D4\u05D9\u05D5\u05EA \u05E2\u05DC \u05D0\u05D5\u05EA\u05D5 \u05D0\u05DC\u05DE\u05E0\u05D8 \u05D5\u05DC\u05D0 \u05E2\u05DC \u05D0\u05D1. */
+dialog.cwi-dlg.dark::backdrop{background:rgba(0,0,0,.3)}
 dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 @keyframes cwiBackdrop{from{opacity:0}to{opacity:1}}
 /* Animate the inner card, NOT the <dialog>: a transform on the dialog would make it
@@ -764,7 +770,10 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 /* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D2\u05D9\u05E2 \u05DE\u05DE\u05D7\u05DC\u05E7\u05EA bg-n-brand \u05E9\u05DC Chatwoot (\u05D4\u05DB\u05D7\u05D5\u05DC \u05D4\u05E8\u05E9\u05DE\u05D9) \u2014 \u05DC\u05D0 \u05DE\u05DE\u05E9\u05EA\u05E0\u05D4:
    --color-n-brand \u05DC\u05D0 \u05E7\u05D9\u05D9\u05DD \u05D1-CSS \u05D4\u05DE\u05E7\u05D5\u05DE\u05E4\u05DC \u05D5\u05D4-fallback \u05E6\u05D1\u05E2 \u05D0\u05EA \u05D4\u05E4\u05E1 \u05D1\u05D0\u05D9\u05E0\u05D3\u05D9\u05D2\u05D5 \u05D6\u05E8. */
 .cwi-prog-fill{height:100%;transition:width .2s}
-.cwi-tbl-cell{border-bottom:1px solid}
+/* \u26A0\uFE0F border-bottom \u05D1\u05DC\u05D9 \u05E6\u05D1\u05E2 = currentColor \u05DC\u05E4\u05D9 \u05DE\u05E4\u05E8\u05D8 CSS, \u05D5\u05DB\u05D9\u05D5\u05D5\u05DF \u05E9\u05D4\u05D2\u05D9\u05DC\u05D9\u05D5\u05DF \u05D4\u05D6\u05D4 \u05DE\u05D5\u05D6\u05E8\u05E7
+   \u05DC-head \u05D1\u05D6\u05DE\u05DF \u05E8\u05D9\u05E6\u05D4 \u05D4\u05D5\u05D0 \u05D1\u05D0 *\u05D0\u05D7\u05E8\u05D9* \u05D4\u05D2\u05D9\u05DC\u05D9\u05D5\u05DF \u05E9\u05DC Chatwoot \u05D5\u05DE\u05E0\u05E6\u05D7 \u05D0\u05EA border-n-weak \u05E9\u05E2\u05DC \u05D4\u05EA\u05D0.
+   \u05D4\u05EA\u05D5\u05E6\u05D0\u05D4 \u05D4\u05D9\u05D9\u05EA\u05D4 \u05E7\u05D5\u05D5\u05D9 \u05D8\u05D1\u05DC\u05D4 \u05D1\u05E6\u05D1\u05E2 \u05D4\u05D8\u05E7\u05E1\u05D8 \u2014 \u05DB\u05D4\u05D9\u05DD \u05D1\u05D4\u05E8\u05D1\u05D4 \u05DE\u05DB\u05DC \u05D8\u05D1\u05DC\u05D4 \u05D0\u05D7\u05E8\u05EA \u05D1\u05D3\u05E9\u05D1\u05D5\u05E8\u05D3. */
+.cwi-tbl-cell{border-bottom:1px solid rgb(var(--border-weak))}
 .cwi-cs-panel{transition:opacity .2s ease-out}
 /* Background-import pill \u2014 fixed to the bottom start corner (dir-aware via
    inset-inline-start; the pill carries its own dir attribute). Below the browser
@@ -1115,7 +1124,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         thead.appendChild(th);
       });
       tbl.appendChild(thead);
-      state.customMap = [];
+      const colCount = state.table.headers.length;
+      state.customMap = state.customMap.filter((c) => c.index < colCount);
       state.table.headers.forEach((colHeader, i) => {
         const sample = (state.table.rows.find((r) => (r[i] || "").trim()) || [])[i] || "";
         const options = [];
@@ -1129,7 +1139,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           });
         }
         options.push({ value: "__new__", label: t("createNewField"), icon: "plus" });
-        const initial = state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field) ? state.mapping[i].field : "";
+        const custom = state.customMap.find((c) => c.index === i);
+        const initial = custom ? custom.create ? "__new__" : "custom:" + custom.attribute_key : state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field) ? state.mapping[i].field : "";
         const row = el("tr");
         const tdHeader = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
         tdHeader.textContent = colHeader;
@@ -1147,6 +1158,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           }
         });
         tdSel.appendChild(cs.el);
+        if (custom?.create) showCommittedNewField(i, custom.create.display, tdSel, cs);
         const tdSample = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
         tdSample.textContent = sample;
         row.append(tdHeader, tdSel, tdSample);
@@ -1213,6 +1225,25 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       wrap.append(inp, confirmBtn, cancelBtn);
       tdSel.replaceChildren(wrap);
       inp.focus();
+    }
+    function showCommittedNewField(i, name, tdSel, origCs) {
+      const done = el("div", "flex items-center gap-1");
+      const lbl = el("span", "text-sm text-n-slate-12 flex-1 truncate");
+      lbl.textContent = name;
+      const changeBtn = el(
+        "button",
+        BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer"
+      );
+      changeBtn.appendChild(icon("x", "size-4"));
+      changeBtn.title = t("change");
+      changeBtn.addEventListener("click", () => {
+        state.mapping[i] = { index: i, field: null };
+        state.customMap = state.customMap.filter((c) => c.index !== i);
+        origCs.setValue("");
+        tdSel.replaceChildren(origCs.el);
+      });
+      done.append(lbl, changeBtn);
+      tdSel.replaceChildren(done);
     }
     function updateMapping(i, value) {
       state.mapping[i] = { index: i, field: null };
@@ -1478,15 +1509,18 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         labels = await api.listLabels().then((r) => r.payload || r);
       } catch {
       }
-      let selValue = "";
       const options = [{ value: "", label: t("noLabel") }];
       (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
       const existingLabelTitles = new Set((labels || []).map((l) => String(l.title).toLowerCase()));
+      const prior = state.labelTitle || "";
+      const priorIsExisting = prior && existingLabelTitles.has(prior.toLowerCase());
+      let selValue = priorIsExisting ? prior : "";
       const newInput = el(
         "input",
         "h-8 w-full px-3 py-2 text-sm rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand border-0 outline-offset-[-1px]"
       );
       newInput.placeholder = t("newLabelPlaceholder");
+      if (prior && !priorIsExisting) newInput.value = prior;
       const labelError = el("div", "min-h-5 text-sm text-n-ruby-11");
       newInput.addEventListener("input", () => {
         labelError.textContent = "";
@@ -1497,7 +1531,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       });
       const cs = customSelect({
         options,
-        value: "",
+        value: selValue,
         placeholder: t("noLabel"),
         size: "field",
         // roomier single-select field for the label step
@@ -1676,6 +1710,14 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
             close();
             return;
           } catch {
+          }
+          try {
+            await batchDedup(state.contacts, api);
+          } catch {
+            state.contacts.forEach((c) => {
+              delete c.__match;
+              delete c.__dupTail;
+            });
           }
         }
         const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
