@@ -1,11 +1,9 @@
-/* גופן Inter — זהה ל-Chatwoot. נטען מ-@fontsource (משקלים סטנדרטיים).
-   המשקלים המותאמים (420/440/460/520/620) ב-tailwind.config מתרנדרים דרך
-   font-variation אם זמין, אחרת מתעגלים למשקל הסטטי הקרוב. */
-@import '@fontsource/inter/300.css';
-@import '@fontsource/inter/400.css';
-@import '@fontsource/inter/500.css';
-@import '@fontsource/inter/600.css';
-@import '@fontsource/inter/700.css';
+/* גופן Inter — גופן *משתנה*, בדיוק כמו ב-Chatwoot
+   (shared/assets/fonts/inter.scss: InterVariable.woff2, font-weight: 100 900).
+   קודם נטענו כאן חמישה קבצים סטטיים, ולכן המשקלים המדויקים שהמערכת מבקשת
+   (420/440/460/520/620 ב-tailwind.config) נצמדו למשקל הקרוב במקום להתרנדר כמותם —
+   הבדל דק אבל נוכח בכל טקסט בממשק. */
+@import '@fontsource-variable/inter';
 
 /* CSS variables של Chatwoot (light + dark) */
 @import './chatwoot-tokens.css';
