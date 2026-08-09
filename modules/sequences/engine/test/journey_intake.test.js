@@ -356,6 +356,77 @@ test('handleJourneyIntake never acknowledges an existing failed initial run as s
   assert.match(receipt.last_error, /template/);
 });
 
+// אותו אדם מילא את הטופס שוב בעוד הפלואו הראשון ממתין לתשובה. uq_journey_runs_live מונע
+// פלואו שני באותה שיחה — וזו התנהגות נכונה. הקליטה חייבת בכל זאת להצליח: כשל כאן היה
+// מפיל את הריצה ב-Make ואף אחד לא היה יודע שהליד חזר (התקרית של 9.8.26).
+test('a returning lead leaves a private note, succeeds, and never resends the template', async () => {
+  await insertJourney();
+  await query(`INSERT INTO public.inboxes (id, account_id, name, channel_type)
+               VALUES (40, 14, 'Daniel WhatsApp', 'Channel::Whatsapp')`);
+  await query(`INSERT INTO public.contacts (id, account_id, name, phone_number)
+               VALUES (91, 14, 'חוסין', '+972501234567')`);
+  await query(`INSERT INTO public.contact_inboxes (id, contact_id, inbox_id, source_id)
+               VALUES (91, 91, 40, '972501234567')`);
+  await query(`INSERT INTO public.conversations
+                 (id, display_id, account_id, contact_id, contact_inbox_id, inbox_id)
+               VALUES (9010, 910, 14, 91, 91, 40)`);
+  // הפלואו של הליד הראשון — חי, ממתין לתשובה
+  await query(
+    `INSERT INTO drip.journey_runs
+       (journey_id, account_id, display_id, contact_id, status, current_node, answers)
+     VALUES ($1::uuid, 14, 910, 91, 'waiting_answer', 't', $2::jsonb)`,
+    [JOURNEY_ID, JSON.stringify({
+      _intake_source: 'facebook_lead_ads', _intake_external_id: 'fb-first',
+    })]
+  );
+
+  const notes = [];
+  const client = {
+    sendPrivateNote: async (cid, content) => { notes.push({ cid, content }); return { id: 1 }; },
+    sendTemplate: async () => assert.fail('a returning lead must not get the template again'),
+    sendText: async () => assert.fail('a returning lead must not get a customer-facing message'),
+    toggleStatus: async () => ({}),
+    patchContactAttrs: async () => ({}),
+    updateContact: async () => ({}),
+    getContact: async () => ({}),
+    // Chatwoot מחזיר את השיחה הפתוחה הקיימת לאותו source_id — לא פותח שנייה
+    createConversation: async () => ({ id: 910 }),
+  };
+  const ctx = { query, makeClientFor: async () => client, reads: { getContact: async () => ({}) } };
+
+  const result = await handleJourneyIntake(ctx, intakePayload('fb-second'), 14);
+  assert.equal(result.returning_lead, true);
+  assert.equal(result.started, false);
+  assert.equal(result.conversation_id, 910);
+  assert.equal(notes.length, 1, 'the agents get exactly one heads-up');
+  assert.match(notes[0].content, /ליד חוזר/);
+  assert.match(notes[0].content, /fb-second/);
+  assert.equal(notes[0].cid, 910);
+
+  const [receipt] = await query(
+    `SELECT status, display_id, run_id, last_error FROM drip.journey_intakes
+      WHERE account_id = 14 AND journey_id = $1::uuid AND external_id = 'fb-second'`,
+    [JOURNEY_ID]
+  );
+  assert.equal(receipt.status, 'returning_lead');
+  assert.equal(Number(receipt.display_id), 910);
+  assert.equal(receipt.run_id, null);
+  assert.equal(receipt.last_error, 'conversation_has_active_flow');
+
+  // מסירה כפולה של אותו ליד מפייסבוק — קבלה סופית, בלי הערה שנייה
+  const again = await handleJourneyIntake(ctx, intakePayload('fb-second'), 14);
+  assert.equal(again.duplicate, true);
+  assert.equal(again.returning_lead, true);
+  assert.equal(notes.length, 1, 'a duplicate webhook must not repeat the note');
+
+  const [live] = await query(
+    `SELECT count(*)::int AS n FROM drip.journey_runs
+      WHERE account_id = 14 AND display_id = 910
+        AND status IN ('active','waiting_answer','waiting_delay')`
+  );
+  assert.equal(live.n, 1, 'still exactly one live flow on the conversation');
+});
+
 test('resolveOrCreateContact trusts the inbox source identity even when phone_number is hidden', async () => {
   await query(`INSERT INTO public.inboxes (id, account_id, name, channel_type)
                VALUES (40, 14, 'Daniel WhatsApp', 'Channel::Whatsapp')`);

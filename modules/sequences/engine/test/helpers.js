@@ -87,10 +87,14 @@ export async function setupDb(pool) {
 export async function relaxCompliance(pool, accounts = [1, 2, 3, 5, 7, 9]) {
   for (const id of accounts) {
     await pool.query(
-      `INSERT INTO drip.compliance (account_id, require_consent, max_marketing_per_day)
-       VALUES ($1, false, 9999)
+      // שעות השקט חייבות להירפות כאן גם הן. ברירת המחדל בסכימה היא 21:00–08:00, ו-qs===qe
+      // מבטל את החלון — בלי זה כל טסט שמסתמך על reconcile עבר ביום ונכשל בלילה.
+      `INSERT INTO drip.compliance
+         (account_id, require_consent, max_marketing_per_day, quiet_start_hour, quiet_end_hour)
+       VALUES ($1, false, 9999, 0, 0)
        ON CONFLICT (account_id) DO UPDATE
-         SET require_consent = false, max_marketing_per_day = 9999`,
+         SET require_consent = false, max_marketing_per_day = 9999,
+             quiet_start_hour = 0, quiet_end_hour = 0`,
       [id]
     );
   }

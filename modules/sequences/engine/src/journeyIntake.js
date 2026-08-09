@@ -7,7 +7,7 @@
  * the original run has completed.
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { executeFrom, startRun } from './journeys.js';
+import { executeFrom, followUpDueAt, startRun } from './journeys.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const E164_RE = /^\+[1-9]\d{7,14}$/;
@@ -152,8 +152,10 @@ async function receiptForKey(query, key) {
  */
 export async function claimJourneyIntake(query, key) {
   let [run, receipt] = await Promise.all([existingRun(query, key), receiptForKey(query, key)]);
-  if (receipt?.status === 'started') {
-    return { claimed: false, duplicate: true, run, receipt };
+  // 'returning_lead' סופי בדיוק כמו 'started': הליד הוכרע, ומסירה כפולה של אותו מזהה
+  // לא תרשום שוב הערה בשיחה.
+  if (receipt?.status === 'started' || receipt?.status === 'returning_lead') {
+    return { claimed: false, duplicate: true, run, receipt, returningLead: receipt.status === 'returning_lead' };
   }
   if (run?.status === 'failed') {
     await syncReceiptFromRun(query, key, run);
@@ -185,8 +187,10 @@ export async function claimJourneyIntake(query, key) {
   }
 
   [run, receipt] = await Promise.all([existingRun(query, key), receiptForKey(query, key)]);
-  if (receipt?.status === 'started') {
-    return { claimed: false, duplicate: true, run, receipt };
+  // 'returning_lead' סופי בדיוק כמו 'started': הליד הוכרע, ומסירה כפולה של אותו מזהה
+  // לא תרשום שוב הערה בשיחה.
+  if (receipt?.status === 'started' || receipt?.status === 'returning_lead') {
+    return { claimed: false, duplicate: true, run, receipt, returningLead: receipt.status === 'returning_lead' };
   }
   if (run?.status === 'failed') {
     await syncReceiptFromRun(query, key, run);
@@ -253,6 +257,36 @@ async function markStarted(query, key, attemptId, { contactId, displayId, runId 
   if (!rows.length) throw new IntakeError('intake_attempt_superseded', 503);
 }
 
+// מצב סופי: הליד נקלט, במתכוון לא נפתח לו פלואו. לא 'failed' — כדי שמסירה כפולה של
+// אותו ליד מפייסבוק לא תעשה reclaim ותרשום את ההערה שוב.
+async function markReturningLead(query, key, attemptId, { contactId, displayId }) {
+  await query(
+    `UPDATE drip.journey_intakes
+        SET status = 'returning_lead', contact_id = $5, display_id = $6,
+            attempt_id = NULL, lease_until = NULL,
+            last_error = 'conversation_has_active_flow', updated_at = now()
+      WHERE account_id = $1 AND journey_id = $2::uuid AND source = $3 AND external_id = $4
+        AND status = 'processing' AND attempt_id = $7::uuid`,
+    [key.accountId, key.journeyId, key.source, key.externalId, contactId, displayId, attemptId]
+  );
+}
+
+// ההערה היא לנציגים בלבד (private). כשל בכתיבתה לא הופך את הקליטה לכשל — הליד כבר
+// רשום ב-Airtable ובקבלה, וריצה שנופלת ב-Make על הערה פנימית היא בדיוק הרעש שנמנע כאן.
+async function notifyReturningLead(client, displayId, input, log = console) {
+  const note = [
+    '📩 *ליד חוזר מפייסבוק* — מילא את הטופס שוב.',
+    `שם בטופס: ${input.contact.name || '—'} · טלפון: ${input.contact.phone || '—'}`,
+    `מזהה ליד: ${input.externalId}`,
+    'הפלואו האוטומטי לא נשלח שוב (הוא עדיין ממתין לתשובה על ההודעה הראשונה) — כדאי להתקשר.',
+  ].join('\n');
+  try {
+    await client.sendPrivateNote(displayId, note);
+  } catch (e) {
+    log.warn?.(`[journeys] returning-lead note failed on conv ${displayId}: ${e.message}`);
+  }
+}
+
 async function markFailed(query, key, attemptId, error) {
   const code = bounded(error?.code || error?.name || 'intake_failed', 100);
   await query(
@@ -287,13 +321,15 @@ async function recoverSentInitialTemplate(query, key, journey, run) {
   );
   if (!sent.length) return null;
 
+  // אותו תזמון give-up כמו במסלול הרגיל: ריצה משוחזרת בלי next_action_at ממתינה לנצח
+  // וחוסמת את השיחה לכל פלואו עתידי.
   const recovered = (await query(
     `UPDATE drip.journey_runs
         SET status = 'waiting_answer', waiting_since = COALESCE(waiting_since, now()),
-            next_action_at = NULL, retry_count = 0, updated_at = now()
+            next_action_at = $3, retry_count = 0, updated_at = now()
       WHERE id = $1::uuid AND account_id = $2 AND status = 'active'
       RETURNING *`,
-    [run.id, key.accountId]
+    [run.id, key.accountId, followUpDueAt(node.data)]
   ))[0] || (await existingRun(query, key));
   if (recovered?.status !== 'waiting_answer') return null;
   await syncReceiptFromRun(query, key, recovered);
@@ -391,7 +427,7 @@ export async function ensureConversation({ query, client, accountId, inboxId, co
 }
 
 export async function handleJourneyIntake(ctx, payload, accountId) {
-  const { query } = ctx;
+  const { query, log = console } = ctx;
   const input = normalizeIntakePayload(payload);
   const journeyRows = await query(
     `SELECT * FROM drip.journeys
@@ -433,6 +469,7 @@ export async function handleJourneyIntake(ctx, payload, accountId) {
       started: false,
       duplicate: true,
       processing: !!claim.processing,
+      ...(claim.returningLead ? { returning_lead: true } : {}),
       run_id: claim.run?.id || claim.receipt?.run_id || null,
       conversation_id: claim.run?.display_id || claim.receipt?.display_id || null,
     };
@@ -498,7 +535,18 @@ export async function handleJourneyIntake(ctx, payload, accountId) {
         _intake_airtable_lead_id: input.customAttributes.airtable_lead_id,
       },
     });
-    if (!run) throw new IntakeError('conversation_has_active_flow', 409);
+    // ליד חוזר: אותו אדם מילא את הטופס שוב בעוד הפלואו הראשון עדיין ממתין לתשובה
+    // (uq_journey_runs_live מונע שני פלואוים בשיחה אחת). זה מצב לגיטימי ולא כשל —
+    // מפילים את הריצה ב-Make בשקט וגם לא שולחים תבנית שיווקית שנייה למי שהתעלם
+    // מהראשונה, אלא מסמנים לנציגים שהליד חזר. הם מחזיקים את השיחה ממילא.
+    if (!run) {
+      await markReturningLead(query, key, attemptId, { contactId, displayId });
+      await notifyReturningLead(client, displayId, input, log);
+      return {
+        started: false, duplicate: false, returning_lead: true,
+        run_id: null, conversation_id: displayId,
+      };
+    }
     if (run.status === 'failed') throw new IntakeError('journey_initial_node_failed', 502);
     if (run.status === 'active') throw new IntakeError('intake_processing', 503);
     await renewAttempt(query, key, attemptId);

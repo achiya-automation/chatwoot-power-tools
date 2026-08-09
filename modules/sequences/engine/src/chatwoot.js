@@ -341,6 +341,15 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       return { id: m.id, content };
     },
 
+    /** הערה פנימית לנציגים — לא נשלחת ללקוח. */
+    sendPrivateNote: async (cid, content) => {
+      const m = await req(`/conversations/${cid}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content, private: true, message_type: 'outgoing' }),
+      });
+      return { id: m.id, content };
+    },
+
     /** journeys: choice question. On official Cloud-API inboxes Chatwoot renders
      *  input_select as real interactive buttons (≤3) or a list; on other channels the
      *  caller should pre-render a numbered fallback and use sendText instead.

@@ -6,7 +6,7 @@
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { setupDb } from './helpers.js';
+import { relaxCompliance, setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
 import { isHumanOutgoing } from '../src/reads.js';
 import {
@@ -74,6 +74,9 @@ async function makeJourney(graph = GRAPH, trigger = {}, status = 'active', accou
 beforeEach(async () => {
   await setupDb(pool);
   await query('TRUNCATE drip.journey_runs, drip.journeys CASCADE');
+  // שורת הציות של חשבון 1 משותפת לכל קובצי הטסט, ושעות השקט שבברירת המחדל (21:00–08:00)
+  // מקפיאות כל reconcile בלילה. כל טסט שצריך שקט כאן מגדיר אותו על הפלואו עצמו.
+  await relaxCompliance(pool, [1]);
 });
 
 // ── עזרים טהורים ──
@@ -557,6 +560,48 @@ test('template waitForReply pauses after the template, saves the Quick Reply, th
   const [saved] = saves;
   assert.deepEqual(saved.args, [7, { callback_window: '12:00-15:00' }]);
   assert.equal(client.calls.filter((c) => c.name === 'sendText' && c.args[1] === confirmation).length, 1);
+});
+
+// הריצה חייבת לצאת מהמתנת-התבנית עם next_action_at, אחרת הטיק לא רואה אותה, ה-give-up
+// לא קורה, והשיחה נשארת pending לנצח — וחוסמת דרך uq_journey_runs_live כל ליד חוזר.
+test('template waitForReply schedules its give-up; tick hands off and frees the conversation', async () => {
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'tp', type: 'template', data: {
+        name: 'initial_consultation', language: 'he', category: 'MARKETING',
+        params: [], waitForReply: true,
+        followUp: { afterMinutes: 1440, onGiveUp: 'handoff' },
+      } },
+      { id: 'h', type: 'handoff', data: {} },
+    ],
+    edges: [{ source: 't', target: 'tp' }, { source: 'tp', target: 'h' }],
+  };
+  const j = await makeJourney(g);
+  const client = fakeClient();
+  await startRun(ctxWith(client), j, { accountId: 1, displayId: 480, contactId: 7 });
+
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 480`);
+  assert.equal(run.status, 'waiting_answer');
+  assert.ok(run.next_action_at, 'give-up must be scheduled or the tick never reaches this run');
+  const dueInMinutes = (new Date(run.next_action_at) - Date.now()) / 60000;
+  assert.ok(dueInMinutes > 1400 && dueInMinutes <= 1440, `expected ~1440 minutes, got ${dueInMinutes}`);
+
+  await query(`UPDATE drip.journey_runs SET next_action_at = now() - interval '1 minute' WHERE id = $1`, [run.id]);
+  await reconcileJourneys(ctxWith(client), 1);
+
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 480`);
+  assert.equal(run.status, 'done');
+  assert.equal(run.last_error, 'no answer → handoff');
+  assert.ok(client.calls.some((c) => c.name === 'toggleStatus' && c.args[1] === 'open'),
+    'the conversation goes back to the agents');
+  // אין fu.message → אין תזכורת נוספת ללקוח, רק תבנית הפתיחה
+  assert.equal(client.calls.filter((c) => c.name === 'sendText').length, 0);
+  assert.equal(client.calls.filter((c) => c.name === 'sendTemplate').length, 1);
+
+  // הריצה כבר לא חיה — uq_journey_runs_live משוחרר לליד חוזר באותה שיחה
+  const again = await startRun(ctxWith(client), j, { accountId: 1, displayId: 480, contactId: 7 });
+  assert.ok(again, 'a returning lead can start a fresh run once the previous one gave up');
 });
 
 test('webhook non-2xx fails the run and does not send the following confirmation', async () => {

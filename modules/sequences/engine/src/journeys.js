@@ -163,6 +163,13 @@ async function activeJourneys(query, accountId) {
   return rows;
 }
 
+// מתי הטיק יבדוק שוב צומת שממתין לתשובה. בלי זה השורה נשמרת עם next_action_at = NULL,
+// והטיק — שסורק רק next_action_at <= now() — לא יגיע אליה לעולם: הריצה ממתינה לנצח,
+// והאינדקס uq_journey_runs_live חוסם כל פלואו חדש באותה שיחה. חובה בכל צומת ממתין.
+export function followUpDueAt(d) {
+  return d.followUp?.afterMinutes ? new Date(Date.now() + d.followUp.afterMinutes * 60000) : null;
+}
+
 // ── ביצוע הגרף: מתקדם עד צומת ממתין (שאלה/השהיה) או עד הסוף ──
 export async function executeFrom(ctx, run, journey, nodeId) {
   const { query, reads, log = console } = ctx;
@@ -225,7 +232,7 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           if (d.waitForReply) {
             await updateRun(query, run.id, {
               status: 'waiting_answer', current_node: currentId, answers,
-              retry_count: 0, waiting_since: new Date(), next_action_at: null,
+              retry_count: 0, waiting_since: new Date(), next_action_at: followUpDueAt(d),
             });
             return;
           }
@@ -236,8 +243,7 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           await client.sendText(run.display_id, renderText(d.text, rctx));
           await updateRun(query, run.id, {
             status: 'waiting_answer', current_node: currentId, answers,
-            retry_count: 0, waiting_since: new Date(),
-            next_action_at: d.followUp?.afterMinutes ? new Date(Date.now() + d.followUp.afterMinutes * 60000) : null,
+            retry_count: 0, waiting_since: new Date(), next_action_at: followUpDueAt(d),
           });
           return;
         }
@@ -256,8 +262,7 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           }
           await updateRun(query, run.id, {
             status: 'waiting_answer', current_node: currentId, answers,
-            retry_count: 0, waiting_since: new Date(),
-            next_action_at: d.followUp?.afterMinutes ? new Date(Date.now() + d.followUp.afterMinutes * 60000) : null,
+            retry_count: 0, waiting_since: new Date(), next_action_at: followUpDueAt(d),
           });
           return;
         }
