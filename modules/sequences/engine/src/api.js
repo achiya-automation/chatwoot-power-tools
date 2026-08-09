@@ -1,7 +1,7 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { handleAction, initStore } from './store.js';
 import { authGate } from './auth.js';
 import { query, getPool } from './db.js';
@@ -88,6 +88,32 @@ async function mayUseTemplates(access, accountId, action = '') {
     console.error('[drip-api] template access lookup failed:', err.message);
     return false;   // DB unreachable → deny (an admin still passes above, without a query)
   }
+}
+
+/**
+ * warmMediaUrl(url) — request a freshly uploaded file through its PUBLIC url so the CDN caches
+ * it before any campaign sends with it.
+ *
+ * Why this exists: Chatwoot passes template media to Meta as `{image: {link: url}}`, never as an
+ * uploaded media handle, so Meta fetches the url again for every single message. At campaign rate
+ * that is ~45 origin requests a minute against a file no cache has seen, and Meta reports 131053
+ * on each fetch it cannot complete. Warming costs a few hundred ms once, at upload.
+ *
+ * Best-effort by design: a warm cache is an optimisation, so a failure here must never fail the
+ * upload — the file is already stored and served.
+ */
+export async function warmMediaUrl(url, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const r = await fetch(url, { redirect: 'follow' });
+      await r.arrayBuffer();                                    // drain: a HEAD would not populate the cache
+      if (!r.ok) return false;                                  // 404/500 — retrying will not help
+      if (r.headers.get('cf-cache-status') === 'HIT') return true;
+    } catch {
+      return false;                                             // no egress (tests, offline) — not an error
+    }
+  }
+  return false;                                                 // served, just not confirmed warm
 }
 
 export function createApp(config) {
@@ -232,16 +258,39 @@ export function createApp(config) {
         const v = validateWhatsAppMedia({ format, mime, byteSize }, locale);
         if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
 
+        // Meta re-fetches this URL for EVERY message of a campaign, so a URL nobody has
+        // requested yet meets the full send rate at origin and answers 131053. Re-uploading a
+        // file we already host would mint exactly such a cold URL — hand back the warm one.
+        const sha256 = createHash('sha256').update(buf).digest('hex');
+        const dup = await query(
+          `SELECT file FROM drip.media
+            WHERE account_id = $1 AND sha256 = $2
+            ORDER BY created_at LIMIT 1`,
+          [accountId, sha256]
+        );
+        if (dup.length) {
+          const file = dup[0].file;
+          return res.json({
+            ok: true,
+            data: { url: `${config.publicBase}/media/${file}`, file, byteSize, mime, deduped: true },
+          });
+        }
+
         const id = randomUUID();
         const file = `${id}.${extForMime(mime)}`;
         await fs.promises.mkdir(mediaDir, { recursive: true });
         await fs.promises.writeFile(path.join(mediaDir, file), buf);
         await query(
-          `INSERT INTO drip.media (id, account_id, file, orig_name, mime, byte_size)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [id, accountId, file, origName.slice(0, 255), mime.slice(0, 255), byteSize]
+          `INSERT INTO drip.media (id, account_id, file, orig_name, mime, byte_size, sha256)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [id, accountId, file, origName.slice(0, 255), mime.slice(0, 255), byteSize, sha256]
         );
-        return res.json({ ok: true, data: { url: `${config.publicBase}/media/${file}`, file, byteSize, mime } });
+        const url = `${config.publicBase}/media/${file}`;
+        // Genuinely new file: pull it through the CDN before anyone can send with it, so the
+        // campaign meets a cache HIT instead of hammering origin. Blocking on purpose — the
+        // URL must be warm by the time the caller holds it.
+        await warmMediaUrl(url);
+        return res.json({ ok: true, data: { url, file, byteSize, mime } });
       } catch (err) {
         console.error('[drip-api] media upload error:', err.message);
         return res.status(500).json({ ok: false, error: locale === 'en' ? 'Upload failed' : 'העלאה נכשלה' });
