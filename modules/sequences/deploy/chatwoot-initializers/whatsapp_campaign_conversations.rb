@@ -570,16 +570,22 @@ Rails.application.config.after_initialize do
         def create_campaign_conversation_and_message(contact, whatsapp_message_id, template_params)
           phone_number = contact.phone_number.to_s.delete_prefix('+')
 
+          # Symbol keys are mandatory. ContactInboxWithContactBuilder reads
+          # contact_attributes[:name] / [:phone_number]; with string keys both read back nil, so
+          # find_contact_by_phone_number never matches the imported contact and create_contact
+          # persists a blank record named by Haikunator ("dry-haze-861") with no phone number.
           contact_inbox = ::ContactInboxWithContactBuilder.new(
             source_id: phone_number,
             inbox: inbox,
             contact_attributes: {
-              'name' => contact.name,
-              'phone_number' => contact.phone_number
+              name: contact.name,
+              phone_number: contact.phone_number
             }
           ).perform
 
           return unless contact_inbox
+
+          restore_campaign_contact_identity(contact_inbox, contact)
 
           conversation = contact_inbox.conversations.where.not(status: :resolved).last
           unless conversation
@@ -627,6 +633,40 @@ Rails.application.config.after_initialize do
         rescue StandardError => e
           Rails.logger.error "Campaign #{campaign.id}: Conversation creation failed for #{contact.phone_number}: #{e.message}"
           Rails.logger.error e.backtrace.first(5).join("\n")
+        end
+
+        CAMPAIGN_PLACEHOLDER_NAME = /\A[a-z]+-[a-z]+-\d+\z/
+
+        # Defence in depth. The builder returns an existing contact_inbox untouched, so a blank
+        # placeholder contact created before the symbol-key fix — or by an inbound message that
+        # arrived before the import — stays nameless and phoneless forever, invisible to both
+        # phone lookups and import dedup. Restore what the campaign already knows.
+        # ponytail: repair only; when another contact owns the number this leaves the duplicate
+        # pair alone for modules/smart-import/maintenance/fix-hidden-phones.rb to merge.
+        def restore_campaign_contact_identity(contact_inbox, campaign_contact)
+          target = contact_inbox.contact
+          return if target.blank?
+          return if target.phone_number.present? && !target.name.to_s.match?(CAMPAIGN_PLACEHOLDER_NAME)
+          return if campaign_contact.phone_number.blank?
+
+          if target.phone_number.blank?
+            owner_exists = campaign.account.contacts
+                                   .where(phone_number: campaign_contact.phone_number)
+                                   .where.not(id: target.id).exists?
+            return if owner_exists
+
+            target.phone_number = campaign_contact.phone_number
+          end
+
+          target.name = campaign_contact.name if campaign_contact.name.present? &&
+                                                 target.name.to_s.match?(CAMPAIGN_PLACEHOLDER_NAME)
+          return if target.save
+
+          Rails.logger.warn "Campaign #{campaign.id}: identity restore rejected for contact " \
+                            "#{target.id}: #{target.errors.full_messages.join(', ')}"
+        rescue StandardError => e
+          Rails.logger.warn "Campaign #{campaign.id}: identity restore failed for contact " \
+                            "#{contact_inbox.contact_id}: #{e.message}"
         end
 
         def assign_campaign_conversation(conversation)
