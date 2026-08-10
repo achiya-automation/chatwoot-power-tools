@@ -58,6 +58,24 @@ const campaignIdEquals = (col, param = '$2') => `
 // value crash the query.)
 const hasCampaignId = (col) => `(${caObj(col)} ->> 'campaign_id') ~ '^[0-9]+$'`;
 
+// "ההודעה הזאת עדיין לא מיוצגת ב-ledger" — הבדיקה שמפרידה שורות legacy מכפילויות.
+// ¬(A ∨ B) נכתב כאן במפורש כ-¬A ∧ ¬B, וזה לא קוסמטי: כשה-OR יושב בתוך NOT EXISTS אחד,
+// Postgres יכול לגבב רק את campaign_id ואת שאר התנאי הוא מריץ כ-Join Filter על כל צירוף
+// בתוך הדלי. בחשבון עם 23K הודעות מול 23K שורות ledger זה 22.4 מיליון השוואות — 125 שניות
+// לתשובה ריקה, מספיק כדי לרוקן את בריכת החיבורים ולהשבית את הפאנל של כל הלקוחות (10.8.26).
+// מפוצל, לכל ענף יש תנאי שוויון שלם לגבב עליו: אותה תשובה בדיוק ב-0.4 שניות.
+// `scope` הוא תנאי הקמפיין הנוסף (או '' כשהשאילתה כבר מסננת אחרת) ומודבק לשני הענפים.
+const notInLedger = (scope = '') => `NOT EXISTS (
+             SELECT 1 FROM drip.campaign_send_snapshots s
+              WHERE s.account_id = m.account_id${scope}
+                AND s.message_id = m.id
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM drip.campaign_send_snapshots s
+              WHERE s.account_id = m.account_id${scope}
+                AND m.source_id IS NOT NULL AND s.source_id = m.source_id
+           )`;
+
 /** Canonical E.164-ish display for campaign reports (Israeli local numbers get +972). */
 export function normalizeCampaignPhone(value) {
   let digits = String(value ?? '').split('@', 1)[0].replace(/\D/g, '');
@@ -267,12 +285,8 @@ const AGG_CTE = `
       ) aud ON true
      WHERE m.account_id = $1
        AND ${hasCampaignId('m.content_attributes')}
-       AND NOT EXISTS (
-         SELECT 1 FROM drip.campaign_send_snapshots s
-          WHERE s.account_id = m.account_id
-            AND s.campaign_id = (${caObj('m.content_attributes')} ->> 'campaign_id')::int
-            AND (s.message_id = m.id OR (m.source_id IS NOT NULL AND s.source_id = m.source_id))
-       )
+       AND ${notInLedger(`
+                AND s.campaign_id = (${caObj('m.content_attributes')} ->> 'campaign_id')::int`)}
   ), raw_msg AS (
     SELECT campaign_id, recipient_key, status FROM snapshot_msg
     UNION ALL
@@ -398,11 +412,7 @@ export async function getCampaignDetail(query, accountId, campaignId) {
          LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
         WHERE m.account_id = $1
           AND ${campaignIdEquals('m.content_attributes')}
-          AND NOT EXISTS (
-            SELECT 1 FROM drip.campaign_send_snapshots s
-             WHERE s.account_id = m.account_id AND s.campaign_id = $2
-               AND (s.message_id = m.id OR (m.source_id IS NOT NULL AND s.source_id = m.source_id))
-          )
+          AND ${notInLedger(' AND s.campaign_id = $2')}
      )
      SELECT * FROM snapshot_rows
      UNION ALL
@@ -567,11 +577,7 @@ export async function campaignsTierInfo(query, _reads, accountId, deps = {}) {
             AND m.created_at > now() - interval '24 hours'
             AND ${hasCampaignId('m.content_attributes')}
             AND m.status <> 3
-            AND NOT EXISTS (
-              SELECT 1 FROM drip.campaign_send_snapshots s
-               WHERE s.account_id = m.account_id
-                 AND (s.message_id = m.id OR (m.source_id IS NOT NULL AND s.source_id = m.source_id))
-            )
+            AND ${notInLedger()}
        ) u`,
       [accountId]
     ))[0]?.c || 0);
