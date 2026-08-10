@@ -73,15 +73,18 @@ export function makeDbReads(query) {
     // Same shape as Chatwoot's API message_templates (name/language/components/status).
     // ⚠️ Scoped to the CHOSEN inbox: templates belong to a WABA, and flattening two numbers'
     // template lists together lets a name from one number resolve against the other.
-    loadTemplates: async (accountId) => {
-      const { inboxId } = await resolveInbox(accountId);
+    // inboxIdOverride: a specific number instead of the chosen one (the campaign report asks
+    // for the templates of the number THAT campaign sent from). Always re-scoped to the
+    // account here — the id arrives from the browser.
+    loadTemplates: async (accountId, inboxIdOverride = null) => {
+      const inboxId = inboxIdOverride || (await resolveInbox(accountId)).inboxId;
       if (!inboxId) return [];
       const rows = await query(
         `SELECT cw.message_templates
            FROM public.inboxes i
            JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
-          WHERE i.id = $1`,
-        [inboxId]
+          WHERE i.id = $1 AND i.account_id = $2`,
+        [inboxId, accountId]
       );
       // production default for this column is '{}'::jsonb (an object, not an array) on a
       // never-synced channel — flatMap((r) => r.message_templates || []) would inject that

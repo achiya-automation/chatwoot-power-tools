@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
-import { listCampaigns } from '../src/campaigns.js';
+import { listCampaigns, campaignExperiments } from '../src/campaigns.js';
 import { startResend, resendStatus, liquidContactParams, _resetResendJobs } from '../src/campaignResend.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
@@ -11,10 +11,30 @@ const pool = getPool(cfg);
 beforeEach(async () => {
   await setupDb(pool);
   await pool.query(`TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations,
-    public.contact_inboxes, public.inboxes, drip.campaign_audience_snapshots,
+    public.contact_inboxes, public.inboxes, public.channel_whatsapp, drip.campaign_audience_snapshots,
     drip.campaign_send_snapshots, drip.contact_state`);
   _resetResendJobs();
 });
+
+// The approved templates of the campaign's own number — what a chosen template is validated
+// against. `rescue_utility` is the realistic experiment: same people, no-marketing wording.
+const INBOX_TEMPLATES = [
+  { name: 'promo', language: 'he', status: 'APPROVED', category: 'MARKETING',
+    components: [{ type: 'BODY', text: 'שלום {{1}}, מבצע!' }] },
+  { name: 'rescue_utility', language: 'he', status: 'APPROVED', category: 'UTILITY',
+    components: [{ type: 'BODY', text: 'היי {{1}}, בקשר לפנייה שלך מ-{{2}}' }] },
+  { name: 'with_image', language: 'he', status: 'APPROVED', category: 'MARKETING',
+    components: [{ type: 'HEADER', format: 'IMAGE' }, { type: 'BODY', text: 'שלום {{1}}' }] },
+  { name: 'still_pending', language: 'he', status: 'PENDING', category: 'MARKETING',
+    components: [{ type: 'BODY', text: 'טיוטה' }] },
+];
+
+async function seedInboxTemplates() {
+  await query(`INSERT INTO public.channel_whatsapp(id, phone_number, message_templates)
+               VALUES (10,'+972500000000',$1)
+               ON CONFLICT (id) DO UPDATE SET message_templates = EXCLUDED.message_templates`,
+    [JSON.stringify(INBOX_TEMPLATES)]);
+}
 
 // ── seed: campaign 50 with one failed recipient (no conversation — the common Meta-reject case),
 //    one delivered recipient, and one failed recipient that DOES have a conversation ──
@@ -161,6 +181,96 @@ test('startResend: refuses to double-start, and errors cleanly when nothing fail
     startResend({ query, makeClientFor: async () => makeFakeClient(), delayMs: 0 }, 1, 50),
     /אין נמענים/
   );
+});
+
+test('startResend: a chosen template is sent instead of the campaign one, and tagged as its own run', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+  const client = makeFakeClient();
+  const chosen = {
+    name: 'rescue_utility',
+    language: 'he',
+    params: { 1: '{{contact.first_name}}', 2: 'האתר' },
+  };
+  const res = await startResend(
+    { query, makeClientFor: async () => client, delayMs: 0 }, 1, 50, 'he', { template: chosen }
+  );
+  assert.equal(res.template_name, 'rescue_utility');
+  assert.ok(res.run_id);
+
+  const s = await waitForDone(1, 50);
+  assert.equal(s.sent, 2);
+  assert.equal(s.template_name, 'rescue_utility');
+
+  // The NEW template went out — with its own category/language and per-contact Liquid.
+  const forDana = client.calls.sendTemplate.find((c) => c.cid !== 9702);
+  assert.equal(forDana.t.name, 'rescue_utility');
+  assert.equal(forDana.t.category, 'UTILITY');
+  assert.deepEqual(forDana.t.params, { 1: 'דנה', 2: 'האתר' });
+
+  // Every ledger row of this run carries the run id and the template it used.
+  const rows = await query(`SELECT resend_run_id, template_name FROM drip.campaign_send_snapshots
+                             WHERE campaign_id = 50 AND source_id LIKE 'retry:%'`);
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((r) => r.resend_run_id === res.run_id && r.template_name === 'rescue_utility'));
+});
+
+test('startResend: a chosen template is validated before a single message goes out', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+  const client = makeFakeClient();
+  const run = (template) => startResend(
+    { query, makeClientFor: async () => client, delayMs: 0 }, 1, 50, 'he', { template }
+  );
+
+  // Not approved on this number / does not exist at all.
+  await assert.rejects(run({ name: 'still_pending', params: { 1: 'x' } }), /אינה מאושרת/);
+  await assert.rejects(run({ name: 'no_such_template', params: {} }), /אינה מאושרת/);
+  // Declares {{1}} and {{2}} — a missing or blank value is caught here, not by Meta.
+  await assert.rejects(run({ name: 'rescue_utility', params: { 1: 'שלום' } }), /2 ערכי משתנים/);
+  await assert.rejects(run({ name: 'rescue_utility', params: { 1: 'שלום', 2: '  ' } }), /2 ערכי משתנים/);
+  // Media header without a link.
+  await assert.rejects(run({ name: 'with_image', params: { 1: 'שלום' } }), /קישור מדיה/);
+
+  assert.deepEqual(client.calls.sendTemplate, []); // nothing was sent by any of them
+  _resetResendJobs();
+});
+
+test('campaignExperiments: one row per run, each with its template, results and replies', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+  // The original send needs message rows for its delivered recipient (61 → message 8100).
+  await query(`INSERT INTO public.messages(id,conversation_id,account_id,message_type,status,created_at)
+               VALUES (8100,700,1,1,1, now() - interval '2 hours'),
+                      (8102,702,1,1,3, now() - interval '2 hours')`);
+  await query(`UPDATE drip.campaign_send_snapshots SET attempted_at = now() - interval '2 hours'`);
+
+  const client = makeFakeClient();
+  const { run_id } = await startResend(
+    { query, makeClientFor: async () => client, delayMs: 0 }, 1, 50, 'he',
+    { template: { name: 'rescue_utility', language: 'he', params: { 1: '{{contact.first_name}}', 2: 'האתר' } } }
+  );
+  await waitForDone(1, 50);
+
+  // רות (conversation 702) answers AFTER the retry — the reply belongs to the experiment,
+  // not to the original send that failed two hours earlier.
+  await query(`INSERT INTO public.messages(id,conversation_id,account_id,message_type,status,content,created_at)
+               VALUES (8200,702,1,0,1,'מעוניינת', now())`);
+
+  const rows = await campaignExperiments(query, 1, 50);
+  assert.equal(rows.length, 2);
+
+  const [original, experiment] = rows;
+  assert.equal(original.run_id, null);
+  assert.equal(original.attempted, 3);
+  assert.equal(original.failed, 2);
+  assert.equal(original.delivered, 1);
+  assert.equal(original.replied, 0);          // the reply came after the retry, not this send
+
+  assert.equal(experiment.run_id, run_id);
+  assert.equal(experiment.template_name, 'rescue_utility');
+  assert.equal(experiment.attempted, 2);
+  assert.equal(experiment.replied, 1);
 });
 
 test('liquidContactParams: substitutes contact fields; blank render is flagged', () => {

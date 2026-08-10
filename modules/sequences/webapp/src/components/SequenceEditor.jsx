@@ -27,6 +27,7 @@ import Dropdown from './ui/Dropdown.jsx';
 import Switch from './ui/Switch.jsx';
 import Card from './ui/Card.jsx';
 import TemplatePicker from './ui/TemplatePicker.jsx';
+import VariableRow from './ui/VariableRow.jsx';
 import MessageBubble from './ui/MessageBubble.jsx';
 import SequencePreview from './SequencePreview.jsx';
 import { useToast } from './ui/Toast.jsx';
@@ -64,8 +65,6 @@ const VAR_RE = /\{\{\s*\d+\s*\}\}/g;
 // מילון co-located (he/en) — משותף לכל רכיבי המשנה בקובץ.
 const M = {
   he: {
-    // בורר שדות מערכת (VariableRow)
-    sysFirstName: 'שם פרטי', sysFullName: 'שם מלא', sysPhone: 'טלפון', sysEmail: 'אימייל', sysCustom: 'ערך מותאם אישית',
     // מרווחים מוכנים (StepCard)
     presetNow: 'מיד', presetHour: 'שעה', preset4h: '4 שעות', presetDay: 'יום', preset3d: '3 ימים', presetWeek: 'שבוע',
     // חזרה (TimingExtras)
@@ -132,13 +131,10 @@ const M = {
     linkAuto: 'הקישור ייווצר אוטומטית · מקסימום {max}', videoAutoCompress: ' · סרטון גדול יכווץ אוטומטית בדפדפן',
     hideManualLink: 'הסתר קישור ידני', showManualLink: 'או הדבקת קישור ידני',
     invalidHttps: 'נדרש קישור https תקין',
-    // VariableRow
-    varRowLabel: 'משתנה {n} — ערך:', varSelectAria: 'ערך למשתנה {n}', varCustomAria: 'ערך מותאם למשתנה {n}', freeText: 'טקסט חופשי',
     // MessagePreview
     preview: 'תצוגה מקדימה',
   },
   en: {
-    sysFirstName: 'First name', sysFullName: 'Full name', sysPhone: 'Phone', sysEmail: 'Email', sysCustom: 'Custom value',
     presetNow: 'Immediately', presetHour: '1 hour', preset4h: '4 hours', presetDay: '1 day', preset3d: '3 days', presetWeek: '1 week',
     repeatDay: 'Every day', repeatWeek: 'Every week', repeatMonth: 'Every month',
     mediaImage: 'Image', mediaVideo: 'Video', mediaDocument: 'Document', mediaGeneric: 'Media',
@@ -194,30 +190,9 @@ const M = {
     linkAuto: 'The link is created automatically · max {max}', videoAutoCompress: ' · a large video is compressed automatically in the browser',
     hideManualLink: 'Hide manual link', showManualLink: 'Or paste a manual link',
     invalidHttps: 'A valid https link is required',
-    varRowLabel: 'Variable {n} — value:', varSelectAria: 'Value for variable {n}', varCustomAria: 'Custom value for variable {n}', freeText: 'Free text',
     preview: 'Preview',
   },
 };
-
-/*
- * משתני התבנית יכולים למפות לשדה מערכת (מוחלף בערך האמיתי של הליד בזמן שליחה)
- * או לערך מותאם אישית (טקסט חופשי). אחסון ב-step.params[i]:
- *   שדה מערכת → המחרוזת '@first_name' / '@name' / '@phone' / '@email'
- *   מותאם     → הטקסט המילולי (כולל ריק)
- * (התוויות מתורגמות ב-VariableRow דרך t; כאן נשמר רק מזהה השדה + מפתח התווית.)
- */
-const SYSTEM_FIELDS = [
-  { value: '@first_name', labelKey: 'sysFirstName' },
-  { value: '@name', labelKey: 'sysFullName' },
-  { value: '@phone', labelKey: 'sysPhone' },
-  { value: '@email', labelKey: 'sysEmail' },
-  { value: '@custom', labelKey: 'sysCustom' },
-];
-
-// ערך מאוחסן הוא שדה מערכת אם ורק אם הוא בדיוק אחד מהטוקנים (משמש את VariableRow)
-function isSystemField(v) {
-  return v === '@first_name' || v === '@name' || v === '@phone' || v === '@email';
-}
 
 // מרווחים נוחים מהשלב הקודם (צ'יפים) — גמיש, לצד הקלט המספרי המדויק. התווית מתורגמת ב-render.
 const DELAY_PRESETS = [
@@ -1473,47 +1448,6 @@ function MediaUrlField({ format, value, accountId, onChange }) {
           placeholder="https://example.com/media.jpg"
           onChange={(e) => onChange(e.target.value)}
           error={invalid ? t('invalidHttps') : ''}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-/*
- * VariableRow — שורת משתנה: בורר שדה (שם/טלפון/אימייל/מותאם) + קלט טקסט
- * שמופיע רק כשנבחר "ערך מותאם אישית". אחסון ב-params[i]:
- *   שדה מערכת → '@name' / '@phone' / '@email'
- *   מותאם     → הטקסט המילולי
- */
-function VariableRow({ index, value, example, onChange }) {
-  const t = useT(M);
-  const custom = !isSystemField(value);
-  // הערך לבורר: '@name'/'@phone'/'@email' או '@custom' כשזה ערך מותאם
-  const selectValue = custom ? '@custom' : value;
-  // תוויות שדות המערכת מתורגמות כאן (המזהים קבועים ב-SYSTEM_FIELDS)
-  const options = SYSTEM_FIELDS.map((f) => ({ value: f.value, label: t(f.labelKey) }));
-
-  const onSelect = (v) => {
-    // מעבר לשדה מערכת → מאחסנים את הטוקן; מעבר ל"מותאם" → מתחילים מטקסט ריק
-    onChange(v === '@custom' ? '' : v);
-  };
-
-  return (
-    <div>
-      <label className="mb-1.5 block text-sm font-medium text-n-slate-12">{t('varRowLabel', { n: index + 1 })}</label>
-      <Dropdown
-        options={options}
-        value={selectValue}
-        onChange={onSelect}
-        ariaLabel={t('varSelectAria', { n: index + 1 })}
-      />
-      {custom ? (
-        <Input
-          className="mt-2"
-          aria-label={t('varCustomAria', { n: index + 1 })}
-          value={value}
-          placeholder={example || t('freeText')}
-          onChange={(e) => onChange(e.target.value)}
         />
       ) : null}
     </div>

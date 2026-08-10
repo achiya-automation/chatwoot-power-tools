@@ -16,6 +16,11 @@ import { getCampaignDetail, normalizeCampaignPhone } from './campaigns.js';
  * existing report queries pick it up with zero changes: the recipient collapses back to one
  * row whose status follows the NEW message, and attempt_count grows.
  *
+ * A resend may use a DIFFERENT template than the campaign's (with its own variable values) —
+ * that is the whole point of retrying a batch Meta rejected. Every run therefore carries a
+ * run id and the template it used on its ledger rows, and campaignExperiments() reports each
+ * run separately: same recipients, different template, measurable difference.
+ *
  * Batches can be large and each send is a Chatwoot round-trip, so the work runs as an
  * in-memory background job the UI polls (campaign_resend_status). State lives only in this
  * process — a restart loses the progress view but never the truth (the ledger has it).
@@ -39,6 +44,9 @@ const M = {
     noContact: 'אין מזהה איש קשר — אי אפשר לפתוח שיחה',
     suppressed: 'הנמען ביקש הסרה (opt-out)',
     liquidBlank: 'משתנה בתבנית נשאר ריק עבור הנמען',
+    tplNotApproved: 'התבנית שנבחרה אינה מאושרת במספר של הקמפיין',
+    tplParams: 'התבנית דורשת {n} ערכי משתנים, וכולם חייבים להיות מלאים',
+    tplNeedsMedia: 'התבנית פותחת בתמונה/וידאו/מסמך — צריך קישור מדיה',
   },
   en: {
     notFound: 'Campaign not found',
@@ -48,9 +56,15 @@ const M = {
     noContact: 'No contact id — cannot open a conversation',
     suppressed: 'The recipient opted out',
     liquidBlank: 'A template variable rendered empty for this recipient',
+    tplNotApproved: 'The selected template is not approved on the campaign’s number',
+    tplParams: 'The template needs {n} variable values, and none may be empty',
+    tplNeedsMedia: 'The template opens with an image/video/document — a media link is required',
   },
 };
-const t = (locale, key) => (M[locale === 'en' ? 'en' : 'he'] || M.he)[key];
+const t = (locale, key, vars) => {
+  const s = (M[locale === 'en' ? 'en' : 'he'] || M.he)[key] || key;
+  return vars ? s.replace(/\{(\w+)\}/g, (_, k) => (vars[k] ?? '')) : s;
+};
 
 /**
  * Chatwoot processes campaign params through Liquid with a contact drop. The engine mirrors
@@ -96,15 +110,93 @@ export function resendStatus(accountId, campaignId) {
     done: job.done,
     sent: job.sent,
     failed: job.failed,                 // [{ phone, name, error }]
+    template_name: job.templateName,    // which template THIS run is sending
+    run_id: job.runId,
     started_at: job.startedAt,
   };
 }
 
+const MEDIA_HEADERS = new Set(['IMAGE', 'VIDEO', 'DOCUMENT']);
+
+/** Body params in Chatwoot's flat hash shape ({"1":v1,…}) whatever the caller sent. */
+function normalizeParams(params) {
+  if (Array.isArray(params)) {
+    return Object.fromEntries(params.map((v, i) => [String(i + 1), v]));
+  }
+  return params && typeof params === 'object' ? { ...params } : {};
+}
+
 /**
- * startResend(deps, accountId, campaignId, locale) → { total }
- * deps: { query, makeClientFor, delayMs?, now? } — client injected so tests never send.
+ * The template this run will send: the campaign's own (default), or an explicitly chosen one.
+ *
+ * A chosen template arrives from the browser, so it is validated here and not trusted: it must
+ * be APPROVED on the CAMPAIGN'S number (templates belong to a WABA — the account's "chosen"
+ * inbox may be a different number entirely), every {{N}} it declares must have a non-empty
+ * value, and a media header must come with a link. Failing here costs one error message;
+ * failing at Meta costs the whole batch.
  */
-export async function startResend(deps, accountId, campaignId, locale = 'he') {
+async function resolveTemplate(query, campaign, chosen, locale) {
+  if (!chosen?.name) {
+    const tpl = campaign.template_params || {};
+    if (!tpl.name) throw new Error(t(locale, 'noTemplate'));
+    // processed_params is either the flat body hash ({"1":"..."}) or the enhanced
+    // { body, header:{ media_url } } shape — sendTemplate rebuilds the enhanced shape itself
+    // from mediaUrl, so split it here rather than teaching it a third input format.
+    const raw = tpl.processed_params || {};
+    return {
+      name: tpl.name,
+      language: tpl.language || tpl.lang_code,
+      category: tpl.category,
+      bodyParams: raw.body && typeof raw.body === 'object' ? raw.body : raw,
+      mediaUrl: raw.header?.media_url || null,
+    };
+  }
+
+  const rows = await query(
+    `SELECT cw.message_templates
+       FROM public.inboxes i
+       JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
+      WHERE i.id = $1`,
+    [campaign.inbox_id]
+  );
+  const list = Array.isArray(rows[0]?.message_templates) ? rows[0].message_templates : [];
+  const match = list.find((x) => x.name === chosen.name
+    && String(x.status || '').toUpperCase() === 'APPROVED'
+    && (!chosen.language || x.language === chosen.language));
+  if (!match) throw new Error(t(locale, 'tplNotApproved'));
+
+  const comp = (type) => (match.components || []).find((c) => String(c.type || '').toUpperCase() === type);
+  const body = String(comp('BODY')?.text || '');
+  // The highest {{N}} in the body, not the count of occurrences — a template that repeats
+  // {{1}} needs ONE value, and counting occurrences would reject a perfectly valid send.
+  const need = [...body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)]
+    .reduce((max, m) => Math.max(max, Number(m[1])), 0);
+  const bodyParams = normalizeParams(chosen.params);
+  const filled = Array.from({ length: need }, (_, i) => String(bodyParams[String(i + 1)] ?? '').trim());
+  if (filled.some((v) => v === '')) throw new Error(t(locale, 'tplParams', { n: need }));
+
+  const headerFormat = String(comp('HEADER')?.format || '').toUpperCase();
+  let mediaUrl = null;
+  if (MEDIA_HEADERS.has(headerFormat)) {
+    mediaUrl = String(chosen.mediaUrl || '').trim();
+    if (!/^https:\/\/\S+/i.test(mediaUrl)) throw new Error(t(locale, 'tplNeedsMedia'));
+  }
+
+  return {
+    name: match.name,
+    language: match.language,
+    category: match.category || 'MARKETING',
+    bodyParams,
+    mediaUrl,
+  };
+}
+
+/**
+ * startResend(deps, accountId, campaignId, locale, options) → { total, run_id, template_name }
+ * deps: { query, makeClientFor, delayMs?, now? } — client injected so tests never send.
+ * options.template: { name, language, params, mediaUrl } — omit to reuse the campaign's own.
+ */
+export async function startResend(deps, accountId, campaignId, locale = 'he', options = {}) {
   const { query } = deps;
   const id = Number.parseInt(campaignId, 10);
   if (!Number.isInteger(id)) throw new Error(t(locale, 'notFound'));
@@ -113,8 +205,7 @@ export async function startResend(deps, accountId, campaignId, locale = 'he') {
 
   const detail = await getCampaignDetail(query, accountId, id);
   if (!detail) throw new Error(t(locale, 'notFound'));
-  const tpl = detail.campaign.template_params || {};
-  if (!tpl.name) throw new Error(t(locale, 'noTemplate'));
+  const template = await resolveTemplate(query, detail.campaign, options?.template, locale);
 
   // Final state per recipient is already collapsed by getCampaignDetail — status 3 is
   // "still failed after every attempt so far", exactly the set the report shows in red.
@@ -143,12 +234,16 @@ export async function startResend(deps, accountId, campaignId, locale = 'he') {
     done: 0,
     sent: 0,
     failed: [],
+    // One run = one experiment. The id is the run's start clock, which also sorts the
+    // experiments table without a second column.
+    runId: `r${Date.now()}`,
+    templateName: template.name,
     startedAt: new Date().toISOString(),
   };
   jobs.set(key, job);
 
   // Fire-and-forget: the HTTP request returns immediately; the UI polls resendStatus.
-  runJob(deps, { accountId, campaign: detail.campaign, recipients: failedRecipients, suppressed, contactById, job, locale })
+  runJob(deps, { accountId, campaign: detail.campaign, template, recipients: failedRecipients, suppressed, contactById, job, locale })
     .catch((e) => { job.failed.push({ phone: '', name: '', error: e.message }); })
     .finally(() => {
       job.status = 'done';
@@ -156,20 +251,14 @@ export async function startResend(deps, accountId, campaignId, locale = 'he') {
       if (timer.unref) timer.unref();
     });
 
-  return { total: job.total };
+  return { total: job.total, run_id: job.runId, template_name: job.templateName };
 }
 
 async function runJob(deps, ctx) {
   const { query, makeClientFor, delayMs = SEND_GAP_MS } = deps;
-  const { accountId, campaign, recipients, suppressed, contactById, job, locale } = ctx;
+  const { accountId, campaign, template, recipients, suppressed, contactById, job, locale } = ctx;
   const client = await makeClientFor(accountId);
-  const tpl = campaign.template_params;
-  // processed_params is either the flat body hash ({"1":"..."}) or the enhanced
-  // { body, header:{ media_url } } shape — sendTemplate rebuilds the enhanced shape itself
-  // from mediaUrl, so split it here rather than teaching it a third input format.
-  const raw = tpl.processed_params || {};
-  const bodyParams = raw.body && typeof raw.body === 'object' ? raw.body : raw;
-  const mediaUrl = raw.header?.media_url || null;
+  const { bodyParams, mediaUrl } = template;
 
   let attempt = 0;
   for (const r of recipients) {
@@ -185,9 +274,9 @@ async function runJob(deps, ctx) {
 
       const displayId = await resolveConversation(query, client, accountId, campaign, r, locale);
       const sent = await client.sendTemplate(displayId, {
-        name: tpl.name,
-        language: tpl.language || tpl.lang_code,
-        category: tpl.category,
+        name: template.name,
+        language: template.language,
+        category: template.category,
         params,
         mediaUrl,
       });
@@ -202,12 +291,14 @@ async function runJob(deps, ctx) {
       await query(
         `INSERT INTO drip.campaign_send_snapshots
            (account_id, campaign_id, contact_id, contact_name, phone, source_id,
-            conversation_id, message_id, status, attempted_at, status_updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, now(), now())
+            conversation_id, message_id, status, attempted_at, status_updated_at,
+            resend_run_id, template_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, now(), now(), $9, $10)
          ON CONFLICT (account_id, campaign_id, source_id) DO NOTHING`,
         [accountId, campaign.id, r.contact_id || null, r.contact_name || '', r.phone || '',
           `retry:${campaign.id}:${r.contact_id || r.phone || attempt}:${Date.now()}`,
-          msgRow?.conversation_id || null, sent?.id || null]
+          msgRow?.conversation_id || null, sent?.id || null,
+          job.runId, template.name]
       );
       job.sent += 1;
     } catch (e) {

@@ -425,16 +425,23 @@ const CAMPAIGN_DETAIL = {
     ],
   },
   recipients: [
-    { contact_name: 'דנה כהן',   phone: '+972541234567', status: 'read',      sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 101, replied_at: '2026-06-18 10:22', content: 'מעניין! אפשר פרטים?', error_title: null },
-    { contact_name: 'יואב אלון', phone: '+972529876543', status: 'delivered', sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 102, replied_at: null, content: null, error_title: null },
-    { contact_name: 'שירה פרץ',  phone: '+972501112233', status: 'sent',      sent_at: '2026-06-18 10:01', attempt_count: 1, conversation_display_id: 103, replied_at: null, content: null, error_title: null },
-    { contact_name: 'אורי נחום', phone: '+972536667788', status: 'failed',    sent_at: '2026-06-18 10:01', attempt_count: 2, conversation_display_id: 104, replied_at: null, content: null, error_title: 'הנמען חרג מהמכסה האישית (131049)' },
+    { contact_name: 'דנה כהן',   phone: '+972541234567', status: 2,      sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 101, replied: true, replied_at: '2026-06-18 10:22', reply_content: 'מעניין! אפשר פרטים?', error_title: null },
+    { contact_name: 'יואב אלון', phone: '+972529876543', status: 1, sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 102, replied: false, replied_at: null, reply_content: null, error_title: null },
+    { contact_name: 'שירה פרץ',  phone: '+972501112233', status: 0,      sent_at: '2026-06-18 10:01', attempt_count: 1, conversation_display_id: 103, replied: false, replied_at: null, reply_content: null, error_title: null },
+    { contact_name: 'אורי נחום', phone: '+972536667788', status: 3,    sent_at: '2026-06-18 10:01', attempt_count: 2, conversation_display_id: 104, replied: false, replied_at: null, reply_content: null, error_title: 'הנמען חרג מהמכסה האישית (131049)' },
   ],
   not_sent: [
     { contact_id: 305, contact_name: 'נועה גל', phone: '+972544445555', reason: 'no_attempt_record' },
   ],
   audience_source: 'snapshot',
 };
+
+// תוצאות פר-ניסוי: השליחה המקורית ושתי שליחות חוזרות, כל אחת בתבנית אחרת.
+const CAMPAIGN_EXPERIMENTS = [
+  { run_id: null,        template_name: 'offer_discount',  started_at: '2026-06-18 10:00', attempted: 240, sent: 232, delivered: 221, read: 148, failed: 8, replied: 34 },
+  { run_id: 'r17501001', template_name: 'offer_discount',  started_at: '2026-06-19 09:12', attempted: 8,   sent: 3,   delivered: 3,   read: 1,   failed: 5, replied: 0 },
+  { run_id: 'r17502002', template_name: 'service_followup', started_at: '2026-06-20 11:40', attempted: 5,  sent: 5,   delivered: 5,   read: 4,   failed: 0, replied: 2 },
+];
 
 const CAMPAIGNS_TREND = [
   { day: '09/06', attempted: 41,  sent: 39,  delivered: 38,  failed: 2 },
@@ -501,6 +508,7 @@ function dataFor(action, payload = {}) {
     case 'resume_account': return { ok: true };
     case 'campaigns': return CAMPAIGNS;
     case 'campaign_detail': return CAMPAIGN_DETAIL;
+    case 'campaign_experiments': return CAMPAIGN_EXPERIMENTS;
     case 'campaigns_trend': return CAMPAIGNS_TREND;
     case 'campaigns_tier': return CAMPAIGNS_TIER;
     default: return null;

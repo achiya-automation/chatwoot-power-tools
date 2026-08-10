@@ -540,6 +540,70 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   return { campaign, funnel, engagement, recipients, not_sent, audience_source: audienceSource };
 }
 
+/**
+ * One row per "experiment" on a campaign: the original send (resend_run_id IS NULL) and every
+ * resend run after it, each with the template it used and how that batch actually performed.
+ *
+ * Deliberately NOT collapsed per recipient like getCampaignDetail: the question here is
+ * "how did THIS template do on the batch it was sent to", so the same person appearing in two
+ * experiments is the point, not a duplicate. Row counts therefore sum to more than the
+ * audience, and each row is read on its own.
+ *
+ * A reply is credited to the attempt it followed: after that attempt's send, and before the
+ * next attempt in the same conversation (lead()). Without the upper bound every earlier
+ * experiment would inherit the replies of the later one and all of them would look identical.
+ */
+export async function campaignExperiments(query, accountId, campaignId) {
+  const id = parseInt(campaignId, 10);
+  if (Number.isNaN(id)) return [];
+  return query(
+    `WITH att AS (
+       SELECT s.resend_run_id AS run_id,
+              s.template_name,
+              s.conversation_id,
+              s.attempted_at,
+              CASE WHEN s.status = 3 THEN 3
+                   ELSE greatest(s.status, coalesce(m.status, 0)) END AS status,
+              lead(s.attempted_at) OVER (
+                PARTITION BY s.conversation_id ORDER BY s.attempted_at, s.source_id
+              ) AS next_at
+         FROM drip.campaign_send_snapshots s
+         LEFT JOIN LATERAL (
+           SELECT mm.status FROM public.messages mm
+            WHERE mm.account_id = s.account_id
+              AND (mm.id = s.message_id OR (mm.source_id IS NOT NULL AND mm.source_id = s.source_id))
+            ORDER BY (mm.id = s.message_id) DESC, mm.id DESC
+            LIMIT 1
+         ) m ON true
+        WHERE s.account_id = $1 AND s.campaign_id = $2
+     ), scored AS (
+       SELECT att.*, EXISTS (
+         SELECT 1 FROM public.messages mi
+          WHERE mi.account_id = $1
+            AND mi.message_type = 0
+            AND mi.conversation_id = att.conversation_id
+            AND mi.created_at >  (att.attempted_at AT TIME ZONE 'UTC')
+            AND (att.next_at IS NULL OR mi.created_at < (att.next_at AT TIME ZONE 'UTC'))
+       ) AS replied
+         FROM att
+     )
+     SELECT run_id,
+            max(template_name)                                AS template_name,
+            to_char(${localTsTz('min(attempted_at)')}, 'YYYY-MM-DD HH24:MI') AS started_at,
+            count(*) FILTER (WHERE status <> 4)::int          AS attempted,
+            count(*) FILTER (WHERE status IN (0,1,2))::int    AS sent,
+            count(*) FILTER (WHERE status IN (1,2))::int      AS delivered,
+            count(*) FILTER (WHERE status = 2)::int           AS read,
+            count(*) FILTER (WHERE status = 3)::int           AS failed,
+            count(*) FILTER (WHERE replied)::int              AS replied
+       FROM scored
+      GROUP BY run_id
+      HAVING count(*) FILTER (WHERE status <> 4) > 0
+      ORDER BY min(attempted_at)`,
+    [accountId, id]
+  );
+}
+
 // Preflight: Meta's 24h send budget for the account — the tier cap, minus distinct
 // conversations messaged in the rolling 24h (drip sends + durable campaign attempts).
 //
