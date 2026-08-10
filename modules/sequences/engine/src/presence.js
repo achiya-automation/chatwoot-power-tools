@@ -16,6 +16,8 @@
  * גלובלי שמפרק את הגנת ה-SSRF לכל הלקוחות. ראה 034_presence.sql.
  */
 
+import { HUMAN_OUTGOING_SQL } from './reads.js';
+
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
 // "מקליד" של Meta פג אחרי 25 שניות. מרעננים ב-20 כדי להשאיר מרווח לרשת.
@@ -205,6 +207,13 @@ export async function relayAgentTyping(deps, accountId, conversationId) {
  *
  * הסמן מתקדם גם כשההודעות מסוננות החוצה, אחרת תיבה שקטה עם ערוץ אחר תשאיר את
  * הלולאה תקועה על אותו טווח לנצח.
+ *
+ * ⭐ 10.08.2026 — למה NOT EXISTS על HUMAN_OUTGOING_SQL: ההגדרה היא פר-תיבה, אבל
+ * המטרה שלה היא להחיות *בוט*. בלי הסינון הזה כל שיחה בתיבה מסומנת כנקראה, כולל
+ * שיחות שאדם מנהל והבוט לא נוגע בהן — ואז הלקוח רואה ✓✓ כחול בלי שאף אחד ענה.
+ * נמדד בתיבה 38: מתוך 478 הודעות נכנסות ב-14 יום, 454 (95%) היו בשיחות שכבר היה
+ * בהן אדם. משתמשים בקבוע המשותף ולא בבדיקה מקומית — sender_type='User' לבדו מחמיץ
+ * תשובה שנשלחה מהטלפון ב-coexistence (היא מסומנת רק ב-content_attributes).
  */
 export async function tickPresence(deps) {
   const { query } = deps;
@@ -213,20 +222,26 @@ export async function tickPresence(deps) {
   const from = Number(cur[0].last_message_id);
 
   const rows = await query(
-    `SELECT m.id, m.account_id, m.inbox_id, m.source_id, m.conversation_id,
+    `SELECT msg.id, msg.account_id, msg.inbox_id, msg.source_id, msg.conversation_id,
             cw.provider_config->>'phone_number_id' AS phone_id,
             cw.provider_config->>'api_key'         AS token
-       FROM public.messages m
-       JOIN public.inboxes i           ON i.id = m.inbox_id
+       FROM public.messages msg
+       JOIN public.inboxes i           ON i.id = msg.inbox_id
        JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
-      WHERE m.id > $1
-        AND m.message_type = 0
-        AND m.private = false
-        AND m.source_id LIKE 'wamid.%'
+      WHERE msg.id > $1
+        AND msg.message_type = 0
+        AND msg.private = false
+        AND msg.source_id LIKE 'wamid.%'
         AND i.channel_type = 'Channel::Whatsapp'
         AND cw.provider = 'whatsapp_cloud'
         AND COALESCE(cw.provider_config->>'api_key', '') <> ''
-      ORDER BY m.id
+        AND NOT EXISTS (
+              SELECT 1 FROM public.messages m
+               WHERE m.conversation_id = msg.conversation_id
+                 AND m.id < msg.id
+                 AND ${HUMAN_OUTGOING_SQL}
+            )
+      ORDER BY msg.id
       LIMIT $2`,
     [from, BATCH]
   );
