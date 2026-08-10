@@ -1,6 +1,7 @@
 import { loadConfig } from './config.js';
 import { createApp } from './api.js';
 import { getPool, query } from './db.js';
+import { startLoop } from './loop.js';
 import { runMigrations } from './migrate.js';
 import { reconcileAccount } from './reconcile.js';
 import { refreshHealth, fetchNumberHealth } from './meta.js';
@@ -240,17 +241,10 @@ async function tick() {
   try { await pollTemplateStatuses(); } catch (e) { console.error('[tpl] poll error:', e.message); }
 }
 
-// ⚠️ נעילת ריצה כפולה. טיק אחד יכול להימשך יותר מהמרווח (חשבון רב, או קריאה שתקועה
-// מול מטא), ובלי הנעילה טיק חדש נערם מעליו — כל אחד תופס חיבורים מבריכה של 5, עד
-// שגם הפאנל מפסיק להגיב. דילוג הוא הדבר הנכון: הטיק הבא יטפל באותה עבודה ממילא.
-let tickRunning = false;
-setInterval(() => {
-  if (tickRunning) { console.warn('[drip] previous tick still running — skipping this cycle'); return; }
-  tickRunning = true;
-  tick()
-    .catch((e) => console.error('[drip] tick error:', e.message))
-    .finally(() => { tickRunning = false; });
-}, config.reconcileIntervalMs);
+// ⚠️ נעילת ריצה כפולה — ראה loop.js. טיק אחד יכול להימשך יותר מהמרווח (חשבון רב, או
+// קריאה שתקועה מול מטא), ובלי הנעילה טיק חדש נערם מעליו: כל אחד תופס חיבורים מבריכה
+// של 5, עד שגם הפאנל מפסיק להגיב.
+const dripLoop = startLoop(config.reconcileIntervalMs, '[drip]', tick);
 
 // ── תצפית על דירוג האיכות של כל המספרים ──────────────────────────────────
 // כל שעה, ומיד בעלייה. סורק גם מספרים שהמנוע לא שולח מהם — שם בדיוק התגלה מספר
@@ -282,7 +276,7 @@ async function shutdown(signal) {
   try {
     server.close();
     const deadline = Date.now() + 7000;
-    while (tickRunning && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+    while (dripLoop.isRunning() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
     await pool.end().catch(() => {});
   } finally {
     clearTimeout(hardExit);
@@ -299,9 +293,9 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // 06.08.2026: 5000 → 2000. הסריקה מוסיפה 0-5ש' לפני שההשהיות בכלל מתחילות, ולכן
 // ה"מקליד" נדלק עד 14ש' אחרי ההודעה — אחרי שהבוט כבר ענה (נמדד: 3 שניות גלוי).
 // שאילתת id > cursor על מפתח ראשי, אז 2ש' לא עולים כלום.
+// ⚠️ אותה נעילת ריצה כפולה של לולאת השליחה, וכאן היא קריטית פי שלושים: המרווח הוא
+// 2 שניות, וסבב שמחכה ל-connect בבריכה תפוסה חי כ-40 שניות (10ש' לכל שאילתה) —
+// כלומר עד 20 סבבים במקביל שכולם עומדים בתור לאותה בריכה. ראה loop.js.
 const PRESENCE_INTERVAL_MS = Number(process.env.PRESENCE_INTERVAL_MS || 2000);
-setInterval(
-  () => tickPresence({ query, log: (m) => console.log(m) })
-    .catch((e) => console.error('[presence] tick error:', e.message)),
-  PRESENCE_INTERVAL_MS
-);
+startLoop(PRESENCE_INTERVAL_MS, '[presence]',
+  () => tickPresence({ query, log: (m) => console.log(m) }));
