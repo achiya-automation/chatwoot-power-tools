@@ -48,15 +48,30 @@
       '.drip-chip-custom{border-color:rgb(var(--blue-6));color:rgb(var(--blue-11))}',
       '.drip-chip-custom:hover{background:rgb(var(--blue-3))}',
       '.drip-chip:disabled{cursor:default;opacity:.6}',
-      // token overlay — shows a friendly label, hides the raw Liquid
+      // token overlay — shows friendly labels, hides the raw Liquid. Free text around a token is
+      // kept verbatim in the overlay, so "רחוב {{…}} קומה 3" reads as a sentence with one pill in it.
+      // ⚠️ ה-overlay נעלם במצב .editing והשדה חוזר לטקסט הגולמי — זה מה שמאפשר עריכה חופשית
+      // של המלל סביב המשתנה. יישור caret מעל pill שרוחבו שונה מהטקסט שמתחתיו לא ניתן לפתרון
+      // אמין ב-<input>, ולכן מפרידים: לא-בעריכה = תצוגה, בעריכה = טקסט גולמי.
+      // ⚠️ .editing ולא ‎:focus-within — לחיצה על צ'יפ ממקדת את השדה תוכנתית (כדי שאפשר יהיה
+      // להמשיך להקליד), ועם focus-within זה היה מקפיץ אותו מיד לביטוי הגולמי. מצב העריכה
+      // נפתח רק ממגע של המשתמש בשדה עצמו.
       '.drip-token-wrap{position:relative;width:100%;display:block}',
       '.drip-token-wrap.has-token > input{color:transparent!important;caret-color:transparent}',
-      '.drip-token{position:absolute;top:0;bottom:0;inset-inline-start:9px;inset-inline-end:9px;display:flex;align-items:center;pointer-events:none}',
-      '.drip-token-pill{display:inline-flex;align-items:center;gap:7px;pointer-events:auto;font-size:14px;font-weight:500;line-height:1;padding:6px 8px 6px 12px;border-radius:8px;background:rgb(var(--blue-3));color:rgb(var(--blue-11));max-width:100%}',
-      '.drip-token-pill .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px}',
-      '.drip-token-pill .lbl::before{content:"";width:6px;height:6px;border-radius:9999px;background:currentColor;opacity:.55;flex-shrink:0}',
-      '.drip-token-pill .x{pointer-events:auto;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:9999px;font-size:10px;opacity:.65;background:rgb(var(--blue-5));flex-shrink:0}',
+      '.drip-token-wrap.has-token.editing > input{color:inherit!important;caret-color:auto}',
+      '.drip-token-wrap.has-token.editing > .drip-token{display:none}',
+      '.drip-token{position:absolute;top:0;bottom:0;inset-inline-start:9px;inset-inline-end:9px;display:flex;align-items:center;pointer-events:none;overflow:hidden}',
+      // block + white-space:pre — לא flex: ב-flex container כל text node הופך ל-item אנונימי
+      // והרווחים בקצוות ("רחוב " ↔ pill) נבלעים. inline flow משמר אותם.
+      '.drip-token-line{display:block;white-space:pre;overflow:hidden;text-overflow:ellipsis;max-width:100%;font-size:14px;line-height:1.2;color:rgb(var(--slate-12))}',
+      '.drip-token-pill{display:inline-block;vertical-align:middle;pointer-events:auto;font-size:13px;font-weight:500;line-height:1;padding:5px 7px 5px 10px;border-radius:7px;background:rgb(var(--blue-3));color:rgb(var(--blue-11));max-width:100%;white-space:nowrap}',
+      '.drip-token-pill .lbl{display:inline-block;vertical-align:middle;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}',
+      '.drip-token-pill .lbl::before{content:"";display:inline-block;vertical-align:middle;width:5px;height:5px;margin-inline-end:6px;border-radius:9999px;background:currentColor;opacity:.55}',
+      '.drip-token-pill .x{pointer-events:auto;cursor:pointer;display:inline-block;vertical-align:middle;width:15px;height:15px;line-height:15px;text-align:center;margin-inline-start:6px;border-radius:9999px;font-size:9px;opacity:.65;background:rgb(var(--blue-5))}',
       '.drip-token-pill .x:hover{opacity:1}',
+      // same pill, inside the rendered message body (no ✕ there — the card is read-only)
+      '.drip-token-pill.sm{font-size:12px;padding:2px 8px;border-radius:6px;line-height:1.35}',
+      '.drip-msg-body{font-size:.875rem;line-height:1.55;white-space:pre-wrap;color:rgb(var(--slate-12))}',
       // preview card prettification
       '.drip-tpl-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}',
       '.drip-tpl-name{font-size:14px;font-weight:600;line-height:1.4;flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
@@ -96,7 +111,55 @@
   // Liquid → תווית ידידותית, מחושב בזמן קריאה (רשימה של 4 + custom — זול מלתחזק מפה).
   function liquidLabel(liquid) {
     var hit = allFields().filter(function (f) { return f.liquid === liquid; })[0];
-    return hit && hit.label;
+    if (hit) return hit.label;
+    // ⚠️ נפילה אחורה למפתח עצמו: הכרטיס מרונדר גם לפני ש-CUSTOM_FIELDS חזר מה-API, וגם
+    // אחרי שהשדה נמחק מההגדרות אבל נשאר בקמפיין שמור. עדיף "כתובת נכס" מ-Liquid גולמי.
+    var m = /^\{\{contact\.custom_attribute\['(.+)'\]\}\}$/.exec(liquid);
+    return m ? m[1].replace(/_/g, ' ') : '';
+  }
+
+  // ── מפרק מחרוזת לרצף חלקים: {text:'רחוב '} / {token:'{{…}}', label:'כתובת נכס'}.
+  // ביטוי Liquid שאין לו תווית מוכרת נשאר טקסט — לא מסתירים משהו שלא הבנו. ──
+  function splitTokens(str) {
+    var out = [], last = 0, re = /\{\{[^{}]*\}\}/g, m;
+    while ((m = re.exec(str)) !== null) {
+      var label = liquidLabel(m[0]);
+      if (!label) continue;
+      if (m.index > last) out.push({ text: str.slice(last, m.index) });
+      out.push({ token: m[0], label: label });
+      last = m.index + m[0].length;
+    }
+    if (last < str.length) out.push({ text: str.slice(last) });
+    return out;
+  }
+  function joinParts(parts) {
+    return parts.map(function (p) { return p.token != null ? p.token : p.text; }).join('');
+  }
+  function hasToken(parts) {
+    return parts.some(function (p) { return p.token != null; });
+  }
+
+  // מרנדר חלקים אל תוך el: טקסט כטקסט, משתנה כ-pill. onRemove (אופציונלי) מוסיף ✕ לכל pill.
+  function renderParts(el, parts, pillClass, onRemove) {
+    el.textContent = '';
+    parts.forEach(function (p, i) {
+      if (p.token == null) { el.appendChild(document.createTextNode(p.text)); return; }
+      var pill = document.createElement('span');
+      pill.className = pillClass;
+      var lbl = document.createElement('span');
+      lbl.className = 'lbl';
+      lbl.textContent = p.label;
+      pill.appendChild(lbl);
+      if (onRemove) {
+        var x = document.createElement('span');
+        x.className = 'x';
+        x.textContent = '✕';
+        x.title = t('remove');
+        x.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); onRemove(i); });
+        pill.appendChild(x);
+      }
+      el.appendChild(pill);
+    });
   }
 
   // Chatwoot's API requires devise-token-auth headers (not just the session cookie). The
@@ -170,25 +233,41 @@
   // ── token overlay: when the value is a known Liquid expression, show a friendly pill
   // instead of the raw {{...}} ──
   function syncToken(wrap, inp) {
-    var label = liquidLabel((inp.value || '').trim());
-    var pill = wrap.querySelector('.drip-token');
-    if (label) {
-      wrap.classList.add('has-token');
-      if (!pill) {
-        pill = document.createElement('div');
-        pill.className = 'drip-token';
-        pill.innerHTML = '<span class="drip-token-pill"><span class="lbl"></span><span class="x" title="' + t('remove') + '">✕</span></span>';
-        pill.querySelector('.x').addEventListener('click', function (e) {
-          e.preventDefault(); e.stopPropagation();
-          setNativeValue(inp, ''); syncToken(wrap, inp); inp.focus();
-        });
-        wrap.appendChild(pill);
-      }
-      pill.querySelector('.lbl').textContent = label;
-    } else {
+    var parts = splitTokens(inp.value || '');
+    var overlay = wrap.querySelector('.drip-token');
+    if (!hasToken(parts)) {
       wrap.classList.remove('has-token');
-      if (pill) pill.remove();
+      if (overlay) overlay.remove();
+      return;
     }
+    wrap.classList.add('has-token');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'drip-token';
+      overlay.appendChild(document.createElement('span')).className = 'drip-token-line';
+      wrap.appendChild(overlay);
+    }
+    renderParts(overlay.firstChild, parts, 'drip-token-pill', function (i) {
+      parts.splice(i, 1);
+      setNativeValue(inp, joinParts(parts));
+      syncToken(wrap, inp);
+    });
+  }
+
+  // הוספה בעמדת הסמן — לא דריסה של השדה. זה מה שמאפשר "רחוב {{כתובת}} קומה 3":
+  // כותבים מלל, לוחצים על צ'יפ, ממשיכים לכתוב.
+  function insertAtCaret(inp, wrap, snippet) {
+    var v = inp.value || '';
+    var s = inp.selectionStart, e = inp.selectionEnd;
+    if (s == null || e == null) { s = e = v.length; }
+    setNativeValue(inp, v.slice(0, s) + snippet + v.slice(e));
+    syncToken(wrap, inp);
+    var pos = s + snippet.length;
+    inp.focus();
+    // ⚠️ גם ב-setTimeout: Vue מסיים את מחזור העדכון ב-nextTick ועלול לאפס את הבחירה
+    // אחרי שכתבנו אותה סינכרונית.
+    try { inp.setSelectionRange(pos, pos); } catch (err) { /* input שלא תומך בבחירה */ }
+    setTimeout(function () { try { inp.setSelectionRange(pos, pos); } catch (err) {} }, 0);
   }
 
   function buildChips(holder, inp, wrap) {
@@ -204,9 +283,12 @@
       b.type = 'button';
       b.textContent = f.label;
       b.className = 'drip-chip' + (f.custom ? ' drip-chip-custom' : '');
+      // mousedown נמנע כדי שהשדה לא יאבד focus — אחרת עמדת הסמן שנשמרה בו כבר לא רלוונטית
+      // והמשתנה היה נדחף תמיד לסוף.
+      b.addEventListener('mousedown', function (e) { e.preventDefault(); });
       b.addEventListener('click', function (e) {
         e.preventDefault(); e.stopPropagation();
-        setNativeValue(inp, f.liquid); syncToken(wrap, inp);
+        insertAtCaret(inp, wrap, f.liquid);
       });
       holder.appendChild(b);
     });
@@ -216,7 +298,9 @@
     document.querySelectorAll('.drip-var-chips').forEach(function (holder) {
       var wrap = holder.nextElementSibling;
       var inp = wrap && wrap.querySelector('input');
-      if (inp) buildChips(holder, inp, wrap);
+      if (!inp) return;
+      buildChips(holder, inp, wrap);
+      syncToken(wrap, inp);   // תוויות custom שהגיעו עכשיו מה-API
     });
   }
 
@@ -235,6 +319,11 @@
     col.insertBefore(holder, wrap);
     buildChips(holder, inp, wrap);
     inp.addEventListener('input', function () { syncToken(wrap, inp); });
+    // מגע של המשתמש בשדה = מצב עריכה (ראה ההערה ב-CSS). focus תוכנתי מלחיצה על צ'יפ לא נחשב.
+    ['mousedown', 'keydown', 'touchstart'].forEach(function (ev) {
+      inp.addEventListener(ev, function () { wrap.classList.add('editing'); });
+    });
+    inp.addEventListener('blur', function () { wrap.classList.remove('editing'); });
     syncToken(wrap, inp);          // initial state (e.g. if there's already a value, when editing)
   }
 
@@ -298,7 +387,19 @@
             catRow = row; row.style.display = 'none'; break;
           }
         }
-        card.__dripCard = { rawH3: h3, langSpan: langSpan, catRow: catRow, myName: myName, badges: badges };
+        // גוף ההודעה: Chatwoot מרנדר כאן את התבנית אחרי החלפת {{1}} בערך שהוזן — כלומר
+        // ביטוי Liquid גולמי באמצע המשפט. מסתירים את ה-div שלו (Vue ממשיך לעדכן את הטקסט
+        // שבו — משם קוראים) ומציגים overlay משלנו עם המשתנים כ-pills.
+        var rawBody = card.querySelector('.whitespace-pre-wrap');
+        var myBody = null;
+        if (rawBody) {
+          rawBody.style.display = 'none';
+          myBody = document.createElement('div');
+          myBody.className = 'drip-msg-body';
+          rawBody.parentNode.insertBefore(myBody, rawBody.nextSibling);
+        }
+        card.__dripCard = { rawH3: h3, langSpan: langSpan, catRow: catRow, myName: myName, badges: badges,
+                            rawBody: rawBody, myBody: myBody };
       }
 
       // idempotent update on every run — reads from Vue's hidden elements (which Vue keeps
@@ -307,6 +408,20 @@
       var rawName = d.rawH3.textContent.trim();
       var pretty = prettifyName(rawName);
       if (d.myName.textContent !== pretty) { d.myName.textContent = pretty; d.myName.title = rawName; }
+
+      // ⚠️ sig ולא בנייה בכל ריצה: enhancePreviewCard נקרא מה-MutationObserver כל 150ms,
+      // ובנייה מחדש של ה-DOM בקצב הזה מהבהבת ומבזבזת. הטקסט הגולמי הוא החתימה הטבעית —
+      // הוא משתנה בדיוק כשהמשתמש מקליד בשדה משתנה או מחליף תבנית.
+      if (d.myBody) {
+        var rawTxt = d.rawBody.textContent;
+        // אורך CUSTOM_FIELDS בחתימה — הטקסט הגולמי לא משתנה כשהשדות חוזרים מה-API, אבל
+        // התוויות כן (מפתח → שם תצוגה), וצריך רינדור מחדש.
+        var bodySig = rawTxt + ' ' + CUSTOM_FIELDS.length;
+        if (d.myBody.__sig !== bodySig) {
+          d.myBody.__sig = bodySig;
+          renderParts(d.myBody, splitTokens(rawTxt), 'drip-token-pill sm', null);
+        }
+      }
 
       var lang = (d.langSpan.textContent.split(':')[1] || '').trim();
       var cat = d.catRow ? (d.catRow.textContent.split(':')[1] || '').trim() : '';
