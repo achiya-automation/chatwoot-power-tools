@@ -90,6 +90,8 @@
     ];
   }
   var CUSTOM_FIELDS = [];          // loaded dynamically from the API
+  var customFieldsAcc = '';        // the account CUSTOM_FIELDS was loaded for
+  var customFieldsAt = 0;          // when (ms) — 0 = never/failed, so the next open retries
   function allFields() { return baseFields().concat(CUSTOM_FIELDS); }
   // Liquid → תווית ידידותית, מחושב בזמן קריאה (רשימה של 4 + custom — זול מלתחזק מפה).
   function liquidLabel(liquid) {
@@ -116,24 +118,46 @@
   }
 
   // load contacts' custom attributes from the API (with devise-token-auth headers from the cookie)
+  //
+  // ⚠️ עצל ופר-חשבון — לא פעם אחת בטעינה. הגרסה הקודמת נקראה רק ב-bootstrap ועשתה return שקט
+  // כשאין מזהה חשבון ב-URL, וזה נכשל בשלושה מסלולים שכיחים: (1) ב-DASHBOARD_SCRIPTS הסקריפט רץ
+  // לפני Vue, כך שכניסה דרך /app/login או /app/accounts הותירה את הרשימה ריקה לנצח; (2) Chatwoot
+  // הוא SPA — שדה שנוצר בהגדרות ואז מעבר לקמפיינים לא גורר טעינה מחדש, אז השדה החדש לא הופיע עד
+  // רענון קשיח; (3) מעבר בין חשבונות הותיר את השדות של החשבון הקודם. עכשיו נטען בכל פתיחה של מודל
+  // הקמפיין, עם throttle קצר כדי שהחלפת תבנית (שמרנדרת שדות מחדש) לא תייצר בקשה בכל פעם.
   function loadCustomFields() {
-    var m = location.pathname.match(/accounts\/(\d+)/);
-    if (!m) return;
+    var acc = accountIdFromPath();
+    if (!acc) return;                        // עוד לא בתוך חשבון — הפתיחה הבאה תנסה שוב
+    if (acc === customFieldsAcc && Date.now() - customFieldsAt < 30000) return;
+    customFieldsAcc = acc;
+    customFieldsAt = Date.now();
     var headers = getChatwootAuthHeaders() || {};
     headers.Accept = 'application/json';
-    fetch('/api/v1/accounts/' + m[1] + '/custom_attribute_definitions',
+    fetch('/api/v1/accounts/' + acc + '/custom_attribute_definitions?attribute_model=contact_attribute',
           { credentials: 'same-origin', headers: headers })
-      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (list) {
         CUSTOM_FIELDS = (list || [])
           .filter(function (d) { return d.attribute_model === 'contact_attribute'; })
           .map(function (d) {
+            // ⚠️ סוגריים עם מרכאות *בודדות* — לא נקודה ולא מרכאות כפולות. שתי מלכודות נפרדות:
+            //
+            // 1. נקודה: ב-Liquid של Ruby מזהה משתנה הוא ASCII בלבד (VariableSegment = /[\w\-]/,
+            //    ו-\w ברובי אינו כולל יוניקוד), אז מפתח עברי כמו "כתובת_נכס" — או כל מפתח עם
+            //    נקודה — פשוט לא נפרסר ומתרנדר לריק.
+            // 2. מרכאות כפולות: Whatsapp::LiquidTemplateProcessorService עושה
+            //    processed_params.to_json *לפני* הרינדור, וה-JSON בורח כל " ל-\" בתוך הביטוי.
+            //    Liquid מקבל {{ contact.custom_attribute[\"…\"] }} → SyntaxError.
+            //
+            // בשני המקרים blank_render?/ה-rescue גורמים ל-process_template_params להחזיר nil,
+            // כלומר **השליחה לאיש הקשר נופלת בשקט** — לא סתם ערך ריק. ' לא בורח ב-JSON, ולכן
+            // עובד. attribute_key מאומת בצד Chatwoot מול /\A[\p{L}\p{N}_.\-]+\z/ — אין בו מרכאות.
             return { label: d.attribute_display_name || d.attribute_key,
-                     liquid: '{{contact.custom_attribute.' + d.attribute_key + '}}', custom: true };
+                     liquid: "{{contact.custom_attribute['" + d.attribute_key + "']}}", custom: true };
           });
         refreshAllChips();         // update holders that were already built before the fetch returned
       })
-      .catch(function () {});
+      .catch(function () { customFieldsAt = 0; });   // כישלון לא ננעל — הפתיחה הבאה תנסה שוב
   }
 
   function setNativeValue(el, val) {
@@ -226,6 +250,7 @@
     for (var i = 0; i < inputs.length; i++) {
       if (inputs[i].getAttribute('data-drip-var')) continue;
       inputs[i].setAttribute('data-drip-var', '1');
+      loadCustomFields();   // מודל שנפתח = הרשימה נטענת/מתרעננת (ראה ההערה שם); no-op אם טרייה
       augmentVarInput(inputs[i]);
     }
   }
@@ -522,7 +547,8 @@
   // bootstrap: independent of sequences-nav.js's own bootstrap (each part module can be
   // installed on its own) — when both are installed together, the combined effect is
   // identical to the original single-IIFE version, just via two observers instead of one.
-  loadCustomFields();
+  // loadCustomFields() לא נקרא כאן בכוונה — enhanceCampaign() קורא לו בפתיחת המודל, כשהחשבון
+  // כבר ידוע והרשימה טרייה. קריאה כאן הייתה רק מציתה את ה-throttle מוקדם מדי עם רשימה ישנה.
   loadTemplateMedia();
   var enhanceTimer;
   new MutationObserver(function () { clearTimeout(enhanceTimer); enhanceTimer = setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); autofillAllMedia(); }, 150); })
