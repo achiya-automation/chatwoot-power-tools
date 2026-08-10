@@ -29,25 +29,34 @@
 # no branch, which is the same "running code nobody can trace" problem in a new costume.
 # Build and commit first, then deploy.
 #
+# That sentence used to be a promise the code did not keep: until 10.08.26 every path here
+# read the working tree — `tar -C "$REPO_ROOT" modules` and an scp of the .rb straight off
+# disk — so a half-finished edit from a parallel session rode a deploy into production, and
+# .gitignored build output (modules/smart-import/dist) shipped to אדמון from no branch at
+# all. Now packing goes through `git archive HEAD`, the initializers are read with
+# `git show HEAD:`, and every "matches git" comparison uses head_md5. The working tree is
+# no longer an input to a deploy — only to the warning that tells you to commit.
+#
 # Usage:
 #   ./sync-servers.sh --check              # compare only, change nothing (start here)
 #   ./sync-servers.sh                      # deploy committed state + restart + verify
 #   ./sync-servers.sh --server chatwoot    # one server only
-#   ./sync-servers.sh --force              # proceed despite drift or a dirty tree
+#   ./sync-servers.sh --force              # proceed despite drift (still deploys HEAD)
 #
 set -euo pipefail
 
 # AppleDouble (._*) files must never reach the servers (30.07: they rode a deploy into the
-# cwpt-engine image). Two mechanisms, two guards: COPYFILE_DISABLE stops macOS tar from
-# emitting them as metadata sidecars, and --exclude='._*' on the tar calls below stops real
-# ._ files lying on the local disk (unzip/SMB/AirDrop leftovers) from being archived.
-export COPYFILE_DISABLE=1
+# cwpt-engine image). git archive is the guard now — it emits tracked blobs only, so a ._
+# file lying on the local disk (unzip/SMB/AirDrop leftover) cannot be picked up at all, and
+# macOS tar is no longer in the path to invent one. A committed ._ file would still ship;
+# nothing tracks one today, and it would be a repo problem, visible in review.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-SEQ="$REPO_ROOT/modules/sequences"
-# כל קובצי ה-.rb בתיקייה מועמדים לפריסה — initializer חדש בריפו מצטרף מעצמו. נכתבים בפועל
-# רק קבצים שחסרים בשרת או שגרסתם שם ישנה של הברנץ' הזה; גרסה מברנץ' אחר מדולגת (known_in_ref).
-PATCH_DIR="$SEQ/deploy/chatwoot-initializers"
+# כל קובצי ה-.rb שמחויבים ב-HEAD מועמדים לפריסה — initializer חדש בריפו מצטרף מעצמו, וקובץ
+# שקיים רק על הדיסק אינו מועמד כלל. נכתבים בפועל רק קבצים שחסרים בשרת או שגרסתם שם ישנה של
+# הברנץ' הזה; גרסה מברנץ' אחר מדולגת (known_in_ref). הנתיב יחסי-לריפו בכוונה — כל הגישה
+# לקבצים כאן היא דרך git, לא דרך הדיסק.
+PATCH_REL_DIR="modules/sequences/deploy/chatwoot-initializers"
 PATCH_DEST_DIR="/opt/chatwoot/custom-initializers"
 SERVERS=(chatwoot chatwoot_admon)
 
@@ -63,7 +72,7 @@ while [[ $# -gt 0 ]]; do
     --check) CHECK_ONLY=1; shift ;;
     --force) FORCE=1; shift ;;
     --server) ONLY_SERVER="$2"; shift 2 ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -74,8 +83,21 @@ warn() { printf '\033[33m  ⚠ %s\033[0m\n' "$*"; }
 ok() { printf '\033[32m  ✓ %s\033[0m\n' "$*"; }
 die() { printf '\033[31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
-md5_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | awk '{print $1}'; }
 remote_md5() { ssh "$1" "sudo md5sum '$2' 2>/dev/null | awk '{print \$1}'"; }
+
+# md5 of a repo-relative path AS COMMITTED. Every "does the server match git?" comparison
+# goes through this, so a green --check means the server matches HEAD — not "matches
+# whatever happens to be on my disk right now". There is deliberately no working-tree
+# equivalent left in this file: one existed, and it is what let the tree reach production.
+# Missing in HEAD is fatal by design — silently comparing against an empty blob is how you
+# deploy an empty file.
+# (pipefail is what makes the failing git show propagate through the md5 pipe.)
+head_md5() {
+  local out
+  out="$(cd "$REPO_ROOT" && git show "HEAD:$1" 2>/dev/null | md5_stdin)" \
+    || die "$1 is not committed in HEAD — commit it, or it cannot be deployed"
+  printf '%s' "$out"
+}
 
 # Flat install (main server) or modular install (אדמון)? Decided by what is on disk, not
 # by hostname, so a re-installed server is handled correctly without editing this script.
@@ -93,18 +115,19 @@ remote_engine_src() {
     || echo /opt/chatwoot/engine/src
 }
 
-# Deploying an uncommitted tree puts code on a server that exists in no branch — exactly
-# the drift this script is here to prevent, one step earlier in the chain.
+# A dirty tree can no longer reach a server — the deploy reads HEAD. The hard stop stays
+# for the opposite failure: you deploy, watch it succeed, and your uncommitted fix is not
+# in it. Scope covers docker-compose.addons.yml too, since the modular deploy ships it.
 require_clean_tree() {
   local dirty
-  dirty="$(cd "$REPO_ROOT" && git status --porcelain -- modules)"
+  dirty="$(cd "$REPO_ROOT" && git status --porcelain -- modules docker-compose.addons.yml)"
   [[ -z "$dirty" ]] && { ok "working tree clean"; return 0; }
 
-  warn "uncommitted changes under modules/ — servers would run code that is not in git:"
+  warn "uncommitted changes in the deploy scope — these will NOT be deployed:"
   printf '%s\n' "$dirty" | head -8 | sed 's/^/      /'
   [[ $(printf '%s\n' "$dirty" | wc -l) -gt 8 ]] && echo "      …"
-  [[ $FORCE -eq 1 ]] || die "commit first (or pass --force if you know what you are doing)"
-  warn "--force given: deploying an uncommitted tree"
+  [[ $FORCE -eq 1 ]] || die "commit first (or pass --force to deploy HEAD and leave them behind)"
+  warn "--force given: deploying HEAD — the changes listed above stay on your disk"
 }
 
 # Is this checksum some commit's version of the file, under a given ref? known_in_ref HEAD
@@ -136,12 +159,14 @@ check_drift() {
   # all — deploy_patch leaves it completely untouched (no rewrite, no .bak).
   DEPLOY_PATCHES=""
   SKIP_PATCHES=""
-  for patch_src in "$PATCH_DIR"/*.rb; do
-    local base rel_patch dest
-    base="$(basename "$patch_src")"
-    rel_patch="modules/sequences/deploy/chatwoot-initializers/$base"
+  # Candidates come from HEAD, not from the directory listing: an uncommitted .rb sitting
+  # in the deploy folder is not deployable, so it must not appear as one here either.
+  while IFS= read -r rel_patch; do
+    [[ -z "$rel_patch" ]] && continue
+    local base dest
+    base="${rel_patch##*/}"
     dest="$PATCH_DEST_DIR/$base"
-    want="$(md5_of "$patch_src")"
+    want="$(head_md5 "$rel_patch")"
     have="$(remote_md5 "$server" "$dest")"
     if [[ -z "$have" ]]; then
       warn "Rails patch $base missing on $server — will be installed"
@@ -163,17 +188,17 @@ check_drift() {
         fi
       else
         warn "Rails patch $base on $server matches NO commit — edited in place, and this is the only copy"
-        warn "  review before overwriting:  ssh $server 'sudo cat $dest' | diff - $patch_src"
+        warn "  review before overwriting:  ssh $server 'sudo cat $dest' | diff - <(git show HEAD:$rel_patch)"
         blocking=1; patch_ok=0
       fi
     fi
-  done
+  done < <(cd "$REPO_ROOT" && git ls-tree -r --name-only HEAD -- "$PATCH_REL_DIR" | grep '\.rb$')
   [[ $patch_ok -eq 1 ]] && ok "Rails patches match git"
 
   # Engine + webapp ship as one tar — all-or-nothing — so an other-branch version here
   # blocks the whole server instead of skipping a single file.
   for f in campaigns.js campaignCsv.js; do
-    want="$(md5_of "$SEQ/engine/src/$f")"
+    want="$(head_md5 "modules/sequences/engine/src/$f")"
     have="$(remote_md5 "$server" "$remote_src/$f")"
     [[ "$want" == "$have" ]] && continue
     if [[ -z "$have" ]] || known_in_ref HEAD "modules/sequences/engine/src/$f" "$have"; then
@@ -192,7 +217,7 @@ check_drift() {
   # server dist matching ANOTHER branch's build means the panel was deployed from
   # elsewhere; replacing it from here would swap the feature set. Block, like engine.
   local container; container="$(engine_container "$layout")"
-  want="$(md5_of "$SEQ/webapp/dist/index.html")"
+  want="$(head_md5 "modules/sequences/webapp/dist/index.html")"
   have="$(ssh "$server" "docker exec $container md5sum /app/webapp-dist/index.html 2>/dev/null" | awk '{print $1}')"
   if [[ -n "$have" && "$want" != "$have" ]]; then
     if ! known_in_ref HEAD "modules/sequences/webapp/dist/index.html" "$have" \
@@ -220,33 +245,42 @@ deploy_engine() {
   local server="$1" layout="$2"
   local tgz; tgz="$(mktemp -t cwpt).tgz"
 
+  # git archive, not tar: the archive is built from HEAD's tree, so nothing uncommitted and
+  # nothing .gitignored can enter it. That also retires the old --exclude list — node_modules,
+  # .preview and smart-import/dist are ignored files, absent from HEAD by construction.
+  # Member paths are unchanged, so the remote extraction below still lands where it did.
   if [[ "$layout" == modular ]]; then
-    tar --exclude=node_modules --exclude=.preview --exclude='._*' -czf "$tgz" -C "$REPO_ROOT" modules docker-compose.addons.yml
+    git -C "$REPO_ROOT" archive --format=tar.gz -o "$tgz" HEAD modules docker-compose.addons.yml
     scp -q "$tgz" "$server:/tmp/cwpt-sync.tgz"
     ssh "$server" "sudo rm -rf /opt/chatwoot/chatwoot-power-tools/modules /opt/chatwoot/chatwoot-power-tools/docker-compose.addons.yml \
       && sudo tar -C /opt/chatwoot/chatwoot-power-tools -xzf /tmp/cwpt-sync.tgz modules docker-compose.addons.yml 2>/dev/null; rm -f /tmp/cwpt-sync.tgz"
   else
-    tar --exclude=node_modules --exclude='._*' -czf "$tgz" -C "$SEQ" engine/src engine/migrations webapp/dist
+    git -C "$REPO_ROOT" archive --format=tar.gz -o "$tgz" HEAD:modules/sequences engine/src engine/migrations webapp/dist
     scp -q "$tgz" "$server:/tmp/cwpt-sync.tgz"
     ssh "$server" "sudo rm -rf /opt/chatwoot/engine/src /opt/chatwoot/webapp/dist \
       && sudo tar -C /opt/chatwoot -xzf /tmp/cwpt-sync.tgz 2>/dev/null; rm -f /tmp/cwpt-sync.tgz"
   fi
   rm -f "$tgz"
-  ok "engine + webapp copied ($layout)"
+  ok "engine + webapp copied from HEAD ($layout)"
 }
 
 deploy_patch() {
   local server="$1"
-  local base dest patch_src
+  local base dest
   if [[ -z "$DEPLOY_PATCHES" ]]; then
     ok "Rails initializers already match — nothing written"
     return 0
   fi
+  # Same rule as the engine tar: the bytes come from HEAD, never off the disk. Materialised
+  # into a temp file because scp needs a path, not a stream.
+  local staged; staged="$(mktemp -t cwpt-patch)"
+  trap 'rm -f "$staged"' RETURN
   while IFS= read -r base; do
     [[ -z "$base" ]] && continue
-    patch_src="$PATCH_DIR/$base"
     dest="$PATCH_DEST_DIR/$base"
-    scp -q "$patch_src" "$server:/tmp/cwpt-patch.rb"
+    git -C "$REPO_ROOT" show "HEAD:$PATCH_REL_DIR/$base" > "$staged" \
+      || die "$base vanished from HEAD between check and deploy — nothing installed"
+    scp -q "$staged" "$server:/tmp/cwpt-patch.rb"
     # Syntax-check inside the real Rails image before it can break boot.
     ssh "$server" "docker cp /tmp/cwpt-patch.rb chatwoot-rails-1:/tmp/c.rb >/dev/null && docker exec chatwoot-rails-1 ruby -c /tmp/c.rb >/dev/null" \
       || die "Ruby syntax check failed on $server ($base) — nothing installed"
@@ -292,9 +326,9 @@ verify() {
   local server="$1" layout="$2"
   local container; container="$(engine_container "$layout")"
   local want have
-  want="$(md5_of "$SEQ/engine/src/campaigns.js")"
+  want="$(head_md5 "modules/sequences/engine/src/campaigns.js")"
   have="$(ssh "$server" "docker exec $container md5sum /app/src/campaigns.js" 2>/dev/null | awk '{print $1}')"
-  [[ "$want" == "$have" ]] || die "$server runs different engine code than git ($have vs $want)"
+  [[ "$want" == "$have" ]] || die "$server runs different engine code than HEAD ($have vs $want)"
   ok "running engine matches git"
 
   ssh "$server" "docker exec chatwoot-sidekiq-1 bundle exec rails runner \"
