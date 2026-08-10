@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ArrowLeft, AlertCircle, ChevronDown, Download, MessageSquare, Coins, Printer, ExternalLink, Filter, Radio, RotateCcw } from 'lucide-react';
+import { ArrowRight, ArrowLeft, AlertCircle, ChevronDown, Download, MessageSquare, Coins, Printer, ExternalLink, Filter, Radio, RotateCcw, FlaskConical } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
-import ConfirmDialog from './ui/ConfirmDialog.jsx';
+import ResendDialog from './ResendDialog.jsx';
 import Skeleton from './ui/Skeleton.jsx';
 import { useToast } from './ui/Toast.jsx';
 import { Table, THead, TBody, TR, TH, TD } from './ui/Table.jsx';
-import { getCampaignDetail, getCampaignsTier, resendCampaignFailed, getCampaignResendStatus } from '../api/sequencesApi.js';
+import { getCampaignDetail, getCampaignsTier, resendCampaignFailed, getCampaignResendStatus, getCampaignExperiments } from '../api/sequencesApi.js';
 import { API_BASE } from '../config.js';
 import { estimateCost } from '../lib/campaignCost.js';
 import { buildRows, countRows, filterRows, failureGroups, STATUS_KEYS } from '../lib/campaignRows.js';
@@ -36,13 +36,16 @@ const M = {
         exactNote: 'הסטטוס בטבלה הוא המצב הסופי של כל נמען, ולכן הקטגוריות אינן חופפות (סכומן = קהל היעד) — בשונה מהמשפך למעלה',
         // ── פירוק כשלים + שליחה מחדש ──
         breakdownTitle: 'כשלים לפי סיבה', breakdownHint: 'לחיצה על סיבה מסננת את הטבלה',
-        resend: 'שליחה מחדש לנכשלים', resendTitle: 'שליחה מחדש לכל הנכשלים?',
-        resendDesc: 'התבנית תישלח שוב ל-{n} נמענים שנכשלו. ההודעות יוצאות מיד, אחת אחרי השנייה, והדוח יתעדכן תוך כדי.',
-        resendTierWarn: '⚠️ בתקציב היומי של המספר נותרו {left} הודעות בלבד — חלק מהשליחות עלולות להיכשל שוב.',
-        resendGo: 'שליחה', resendRunning: 'שולח מחדש…', resendDoneMsg: 'שליחה מחדש הסתיימה: {ok} נשלחו, {bad} נכשלו',
+        resend: 'שליחה מחדש לנכשלים',
+        resendRunning: 'שולח מחדש…', resendDoneMsg: 'שליחה מחדש הסתיימה: {ok} נשלחו, {bad} נכשלו',
         resendStarted: 'השליחה מחדש התחילה', adminOnly: 'שליחה מחדש דורשת הרשאת מנהל בחשבון',
         live: 'קמפיין רץ — הדוח מתעדכן אוטומטית',
-        skippedNote: 'נמענים שלא נוסו (חסר טלפון/תבנית) אינם חלק מהשליחה מחדש — אין לאן לשלוח' },
+        skippedNote: 'נמענים שלא נוסו (חסר טלפון/תבנית) אינם חלק מהשליחה מחדש — אין לאן לשלוח',
+        // ── תוצאות לפי ניסוי ──
+        expTitle: 'תוצאות לפי ניסוי', expHint: 'כל שליחה מחדש נמדדת בנפרד — אותם נמענים, תבנית אחרת',
+        expOriginal: 'השליחה המקורית', expRound: 'ניסוי {n}', expTemplate: 'תבנית', expWhen: 'מתי',
+        expAttempted: 'יצאו', expDelivered: 'נמסרו', expRead: 'נקראו', expFailed: 'נכשלו', expReplied: 'הגיבו',
+        expNote: 'אותו נמען יכול להופיע ביותר מניסוי אחד, ולכן סכום השורות גדול מקהל היעד. "הגיבו" נזקף לניסוי שאחריו הגיעה התגובה.' },
   en: { back: 'Back', audience: 'Target audience', attempted: 'Attempted', sent: 'Sent successfully', delivered: 'Delivered', read: 'Read', failed: 'Failed',
         funnel: 'Delivery funnel', replied: 'Replied', replyRate: 'Reply rate', costTitle: 'Estimated cost',
         costNote: 'Estimate: Meta IL rate ($/msg), excl. free service window / volume discounts · updated',
@@ -60,13 +63,15 @@ const M = {
         f_replied: 'Replied', f_noreply: 'No reply',
         exactNote: 'The table status is each recipient’s final state, so the categories do not overlap (they sum to the audience) — unlike the funnel above',
         breakdownTitle: 'Failures by reason', breakdownHint: 'Click a reason to filter the table',
-        resend: 'Resend to failed', resendTitle: 'Resend to all failed recipients?',
-        resendDesc: 'The template will be sent again to {n} failed recipients. Messages go out immediately, one after another, and the report updates as it runs.',
-        resendTierWarn: "⚠️ Only {left} messages remain in the number's daily budget — some sends may fail again.",
-        resendGo: 'Send', resendRunning: 'Resending…', resendDoneMsg: 'Resend finished: {ok} sent, {bad} failed',
+        resend: 'Resend to failed',
+        resendRunning: 'Resending…', resendDoneMsg: 'Resend finished: {ok} sent, {bad} failed',
         resendStarted: 'The resend has started', adminOnly: 'Resending requires an administrator role',
         live: 'Campaign running — the report auto-refreshes',
-        skippedNote: 'Recipients that were never attempted (no phone/template) are not part of the resend — there is nowhere to send' },
+        skippedNote: 'Recipients that were never attempted (no phone/template) are not part of the resend — there is nowhere to send',
+        expTitle: 'Results per experiment', expHint: 'Every resend is measured on its own — same recipients, different template',
+        expOriginal: 'Original send', expRound: 'Experiment {n}', expTemplate: 'Template', expWhen: 'When',
+        expAttempted: 'Went out', expDelivered: 'Delivered', expRead: 'Read', expFailed: 'Failed', expReplied: 'Replied',
+        expNote: 'The same recipient can appear in more than one experiment, so the rows sum to more than the audience. A reply is credited to the experiment it followed.' },
 };
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0);
 // גוון הבאדג' לכל מצב סופי בטבלה (ראו lib/campaignRows.js).
@@ -165,6 +170,8 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   const [resendOpen, setResendOpen] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
   const [resendJob, setResendJob] = useState(null);
+  // תוצאות פר-ניסוי (השליחה המקורית + כל שליחה מחדש). [] = נטען ואין מה להציג.
+  const [experiments, setExperiments] = useState([]);
   const alive = useRef(true);
   // איפוס בגוף האפקט ולא רק ב-cleanup — אחרת ה-double-mount של StrictMode משאיר את
   // הדגל false לתמיד והתשובות של ה-fetch נזרקות (skeleton נצחי בפיתוח).
@@ -183,6 +190,10 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
       .catch((e) => { if (alive.current) setError(e.message || translate(M, 'errLoad')); });
     // תקציב 24h — לאזהרה שבמודאל השליחה-מחדש; נכשל בשקט (המודאל פשוט לא יזהיר).
     getCampaignsTier(accountId).then((x) => { if (alive.current) setTier(x); }).catch(() => {});
+    // תוצאות הניסויים; נכשל בשקט — הכרטיס פשוט לא יוצג.
+    getCampaignExperiments(campaignId, accountId)
+      .then((x) => { if (alive.current) setExperiments(x); })
+      .catch(() => {});
   }, [campaignId, accountId, cacheKey]);
   useEffect(() => { load(); }, [load]);
 
@@ -221,12 +232,13 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
     return () => clearInterval(timer);
   }, [resendJob?.status, campaignId, accountId, load, toast]);
 
-  const startResend = async () => {
+  // template = null → תבנית הקמפיין המקורית; אחרת { name, language, params, mediaUrl }.
+  const startResend = async (template) => {
     setResendBusy(true);
     try {
-      const { total } = await resendCampaignFailed(campaignId, accountId, locale);
+      const { total, template_name } = await resendCampaignFailed(campaignId, accountId, locale, template);
       setResendOpen(false);
-      setResendJob({ status: 'running', total, done: 0, sent: 0, failed: [] });
+      setResendJob({ status: 'running', total, done: 0, sent: 0, failed: [], template_name });
       toast({ message: translate(M, 'resendStarted'), variant: 'success' });
     } catch (e) {
       setResendOpen(false);
@@ -412,6 +424,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
                 <span className="block h-full rounded-full bg-n-blue-9 transition-all duration-500" style={{ width: `${resendJob.total ? Math.round((resendJob.done / resendJob.total) * 100) : 0}%` }} />
               </span>
               <span className="shrink-0 text-xs tabular-nums text-n-slate-11">
+                {resendJob.template_name ? <span className="text-n-slate-12">{resendJob.template_name} · </span> : null}
                 {t('resendRunning')} {resendJob.done}/{resendJob.total}
                 {resendJob.failed.length ? <span className="text-n-ruby-11"> · {resendJob.failed.length}</span> : null}
               </span>
@@ -444,6 +457,45 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
           {failGroups.some((g) => g.statusKey === 'notsent') ? (
             <p className="mb-0 mt-2 text-xs text-n-slate-10">{t('skippedNote')}</p>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* תוצאות לפי ניסוי — מוצג רק אחרי שנעשתה לפחות שליחה מחדש אחת, אחרת אין מה
+          להשוות והשורה היחידה כבר מסוכמת במשפך למעלה. */}
+      {experiments.length > 1 ? (
+        <div className="mb-5 rounded-xl border border-n-weak bg-n-surface-1 p-4">
+          <h2 className="mb-3 flex flex-wrap items-center gap-1.5 text-sm font-medium text-n-slate-12">
+            <FlaskConical size={15} className="text-n-blue-11" aria-hidden="true" />{t('expTitle')}
+            <span className="text-xs font-normal text-n-slate-10">· {t('expHint')}</span>
+          </h2>
+          <Table>
+            <THead>
+              <TR>
+                <TH>{t('expTemplate')}</TH><TH>{t('expAttempted')}</TH><TH>{t('expDelivered')}</TH>
+                <TH>{t('expRead')}</TH><TH>{t('expFailed')}</TH><TH>{t('expReplied')}</TH><TH>{t('expWhen')}</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {experiments.map((e, i) => (
+                <TR key={e.run_id || 'original'}>
+                  <TD>
+                    <span className="block text-xs text-n-slate-10">
+                      {e.run_id ? translate(M, 'expRound', { n: i }) : t('expOriginal')}
+                    </span>
+                    {/* שורות ledger שקדמו לתיעוד התבנית פר-שליחה נופלות לתבנית של הקמפיין */}
+                    <span className="text-n-slate-12">{e.template_name || campaign.template_name || '—'}</span>
+                  </TD>
+                  <TD><span className="tabular-nums text-n-slate-12">{e.attempted}</span></TD>
+                  <TD><span className="tabular-nums text-n-teal-11">{e.delivered}<span className="text-n-slate-10"> · {pct(e.delivered, e.attempted)}%</span></span></TD>
+                  <TD><span className="tabular-nums text-n-blue-11">{e.read}<span className="text-n-slate-10"> · {pct(e.read, e.attempted)}%</span></span></TD>
+                  <TD><span className="tabular-nums text-n-ruby-11">{e.failed}<span className="text-n-slate-10"> · {pct(e.failed, e.attempted)}%</span></span></TD>
+                  <TD><span className="tabular-nums text-n-slate-12">{e.replied}<span className="text-n-slate-10"> · {pct(e.replied, e.attempted)}%</span></span></TD>
+                  <TD><span className="text-xs text-n-slate-11">{e.started_at}</span></TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+          <p className="mb-0 mt-2 text-xs text-n-slate-10">{t('expNote')}</p>
         </div>
       ) : null}
 
@@ -518,25 +570,18 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
       ) : null}
       <p className="mt-2 text-xs text-n-slate-10">{t('exactNote')}</p>
 
-      {/* אישור שליחה מחדש — פעולת outbound אמיתית: מספרים בדיוק מה יקרה, ומזהירים
-          כשהתקציב היומי של Meta לא מספיק לכל הנכשלים. */}
-      <ConfirmDialog
+      {/* אישור שליחה מחדש — פעולת outbound אמיתית: מספרים בדיוק מה יקרה, מאפשרים
+          לבחור תבנית אחרת לניסוי, ומזהירים כשהתקציב היומי של Meta לא מספיק לכולם. */}
+      <ResendDialog
         open={resendOpen}
         onClose={() => setResendOpen(false)}
         onConfirm={startResend}
-        tone="warning"
-        icon={RotateCcw}
+        campaign={campaign}
+        failedCount={counts.failed}
+        tier={tier}
         loading={resendBusy}
-        title={t('resendTitle')}
-        description={translate(M, 'resendDesc', { n: counts.failed })}
-        confirmLabel={t('resendGo')}
-      >
-        {tier && !tier.unlimited && tier.remaining < counts.failed ? (
-          <p className="m-0 rounded-lg bg-n-amber-3 px-3 py-2 text-xs text-n-amber-11">
-            {translate(M, 'resendTierWarn', { left: tier.remaining })}
-          </p>
-        ) : null}
-      </ConfirmDialog>
+        accountId={accountId}
+      />
     </>
   );
 }

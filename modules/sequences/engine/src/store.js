@@ -49,7 +49,7 @@ import { query, withTx, getPool } from './db.js';
 import { makeDbReads } from './reads.js';
 import { createTemplateCopy } from './meta.js';
 import { projectSchedule } from './schedule.js';
-import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from './campaigns.js';
+import { listCampaigns, getCampaignDetail, campaignExperiments, campaignsTrend, campaignsTierInfo } from './campaigns.js';
 import { startResend, resendStatus } from './campaignResend.js';
 import { handleTemplatesAction } from './templates.js';
 import { handleJourneysAction, makeJourneysCtx } from './journeys.js';
@@ -144,7 +144,7 @@ export async function handleAction(accountId, action, payload) {
     case 'set_sequence':
       return actionSetSequence(accId, payload);
     case 'templates':
-      return actionTemplates(accId);
+      return actionTemplates(accId, payload?.inbox_id);
     case 'storage_usage':
       return actionStorageUsage(accId);
     case 'delivery_stats':
@@ -153,13 +153,16 @@ export async function handleAction(accountId, action, payload) {
       return { data: await listCampaigns(query, accId) };
     case 'campaign_detail':
       return { data: await getCampaignDetail(query, accId, payload?.campaign_id) };
+    // תוצאות פר-ניסוי: השליחה המקורית וכל שליחה מחדש, כל אחת עם התבנית שלה.
+    case 'campaign_experiments':
+      return { data: await campaignExperiments(query, accId, payload?.campaign_id) };
     case 'campaigns_trend':
       return { data: await campaignsTrend(query, accId, payload?.days || 14) };
     case 'campaigns_tier':
       return { data: await campaignsTierInfo(query, makeDbReads(query), accId) };
     // שליחה מחדש לנכשלים — עבודה ברקע; הלקוח מתשאל את הסטטוס. admin-only (נאכף ב-api.js).
     case 'campaign_resend':
-      return { data: await startResend({ query, makeClientFor: makeAccountClient }, accId, payload?.campaign_id, payload?.locale) };
+      return { data: await startResend({ query, makeClientFor: makeAccountClient }, accId, payload?.campaign_id, payload?.locale, { template: payload?.template }) };
     case 'campaign_resend_status':
       return { data: resendStatus(accId, payload?.campaign_id) };
     case 'contacts':
@@ -692,11 +695,11 @@ async function actionContacts(accountId, payload) {
 //   { name, language, category, params_count, body_preview }
 // api.js sends: { ok: true, data: [...] }
 // sequencesApi.js: data || [] — data IS the array.
-async function actionTemplates(accountId) {
+async function actionTemplates(accountId, inboxId = null) {
   // Read templates straight from Chatwoot's WhatsApp channel (the AgentBot token can't
   // GET /inboxes). Keep only APPROVED, deduped by name+language — matching the old API path.
   const reads = makeDbReads(query);
-  const raw = await reads.loadTemplates(accountId);
+  const raw = await reads.loadTemplates(accountId, inboxId ? Number(inboxId) : null);
   const seen = new Set();
   const rawTemplates = raw.filter((t) => {
     if (String(t.status || '').toUpperCase() !== 'APPROVED') return false;

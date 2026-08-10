@@ -136,8 +136,10 @@ export async function deleteSequence(key, accountId) {
   return { key };
 }
 
-export async function listTemplates(accountId) {
-  const data = await call('templates', {}, accountId);
+// inboxId — התבניות של מספר מסוים במקום המספר שנבחר לחשבון (תבניות שייכות ל-WABA,
+// ולקמפיין ישן יכול להיות מספר אחר מזה שמוגדר כברירת מחדל היום).
+export async function listTemplates(accountId, inboxId = null) {
+  const data = await call('templates', inboxId ? { inbox_id: inboxId } : {}, accountId);
   return data || [];
 }
 
@@ -269,15 +271,27 @@ export async function getCampaignsTier(accountId) {
   return call('campaigns_tier', {}, accountId);
 }
 
-// campaign_resend — התנעת שליחה מחדש לכל הנכשלים בקמפיין (עבודת רקע בשרת) → { total }.
-// אדמינים בלבד (403 לכל השאר). ההתקדמות נקראת ב-getCampaignResendStatus.
-export async function resendCampaignFailed(campaignId, accountId, locale) {
-  return call('campaign_resend', { campaign_id: campaignId, locale }, accountId);
+// campaign_resend — התנעת שליחה מחדש לכל הנכשלים בקמפיין (עבודת רקע בשרת)
+// → { total, run_id, template_name }. אדמינים בלבד (403 לכל השאר).
+// template (אופציונלי) — { name, language, params:{"1":…}, mediaUrl } לשליחה בתבנית אחרת;
+// בהשמטה נשלחת תבנית הקמפיין המקורית. השרת מאמת שהתבנית מאושרת במספר של הקמפיין.
+export async function resendCampaignFailed(campaignId, accountId, locale, template = null) {
+  const payload = { campaign_id: campaignId, locale };
+  if (template) payload.template = template;
+  return call('campaign_resend', payload, accountId);
 }
 
-// campaign_resend_status — { status:'running'|'done', total, done, sent, failed:[{phone,name,error}] } | null.
+// campaign_resend_status — { status:'running'|'done', total, done, sent, failed:[{phone,name,error}],
+// template_name, run_id } | null.
 export async function getCampaignResendStatus(campaignId, accountId) {
   return call('campaign_resend_status', { campaign_id: campaignId }, accountId);
+}
+
+// campaign_experiments — שורה לכל "ניסוי": השליחה המקורית (run_id=null) וכל שליחה מחדש,
+// [{ run_id, template_name, started_at, attempted, sent, delivered, read, failed, replied }].
+export async function getCampaignExperiments(campaignId, accountId) {
+  const data = await call('campaign_experiments', { campaign_id: campaignId }, accountId);
+  return data || [];
 }
 
 // ── ציות (מטא) ──
