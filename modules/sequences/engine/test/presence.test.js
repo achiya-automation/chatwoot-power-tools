@@ -118,10 +118,24 @@ test('הסינון תופס רק נכנסות, לא-פרטיות, whatsapp_cloud
   const q = fakeQuery([[{ last_message_id: 0 }], [], [{ id: 0 }]]);
   await tickPresence({ query: q, fetchImpl: fakeFetch(), log: noop });
   const sel = q.calls[1].sql;
-  assert.match(sel, /m\.message_type = 0/);
-  assert.match(sel, /m\.private = false/);
-  assert.match(sel, /m\.source_id LIKE 'wamid\.%'/);
+  assert.match(sel, /msg\.message_type = 0/);
+  assert.match(sel, /msg\.private = false/);
+  assert.match(sel, /msg\.source_id LIKE 'wamid\.%'/);
   assert.match(sel, /cw\.provider = 'whatsapp_cloud'/);
+});
+
+test('שיחה שאדם כבר ענה בה לא מסומנת כנקראה', async () => {
+  // ההגדרה היא פר-תיבה אבל נועדה להחיות בוט. בלי הסינון הזה הלקוח מקבל ✓✓ כחול
+  // בשיחה שאדם מנהל ולא ענה בה — 95% מהסימונים בתיבה 38 היו כאלה (10.08.2026).
+  const q = fakeQuery([[{ last_message_id: 0 }], [], [{ id: 0 }]]);
+  await tickPresence({ query: q, fetchImpl: fakeFetch(), log: noop });
+  const sel = q.calls[1].sql;
+  assert.match(sel, /NOT EXISTS/);
+  // חייב לעבור דרך הקבוע המשותף: sender_type='User' לבדו מחמיץ תשובה מהטלפון
+  // ב-coexistence, שמסומנת רק ב-content_attributes.external_echo
+  assert.match(sel, /external_echo/);
+  assert.match(sel, /m\.conversation_id = msg\.conversation_id/);
+  assert.match(sel, /m\.id < msg\.id/);
 });
 
 // ── לולאת רענון ה"מקליד" (06.08.2026) ────────────────────────────────────
@@ -131,7 +145,7 @@ test('הסינון תופס רק נכנסות, לא-פרטיות, whatsapp_cloud
 test('השליפה מביאה conversation_id — בלעדיו לולאת הרענון מתה בשקט', async () => {
   const q = fakeQuery([[{ last_message_id: 0 }], [], [{ id: 0 }]]);
   await tickPresence({ query: q, fetchImpl: fakeFetch(), log: noop });
-  assert.match(q.calls[1].sql, /m\.conversation_id/);
+  assert.match(q.calls[1].sql, /msg\.conversation_id/);
 });
 
 test('סימן העצירה: הודעה חדשה יותר בשיחה עוצרת את הרענון', async () => {
