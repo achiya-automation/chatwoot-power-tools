@@ -4,6 +4,8 @@ import { getPool, query } from './db.js';
 import { startLoop } from './loop.js';
 import { runMigrations } from './migrate.js';
 import { reconcileAccount } from './reconcile.js';
+import { runDueResends } from './campaignResend.js';
+import { makeAccountClient } from './store.js';
 import { refreshHealth, fetchNumberHealth } from './meta.js';
 import { notifyNewLeads } from './notify.js';
 import { watchNumberQuality } from './qualityWatch.js';
@@ -83,11 +85,19 @@ async function tick() {
   // (SECURITY DEFINER — the engine holds no write grant on access_tokens) creates its
   // AgentBot, mints the token, and registers it. Idempotent; the token never comes back here.
   // גם חשבון שיש לו רק פלואו (journey) בלי רצף צריך בוט וטוקן — אותה הצטרפות עצמית.
+  //
+  // ⚠️ וגם חשבון שיש לו רק קמפיין וואטסאפ ואף רצף (10.8.26). דוח הקמפיינים הוא קריאה
+  // בלבד ולכן עבד בלי טוקן, אבל "שליחה מחדש לנכשלים" שולחת בפועל — והיא נכשלה שם תמיד
+  // ב-"החשבון עדיין לא מחובר למנוע", בלי שום דרך למשתמש לדעת למה. הטוקן הוא ברמת חשבון
+  // ואינו תלוי ברצף, אז ההצטרפות העצמית חלה על כל מי שהמנוע אמור לשלוח בשמו.
   const unregistered = await query(
     `SELECT account_id FROM (
        SELECT DISTINCT s.account_id FROM drip.sequences s
        UNION
        SELECT DISTINCT j.account_id FROM drip.journeys j
+       UNION
+       SELECT DISTINCT c.account_id FROM public.campaigns c
+         JOIN public.inboxes i ON i.id = c.inbox_id AND i.channel_type = 'Channel::Whatsapp'
      ) x
       WHERE NOT EXISTS (SELECT 1 FROM drip.account_tokens t WHERE t.account_id = x.account_id)`
   );
@@ -239,6 +249,16 @@ async function tick() {
 
   // Template Studio: refresh pending template statuses (read-only; see templates.js)
   try { await pollTemplateStatuses(); } catch (e) { console.error('[tpl] poll error:', e.message); }
+
+  // שליחות מחדש שתוזמנו לשעה שכבר הגיעה (מיגרציה 049). מחוץ ללולאת החשבונות בכוונה:
+  // התור הוא רב-חשבוני, והנכשלים נקבעים בזמן ההרצה. Fail-open — שורה שנופלת נרשמת
+  // בטבלה ולא מפילה את הטיק.
+  try {
+    const { started } = await runDueResends({ query, makeClientFor: makeAccountClient });
+    if (started) console.log(`[drip] ${started} scheduled campaign resend(s) started`);
+  } catch (e) {
+    console.error('[drip] scheduled resend sweep failed:', e.message);
+  }
 }
 
 // ⚠️ נעילת ריצה כפולה — ראה loop.js. טיק אחד יכול להימשך יותר מהמרווח (חשבון רב, או

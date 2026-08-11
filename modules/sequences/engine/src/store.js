@@ -50,7 +50,7 @@ import { makeDbReads } from './reads.js';
 import { createTemplateCopy } from './meta.js';
 import { projectSchedule } from './schedule.js';
 import { listCampaigns, getCampaignDetail, campaignExperiments, campaignsTrend, campaignsTierInfo } from './campaigns.js';
-import { startResend, resendStatus } from './campaignResend.js';
+import { startResend, resendStatus, scheduleResend, pendingResend, cancelScheduledResend } from './campaignResend.js';
 import { handleTemplatesAction } from './templates.js';
 import { handleJourneysAction, makeJourneysCtx } from './journeys.js';
 import { handlePresenceAction } from './presence.js';
@@ -159,12 +159,21 @@ export async function handleAction(accountId, action, payload) {
     case 'campaigns_trend':
       return { data: await campaignsTrend(query, accId, payload?.days || 14) };
     case 'campaigns_tier':
-      return { data: await campaignsTierInfo(query, makeDbReads(query), accId) };
+      // inbox_id (מהקמפיין שנצפה) → המכסה של המספר ששולח, לא ניחוש ברמת חשבון.
+      return { data: await campaignsTierInfo(query, makeDbReads(query), accId, {}, payload?.inbox_id) };
     // שליחה מחדש לנכשלים — עבודה ברקע; הלקוח מתשאל את הסטטוס. admin-only (נאכף ב-api.js).
     case 'campaign_resend':
       return { data: await startResend({ query, makeClientFor: makeAccountClient }, accId, payload?.campaign_id, payload?.locale, { template: payload?.template }) };
     case 'campaign_resend_status':
       return { data: resendStatus(accId, payload?.campaign_id) };
+    // תזמון שליחה מחדש (מיגרציה 049). admin-only כמו השליחה עצמה — נאכף ב-api.js.
+    case 'campaign_resend_schedule':
+      return { data: await scheduleResend(query, accId, payload?.campaign_id, payload?.run_at,
+        { template: payload?.template, locale: payload?.locale }) };
+    case 'campaign_resend_pending':
+      return { data: await pendingResend(query, accId, payload?.campaign_id) };
+    case 'campaign_resend_unschedule':
+      return { data: await cancelScheduledResend(query, accId, payload?.campaign_id) };
     case 'contacts':
       return actionContacts(accId, payload);
     case 'template_media':
@@ -204,8 +213,9 @@ export async function handleAction(accountId, action, payload) {
 }
 
 // Chatwoot client for a specific account — same token source as the journeys ctx
-// (drip.account_tokens, the auto-provisioned AgentBot). Used by campaign resend.
-async function makeAccountClient(accountId) {
+// (drip.account_tokens, the auto-provisioned AgentBot). Used by campaign resend —
+// exported so the tick can run SCHEDULED resends through the exact same path.
+export async function makeAccountClient(accountId) {
   const rows = await query(
     `SELECT chatwoot_token, base_url FROM drip.account_tokens WHERE account_id = $1`,
     [accountId]
@@ -745,15 +755,30 @@ async function actionTemplates(accountId, inboxId = null) {
     })
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
-  // "זיכרון מדיה" — לכל תבנית, הקישור (media_url) שכבר שימש אותה בשלב קיים. כך העורך
-  // ממלא אוטומטית את המדיה לתבנית-header, ואין צורך להזין קישור שוב (אחרי הפעם הראשונה).
+  // "זיכרון מדיה" — לכל תבנית, הקישור (media_url) שכבר שימש אותה. כך העורך ממלא
+  // אוטומטית את המדיה לתבנית-header, ואין צורך להזין קישור שוב (אחרי הפעם הראשונה).
+  //
+  // שני מקורות: שלבי רצף, ו*גם* קמפיינים שכבר יצאו (10.8.26). בלי הקמפיינים, שליחה
+  // מחדש של קמפיין-תמונה ביקשה להעלות מחדש בדיוק את הקובץ שכבר יצא לאלפי נמענים —
+  // וכתובת חדשה היא כתובת "קרה" אצל מטא, מה שמזמין 131053 (ראו מיגרציה 047).
+  // הקישור החם הוא בדיוק זה ששרד את הקמפיין.
   try {
     const mediaRows = await query(
-      `SELECT DISTINCT ON (st.template_name) st.template_name, st.media_url
-         FROM drip.sequence_steps st
-         JOIN drip.sequences s ON s.id = st.sequence_id
-        WHERE s.account_id = $1 AND coalesce(st.media_url, '') <> ''
-        ORDER BY st.template_name, st.id DESC`,
+      `SELECT DISTINCT ON (template_name) template_name, media_url FROM (
+         SELECT st.template_name, st.media_url, st.id AS ord
+           FROM drip.sequence_steps st
+           JOIN drip.sequences s ON s.id = st.sequence_id
+          WHERE s.account_id = $1 AND coalesce(st.media_url, '') <> ''
+         UNION ALL
+         SELECT c.template_params ->> 'name' AS template_name,
+                c.template_params -> 'processed_params' -> 'header' ->> 'media_url' AS media_url,
+                c.id AS ord
+           FROM public.campaigns c
+          WHERE c.account_id = $1
+            AND coalesce(c.template_params -> 'processed_params' -> 'header' ->> 'media_url', '') <> ''
+       ) m
+        WHERE coalesce(template_name, '') <> ''
+        ORDER BY template_name, ord DESC`,
       [accountId]
     );
     const mediaByTemplate = new Map(mediaRows.map((r) => [r.template_name, r.media_url]));

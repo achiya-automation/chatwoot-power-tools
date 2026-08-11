@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
 import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo, normalizeCampaignPhone } from '../src/campaigns.js';
-import { DEFAULT_CAP, _resetHealthCache } from '../src/meta.js';
+import { _resetHealthCache } from '../src/meta.js';
 import { buildRows, toCsv } from '../src/campaignCsv.js';
 import { handleAction } from '../src/store.js';
 
@@ -472,7 +472,17 @@ test('campaignsTierInfo: counts distinct 24h campaign conversations, failed excl
                VALUES (21, 506, 1, 1, 3, $1, now())`, // נכשל — לא פתח שיחה, לא נספר
     [JSON.stringify(JSON.stringify({ campaign_id: 47 }))]);
   const info = await campaignsTierInfo(query, {}, 1, { getCap: async () => 1000 });
-  assert.deepEqual(info, { cap: 1000, unlimited: false, used_24h: 1, remaining: 999 });
+  assert.deepEqual(info, { cap: 1000, unlimited: false, unknown: false, used_24h: 1, remaining: 999 });
+});
+
+test('campaignsTierInfo: no health row and no number observation → unknown, never a made-up cap', async () => {
+  // DEFAULT_CAP=250 is a safe floor for deciding whether to SEND, but as a displayed number
+  // it lied to an account whose real cap is 2,000 ("only 194 left today") and stopped a
+  // legitimate resend. No data must read as no data.
+  const info = await campaignsTierInfo(query, {}, 999);
+  assert.equal(info.unknown, true);
+  assert.equal(info.cap, null);
+  assert.equal(info.remaining, null);
 });
 
 test('campaignsTierInfo: unlimited tier → cap/remaining null, unlimited flag', async () => {
@@ -482,11 +492,13 @@ test('campaignsTierInfo: unlimited tier → cap/remaining null, unlimited flag',
   assert.equal(info.remaining, null);
 });
 
-test('handleAction: campaigns_tier wiring falls back to DEFAULT_CAP without creds (no network)', async () => {
+test('handleAction: campaigns_tier wiring reports unknown without creds (no network)', async () => {
   _resetHealthCache();
   const res = await handleAction(1, 'campaigns_tier', {});
-  assert.equal(res.data.cap, DEFAULT_CAP); // scaffold has no WhatsApp channel → safe fallback
-  assert.equal(typeof res.data.used_24h, 'number');
+  // scaffold has no WhatsApp channel and no health row — the honest answer is "no data",
+  // not DEFAULT_CAP dressed up as a real budget (that number scared a client off a send).
+  assert.equal(res.data.unknown, true);
+  assert.equal(res.data.cap, null);
 });
 
 test('handleAction: campaigns_trend wiring', async () => {

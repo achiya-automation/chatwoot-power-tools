@@ -6,7 +6,10 @@ import ResendDialog from './ResendDialog.jsx';
 import Skeleton from './ui/Skeleton.jsx';
 import { useToast } from './ui/Toast.jsx';
 import { Table, THead, TBody, TR, TH, TD } from './ui/Table.jsx';
-import { getCampaignDetail, getCampaignsTier, resendCampaignFailed, getCampaignResendStatus, getCampaignExperiments } from '../api/sequencesApi.js';
+import {
+  getCampaignDetail, getCampaignsTier, resendCampaignFailed, getCampaignResendStatus,
+  getCampaignExperiments, scheduleCampaignResend, getPendingResend, cancelCampaignResend,
+} from '../api/sequencesApi.js';
 import { API_BASE } from '../config.js';
 import { estimateCost } from '../lib/campaignCost.js';
 import { buildRows, countRows, filterRows, failureGroups, STATUS_KEYS } from '../lib/campaignRows.js';
@@ -39,6 +42,13 @@ const M = {
         resend: 'שליחה מחדש לנכשלים',
         resendRunning: 'שולח מחדש…', resendDoneMsg: 'שליחה מחדש הסתיימה: {ok} נשלחו, {bad} נכשלו',
         resendStarted: 'השליחה מחדש התחילה', adminOnly: 'שליחה מחדש דורשת הרשאת מנהל בחשבון',
+        // ── סיכום אחרי ריצה + תזמון ──
+        resendDoneTitle: 'השליחה מחדש הסתיימה', resendOk: 'יצאו בהצלחה', resendBad: 'נכשלו שוב',
+        resendAgain: 'ניסיון נוסף לנכשלים', resendDismiss: 'סגירה',
+        resendWhy: 'הסיבות לכישלון החוזר', resendMore: 'ועוד {n}',
+        resendNote: 'הסטטוס הסופי (נמסר/נקרא) ממשיך להתעדכן מהוואטסאפ בדקות הבאות — הטבלה למטה תשקף אותו.',
+        scheduledFor: '⏱️ שליחה מחדש מתוזמנת ל-{when}', scheduledTpl: 'בתבנית {name}',
+        cancelSchedule: 'ביטול התזמון', scheduleSaved: 'התזמון נשמר ל-{when}', scheduleCancelled: 'התזמון בוטל',
         live: 'קמפיין רץ — הדוח מתעדכן אוטומטית',
         skippedNote: 'נמענים שלא נוסו (חסר טלפון/תבנית) אינם חלק מהשליחה מחדש — אין לאן לשלוח',
         // ── תוצאות לפי ניסוי ──
@@ -66,6 +76,12 @@ const M = {
         resend: 'Resend to failed',
         resendRunning: 'Resending…', resendDoneMsg: 'Resend finished: {ok} sent, {bad} failed',
         resendStarted: 'The resend has started', adminOnly: 'Resending requires an administrator role',
+        resendDoneTitle: 'The resend has finished', resendOk: 'went out', resendBad: 'failed again',
+        resendAgain: 'Try the failed ones again', resendDismiss: 'Dismiss',
+        resendWhy: 'Why they failed again', resendMore: 'and {n} more',
+        resendNote: 'Final status (delivered/read) keeps updating from WhatsApp over the next minutes — the table below will reflect it.',
+        scheduledFor: '⏱️ A resend is scheduled for {when}', scheduledTpl: 'using {name}',
+        cancelSchedule: 'Cancel the schedule', scheduleSaved: 'Scheduled for {when}', scheduleCancelled: 'Schedule cancelled',
         live: 'Campaign running — the report auto-refreshes',
         skippedNote: 'Recipients that were never attempted (no phone/template) are not part of the resend — there is nowhere to send',
         expTitle: 'Results per experiment', expHint: 'Every resend is measured on its own — same recipients, different template',
@@ -74,6 +90,11 @@ const M = {
         expNote: 'The same recipient can appear in more than one experiment, so the rows sum to more than the audience. A reply is credited to the experiment it followed.' },
 };
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0);
+// מועד תזמון לתצוגה בשעון המקומי של הדפדפן (השרת שומר UTC).
+const fmtWhen = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+};
 // גוון הבאדג' לכל מצב סופי בטבלה (ראו lib/campaignRows.js).
 const STATUS_COLOR = { read: 'blue', delivered: 'teal', sent: 'slate', pending: 'slate', failed: 'ruby', notsent: 'amber' };
 
@@ -172,6 +193,8 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   const [resendJob, setResendJob] = useState(null);
   // תוצאות פר-ניסוי (השליחה המקורית + כל שליחה מחדש). [] = נטען ואין מה להציג.
   const [experiments, setExperiments] = useState([]);
+  // תזמון ממתין ({ run_at, template_name }) — נטען מהשרת, שורד רענון דף.
+  const [pending, setPending] = useState(null);
   const alive = useRef(true);
   // איפוס בגוף האפקט ולא רק ב-cleanup — אחרת ה-double-mount של StrictMode משאיר את
   // הדגל false לתמיד והתשובות של ה-fetch נזרקות (skeleton נצחי בפיתוח).
@@ -186,13 +209,18 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         // קמפיין שלא נמצא → מסמן במקום להשאיר skeleton נצחי; לא נשמר ב-cache.
         if (!data) { setD({ missing: true }); return; }
         setD(data); writeCache(cacheKey, data);
+        // תקציב 24h של המספר שהקמפיין שולח ממנו (לא ניחוש ברמת חשבון) — לאזהרה
+        // שבמודאל. נכשל בשקט: בלי נתון המודאל פשוט לא מזהיר.
+        getCampaignsTier(accountId, data.campaign?.inbox_id)
+          .then((x) => { if (alive.current) setTier(x); }).catch(() => {});
       })
       .catch((e) => { if (alive.current) setError(e.message || translate(M, 'errLoad')); });
-    // תקציב 24h — לאזהרה שבמודאל השליחה-מחדש; נכשל בשקט (המודאל פשוט לא יזהיר).
-    getCampaignsTier(accountId).then((x) => { if (alive.current) setTier(x); }).catch(() => {});
     // תוצאות הניסויים; נכשל בשקט — הכרטיס פשוט לא יוצג.
     getCampaignExperiments(campaignId, accountId)
       .then((x) => { if (alive.current) setExperiments(x); })
+      .catch(() => {});
+    getPendingResend(campaignId, accountId)
+      .then((x) => { if (alive.current) setPending(x); })
       .catch(() => {});
   }, [campaignId, accountId, cacheKey]);
   useEffect(() => { load(); }, [load]);
@@ -233,9 +261,17 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   }, [resendJob?.status, campaignId, accountId, load, toast]);
 
   // template = null → תבנית הקמפיין המקורית; אחרת { name, language, params, mediaUrl }.
-  const startResend = async (template) => {
+  // runAt = null → שליחה מיידית; אחרת ISO — נכנס לתור בשרת ומורץ שם בשעה שנקבעה.
+  const startResend = async (template, runAt) => {
     setResendBusy(true);
     try {
+      if (runAt) {
+        await scheduleCampaignResend(campaignId, accountId, runAt, locale, template);
+        setResendOpen(false);
+        setPending({ run_at: runAt, template_name: template?.name || campaign.template_name });
+        toast({ message: translate(M, 'scheduleSaved', { when: fmtWhen(runAt) }), variant: 'success' });
+        return;
+      }
       const { total, template_name } = await resendCampaignFailed(campaignId, accountId, locale, template);
       setResendOpen(false);
       setResendJob({ status: 'running', total, done: 0, sent: 0, failed: [], template_name });
@@ -245,6 +281,16 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
       toast({ message: e.forbidden ? translate(M, 'adminOnly') : e.message, variant: 'error' });
     } finally {
       setResendBusy(false);
+    }
+  };
+
+  const unschedule = async () => {
+    try {
+      await cancelCampaignResend(campaignId, accountId);
+      setPending(null);
+      toast({ message: translate(M, 'scheduleCancelled'), variant: 'success' });
+    } catch (e) {
+      toast({ message: e.forbidden ? translate(M, 'adminOnly') : e.message, variant: 'error' });
     }
   };
 
@@ -402,21 +448,75 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         </div>
       </div>
 
-      {/* כשלים לפי סיבה + שליחה מחדש — מוצג רק כשיש מה לתקן. לחיצה על סיבה מסננת את
-          הטבלה; הכפתור שולח מחדש את התבנית לכל מי שנשאר במצב סופי "נכשל". */}
-      {failGroups.length > 0 ? (
+      {/* כשלים לפי סיבה + שליחה מחדש — מוצג כשיש מה לתקן, וגם כשאין: סיכום ריצה שהסתיימה
+          ותזמון ממתין חייבים להישאר גלויים גם אחרי ששליחה מחדש ניקתה את כל הכשלים.
+          לחיצה על סיבה מסננת את הטבלה; הכפתור שולח מחדש למי שנשאר במצב סופי "נכשל". */}
+      {failGroups.length > 0 || resendJob || pending ? (
         <div className="no-print mb-5 rounded-xl border border-n-weak bg-n-surface-1 p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="flex items-center gap-1.5 text-sm font-medium text-n-slate-12">
               <AlertCircle size={15} className="text-n-ruby-11" aria-hidden="true" />{t('breakdownTitle')}
-              <span className="text-xs font-normal text-n-slate-10">· {t('breakdownHint')}</span>
+              {failGroups.length > 0 ? <span className="text-xs font-normal text-n-slate-10">· {t('breakdownHint')}</span> : null}
             </h2>
-            {counts.failed > 0 && resendJob?.status !== 'running' ? (
+            {/* בזמן ריצה יש פס התקדמות, ואחרי ריצה הכפתור יושב בתוך הסיכום — כאן רק
+                כשאין ריצה בכלל, אחרת מוצגים שני כפתורים שעושים אותו דבר. */}
+            {counts.failed > 0 && !resendJob ? (
               <Button variant="solid" color="blue" size="sm" icon={RotateCcw} onClick={() => setResendOpen(true)}>
                 {t('resend')} ({counts.failed})
               </Button>
             ) : null}
           </div>
+
+          {/* תזמון ממתין — שורד רענון דף (הוא יושב בשרת), עם ביטול במקום */}
+          {pending ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-n-blue-3 px-3 py-2 text-xs text-n-blue-11">
+              <span>{translate(M, 'scheduledFor', { when: fmtWhen(pending.run_at) })}</span>
+              {pending.template_name ? <span className="text-n-slate-11">· {translate(M, 'scheduledTpl', { name: pending.template_name })}</span> : null}
+              <button type="button" onClick={unschedule} className="ms-auto rounded-md px-2 py-0.5 text-n-slate-11 hover:bg-n-alpha-2 hover:text-n-ruby-11">
+                {t('cancelSchedule')}
+              </button>
+            </div>
+          ) : null}
+          {/* הסתיימה — סיכום שנשאר על המסך: כמה יצאו, כמה נכשלו שוב ולמה, ומיד
+              אפשרות לנסות שוב (הכפתור מחשב את הנכשלים העדכניים) או לתזמן. */}
+          {resendJob?.status === 'done' ? (
+            <div className="mb-3 rounded-lg border border-n-weak bg-n-alpha-1 px-3 py-2.5" role="status">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-sm font-medium text-n-slate-12">{t('resendDoneTitle')}</span>
+                <span className="text-sm text-n-teal-11"><span className="font-semibold tabular-nums">{resendJob.sent}</span> {t('resendOk')}</span>
+                {resendJob.failed.length ? (
+                  <span className="text-sm text-n-ruby-11"><span className="font-semibold tabular-nums">{resendJob.failed.length}</span> {t('resendBad')}</span>
+                ) : null}
+                <div className="ms-auto flex items-center gap-2">
+                  {counts.failed > 0 ? (
+                    <Button variant="solid" color="blue" size="sm" icon={RotateCcw} onClick={() => setResendOpen(true)}>
+                      {t('resendAgain')} ({counts.failed})
+                    </Button>
+                  ) : null}
+                  <button type="button" onClick={() => setResendJob(null)} className="rounded-md px-2 py-1 text-xs text-n-slate-11 hover:bg-n-alpha-2">
+                    {t('resendDismiss')}
+                  </button>
+                </div>
+              </div>
+              {/* למה נכשלו שוב — מקובץ לפי סיבה, לא רשימת 1,000 שורות */}
+              {resendJob.failed.length ? (
+                <div className="mt-2 flex flex-col gap-0.5">
+                  {Object.entries(resendJob.failed.reduce((acc, f) => {
+                    const k = f.error || '—';
+                    acc[k] = (acc[k] || 0) + 1;
+                    return acc;
+                  }, {})).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([reason, n]) => (
+                    <p key={reason} className="m-0 flex items-baseline gap-2 text-xs text-n-slate-11">
+                      <span className="shrink-0 font-semibold tabular-nums text-n-ruby-11">{n}</span>
+                      <span className="min-w-0 truncate" title={reason}>{reason}</span>
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+              <p className="mb-0 mt-2 text-xs text-n-slate-10">{t('resendNote')}</p>
+            </div>
+          ) : null}
+
           {/* עבודת שליחה-מחדש רצה — פס התקדמות חי במקום הכפתור */}
           {resendJob?.status === 'running' ? (
             <div className="mb-3 flex items-center gap-3" role="status">
