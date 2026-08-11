@@ -416,7 +416,9 @@ export function createApp(config) {
     // שליחה מחדש לנכשלים בקמפיין — פעולת outbound אמיתית (הודעות יוצאות ללקוחות),
     // ולכן שמורה לאדמינים של החשבון, כמו קמפיינים ב-Chatwoot עצמו. הסטטוס פתוח לכל
     // חבר — הוא מחזיר את אותם נתונים שדוח הקמפיין ממילא מציג.
-    if (action === 'campaign_resend' && !isTplAdmin(req.dripAccess, accountId)) {
+    // תזמון וביטול תזמון הם אותה פעולה בדיוק, רק בהשהיה — אותו שער בדיוק.
+    if (['campaign_resend', 'campaign_resend_schedule', 'campaign_resend_unschedule'].includes(action)
+        && !isTplAdmin(req.dripAccess, accountId)) {
       return res.status(403).json({ ok: false, error: 'administrator role required' });
     }
 

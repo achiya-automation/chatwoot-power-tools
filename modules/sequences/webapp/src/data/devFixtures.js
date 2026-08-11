@@ -509,6 +509,20 @@ function dataFor(action, payload = {}) {
     case 'campaigns': return CAMPAIGNS;
     case 'campaign_detail': return CAMPAIGN_DETAIL;
     case 'campaign_experiments': return CAMPAIGN_EXPERIMENTS;
+    // שליחה מחדש: התנעה מחזירה total, והסטטוס חוזר "הסתיים" מיד — כך אפשר לראות את
+    // פאנל הסיכום (כמה יצאו / כמה נכשלו שוב) בלי engine מקומי.
+    case 'campaign_resend': return { total: 8, run_id: 'r-mock', template_name: 'service_followup' };
+    case 'campaign_resend_status': return {
+      status: 'done', total: 8, done: 8, sent: 5, run_id: 'r-mock', template_name: 'service_followup',
+      failed: [
+        { phone: '+972541111111', name: 'רון', error: 'Meta חסמה את ההודעה כדי לשמור על מעורבות תקינה' },
+        { phone: '+972542222222', name: 'גילי', error: 'Meta חסמה את ההודעה כדי לשמור על מעורבות תקינה' },
+        { phone: '+972543333333', name: 'תמר', error: 'הנמען ביקש הסרה (opt-out)' },
+      ],
+    };
+    case 'campaign_resend_pending': return null;
+    case 'campaign_resend_schedule': return { run_at: payload.run_at };
+    case 'campaign_resend_unschedule': return { cancelled: 1 };
     case 'campaigns_trend': return CAMPAIGNS_TREND;
     case 'campaigns_tier': return CAMPAIGNS_TIER;
     default: return null;

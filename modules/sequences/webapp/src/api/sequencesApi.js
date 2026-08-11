@@ -266,9 +266,12 @@ export async function getCampaignsTrend(accountId) {
   return data || [];
 }
 
-// campaigns_tier — תקציב 24h מול תקרת ה-tier של Meta: { cap, unlimited, used_24h, remaining } | null.
-export async function getCampaignsTier(accountId) {
-  return call('campaigns_tier', {}, accountId);
+// campaigns_tier — תקציב 24h מול תקרת ה-tier של Meta:
+// { cap, unlimited, unknown, used_24h, remaining } | null. unknown=true → אין נתון על
+// המכסה (המנוע עוד לא קרא אותה ממטא), ואז לא מציגים מספר ולא מזהירים.
+// inboxId — המספר שהקמפיין נשלח ממנו; מדויק יותר מניחוש ברמת החשבון.
+export async function getCampaignsTier(accountId, inboxId = null) {
+  return call('campaigns_tier', inboxId ? { inbox_id: inboxId } : {}, accountId);
 }
 
 // campaign_resend — התנעת שליחה מחדש לכל הנכשלים בקמפיין (עבודת רקע בשרת)
@@ -292,6 +295,23 @@ export async function getCampaignResendStatus(campaignId, accountId) {
 export async function getCampaignExperiments(campaignId, accountId) {
   const data = await call('campaign_experiments', { campaign_id: campaignId }, accountId);
   return data || [];
+}
+
+// campaign_resend_schedule — "תריץ שליחה מחדש בשעה הזו" (ISO). מחליף תזמון קיים.
+// רשימת הנכשלים נקבעת בזמן ההרצה, לא עכשיו. אדמינים בלבד.
+export async function scheduleCampaignResend(campaignId, accountId, runAt, locale, template = null) {
+  const payload = { campaign_id: campaignId, run_at: runAt, locale };
+  if (template) payload.template = template;
+  return call('campaign_resend_schedule', payload, accountId);
+}
+
+// campaign_resend_pending — { id, run_at, template_name } | null.
+export async function getPendingResend(campaignId, accountId) {
+  return call('campaign_resend_pending', { campaign_id: campaignId }, accountId);
+}
+
+export async function cancelCampaignResend(campaignId, accountId) {
+  return call('campaign_resend_unschedule', { campaign_id: campaignId }, accountId);
 }
 
 // ── ציות (מטא) ──

@@ -2,8 +2,11 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
-import { listCampaigns, campaignExperiments } from '../src/campaigns.js';
-import { startResend, resendStatus, liquidContactParams, _resetResendJobs } from '../src/campaignResend.js';
+import { listCampaigns, campaignExperiments, campaignsTierInfo } from '../src/campaigns.js';
+import {
+  startResend, resendStatus, liquidContactParams, _resetResendJobs,
+  scheduleResend, pendingResend, cancelScheduledResend, runDueResends,
+} from '../src/campaignResend.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
@@ -12,7 +15,8 @@ beforeEach(async () => {
   await setupDb(pool);
   await pool.query(`TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations,
     public.contact_inboxes, public.inboxes, public.channel_whatsapp, drip.campaign_audience_snapshots,
-    drip.campaign_send_snapshots, drip.contact_state`);
+    drip.campaign_send_snapshots, drip.contact_state, drip.campaign_resend_schedule,
+    drip.account_health, drip.number_quality`);
   _resetResendJobs();
 });
 
@@ -271,6 +275,66 @@ test('campaignExperiments: one row per run, each with its template, results and 
   assert.equal(experiment.template_name, 'rescue_utility');
   assert.equal(experiment.attempted, 2);
   assert.equal(experiment.replied, 1);
+});
+
+test('scheduleResend: one pending run per campaign, executed by the tick when it comes due', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+
+  // מועד עתידי — הטיק לא נוגע בו.
+  const future = new Date(Date.now() + 3600_000).toISOString();
+  await scheduleResend(query, 1, 50, future);
+  assert.equal((await pendingResend(query, 1, 50)).run_at.toISOString(), future);
+
+  const client = makeFakeClient();
+  assert.deepEqual(await runDueResends({ query, makeClientFor: async () => client, delayMs: 0 }), { due: 0, started: 0 });
+
+  // תזמון שני מחליף את הראשון במקום להצטבר — אחרת "שיניתי את השעה" = שתי שליחות.
+  await scheduleResend(query, 1, 50, new Date(Date.now() - 1000).toISOString(),
+    { template: { name: 'rescue_utility', language: 'he', params: { 1: '{{contact.first_name}}', 2: 'האתר' } } });
+  const rows = await query('SELECT count(*)::int AS n FROM drip.campaign_resend_schedule WHERE started_at IS NULL');
+  assert.equal(rows[0].n, 1);
+
+  // הגיע הזמן → הטיק מריץ, בתבנית שנשמרה איתו.
+  const res = await runDueResends({ query, makeClientFor: async () => client, delayMs: 0 });
+  assert.deepEqual(res, { due: 1, started: 1 });
+  const s = await waitForDone(1, 50);
+  assert.equal(s.sent, 2);
+  assert.equal(s.template_name, 'rescue_utility');
+
+  // סומן כרץ → טיק שני לא שולח שוב, ואין יותר תזמון ממתין.
+  assert.deepEqual(await runDueResends({ query, makeClientFor: async () => client, delayMs: 0 }), { due: 0, started: 0 });
+  assert.equal(await pendingResend(query, 1, 50), null);
+});
+
+test('cancelScheduledResend: removes the pending run and nothing fires', async () => {
+  await seedResendCampaign();
+  await scheduleResend(query, 1, 50, new Date(Date.now() - 1000).toISOString());
+  assert.deepEqual(await cancelScheduledResend(query, 1, 50), { cancelled: 1 });
+  assert.equal(await pendingResend(query, 1, 50), null);
+
+  const client = makeFakeClient();
+  assert.deepEqual(await runDueResends({ query, makeClientFor: async () => client, delayMs: 0 }), { due: 0, started: 0 });
+  assert.deepEqual(client.calls.sendTemplate, []);
+});
+
+test('campaignsTierInfo: never invents a cap — unknown when Meta was never read', async () => {
+  await seedResendCampaign();
+
+  // אין account_health ואין number_quality → "לא ידוע", ולא DEFAULT_CAP=250 שהוצג
+  // ללקוח עם מכסת 2,000 כ"נותרו 194" והרתיע אותו משליחה.
+  const none = await campaignsTierInfo(query, null, 1);
+  assert.equal(none.unknown, true);
+  assert.equal(none.cap, null);
+  assert.equal(none.remaining, null);
+
+  // תצפית המספרים (שסורקת גם חשבונות בלי רצפים) מספיקה כדי לדעת את המכסה.
+  await query(`INSERT INTO drip.number_quality(phone_id, inbox_id, account_id, phone, quality, tier)
+               VALUES ('pid-10', 10, 1, '+972500000000', 'GREEN', 'TIER_2K')`);
+  const known = await campaignsTierInfo(query, null, 1, {}, 10);
+  assert.equal(known.unknown, false);
+  assert.equal(known.cap, 2000);
+  assert.ok(known.remaining <= 2000);
 });
 
 test('liquidContactParams: substitutes contact fields; blank render is flagged', () => {

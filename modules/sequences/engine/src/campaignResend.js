@@ -341,5 +341,82 @@ async function resolveConversation(query, client, accountId, campaign, recipient
   return opened.id;
 }
 
+// ── תזמון: "תריץ שליחה מחדש בשעה X" ──────────────────────────────────────────
+// הנכשלים נקבעים בזמן ההרצה (startResend מחשב אותם מחדש), לא בזמן התזמון.
+
+/** קביעה/החלפה של התזמון היחיד לקמפיין. run_at ISO. מחזיר { run_at }. */
+export async function scheduleResend(query, accountId, campaignId, runAt, { template = null, locale = 'he' } = {}) {
+  const id = Number.parseInt(campaignId, 10);
+  const when = new Date(runAt);
+  if (!Number.isInteger(id) || Number.isNaN(when.getTime())) throw new Error(t(locale, 'notFound'));
+  await query(
+    `DELETE FROM drip.campaign_resend_schedule
+      WHERE account_id = $1 AND campaign_id = $2 AND started_at IS NULL`,
+    [accountId, id]
+  );
+  await query(
+    `INSERT INTO drip.campaign_resend_schedule (account_id, campaign_id, run_at, template, locale)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [accountId, id, when.toISOString(), template ? JSON.stringify(template) : null, locale]
+  );
+  return { run_at: when.toISOString() };
+}
+
+/** התזמון הממתין של הקמפיין (או null). */
+export async function pendingResend(query, accountId, campaignId) {
+  const id = Number.parseInt(campaignId, 10);
+  if (!Number.isInteger(id)) return null;
+  const row = (await query(
+    `SELECT id, run_at, template ->> 'name' AS template_name
+       FROM drip.campaign_resend_schedule
+      WHERE account_id = $1 AND campaign_id = $2 AND started_at IS NULL
+      ORDER BY run_at LIMIT 1`,
+    [accountId, id]
+  ))[0];
+  return row || null;
+}
+
+export async function cancelScheduledResend(query, accountId, campaignId) {
+  const id = Number.parseInt(campaignId, 10);
+  if (!Number.isInteger(id)) return { cancelled: 0 };
+  const rows = await query(
+    `DELETE FROM drip.campaign_resend_schedule
+      WHERE account_id = $1 AND campaign_id = $2 AND started_at IS NULL
+      RETURNING id`,
+    [accountId, id]
+  );
+  return { cancelled: rows.length };
+}
+
+/**
+ * runDueResends — נקרא מהטיק. מסמן כל שורה שהגיע זמנה כ"התחילה" *לפני* ההתנעה, כדי
+ * ששני טיקים חופפים לא ישלחו פעמיים; כישלון נרשם בשורה ולא מפיל את הטיק.
+ */
+export async function runDueResends(deps) {
+  const { query } = deps;
+  const due = await query(
+    `UPDATE drip.campaign_resend_schedule
+        SET started_at = now()
+      WHERE id IN (
+        SELECT id FROM drip.campaign_resend_schedule
+         WHERE started_at IS NULL AND run_at <= now()
+         ORDER BY run_at LIMIT 20 FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, account_id, campaign_id, template, locale`
+  );
+  let started = 0;
+  for (const row of due) {
+    try {
+      await startResend(deps, Number(row.account_id), Number(row.campaign_id), row.locale || 'he',
+        { template: row.template || null });
+      started += 1;
+    } catch (e) {
+      await query('UPDATE drip.campaign_resend_schedule SET error = $2 WHERE id = $1',
+        [row.id, String(e.message).slice(0, 500)]).catch(() => {});
+    }
+  }
+  return { due: due.length, started };
+}
+
 // Test hook — a fresh suite must not inherit a finished job from a previous test.
 export function _resetResendJobs() { jobs.clear(); }

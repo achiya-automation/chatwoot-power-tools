@@ -1,14 +1,19 @@
-import { DEFAULT_CAP } from './meta.js';
+import { tierToCap } from './meta.js';
 
 /**
  * The account's 24h cap, as last refreshed from Meta by the reconcile loop.
- * -1 in the column means the unlimited tier. Falls back to the conservative DEFAULT_CAP
- * when the account has no health row yet (first boot, before the first Graph read).
+ * -1 in the column means the unlimited tier.
+ *
+ * ⚠️ Returns null — NOT DEFAULT_CAP — when there is no health row. DEFAULT_CAP (250) is a
+ * conservative floor for DECIDING WHETHER TO SEND; as a number on screen it is a lie. An
+ * account with a real 2,000 cap but no sequences (so the tick never reads its health) was
+ * shown "only 194 messages left today" and talked out of a perfectly legitimate send.
+ * The caller falls back to the number-quality observation, and failing that says "unknown".
  */
 async function readCapFromHealth(query, accountId) {
   const rows = await query('SELECT cap FROM drip.account_health WHERE account_id = $1', [accountId]);
   const cap = rows[0]?.cap;
-  if (cap == null) return DEFAULT_CAP;
+  if (cap == null) return null;
   return Number(cap) < 0 ? Infinity : Number(cap);
 }
 
@@ -615,10 +620,26 @@ export async function campaignExperiments(query, accountId, campaignId) {
 // returns null on any query failure so the UI simply hides the line.
 // _reads is kept in the signature (unused) so the store.js call site and the existing tests
 // stay untouched — the cap now comes from drip.account_health, not from a Graph read.
-export async function campaignsTierInfo(query, _reads, accountId, deps = {}) {
+export async function campaignsTierInfo(query, _reads, accountId, deps = {}, inboxId = null) {
   const { getCap = readCapFromHealth } = deps;
   try {
-    const cap = await getCap(query, accountId);
+    // מאיפה המכסה, לפי סדר אמינות:
+    //   1. drip.account_health — מה שהמנוע קרא ממטא לחשבון הזה.
+    //   2. drip.number_quality — התצפית שסורקת את *כל* המספרים, גם של חשבונות שהמנוע
+    //      לא שולח בשמם. inboxId (המספר שהקמפיין נשלח ממנו) מדויק יותר מהחשבון.
+    //   3. כלום — ואז אומרים "לא ידוע" ולא מציגים מספר (ראו readCapFromHealth).
+    let cap = await getCap(query, accountId);
+    if (cap == null) {
+      const q = (await query(
+        `SELECT tier FROM drip.number_quality
+          WHERE account_id = $1 AND tier IS NOT NULL AND ($2::int IS NULL OR inbox_id = $2::int)
+          ORDER BY (inbox_id = $2::int) DESC NULLS LAST, checked_at DESC
+          LIMIT 1`,
+        [accountId, inboxId == null ? null : Number(inboxId)]
+      ))[0];
+      if (q?.tier) cap = tierToCap(q.tier);
+    }
+    if (cap == null) return { cap: null, unlimited: false, unknown: true, used_24h: null, remaining: null };
     const used = Number((await query(
       `SELECT count(DISTINCT cid)::int AS c FROM (
          SELECT sm.conversation_id AS cid
@@ -649,6 +670,7 @@ export async function campaignsTierInfo(query, _reads, accountId, deps = {}) {
     return {
       cap: unlimited ? null : cap,
       unlimited,
+      unknown: false,
       used_24h: used,
       remaining: unlimited ? null : Math.max(0, cap - used),
     };

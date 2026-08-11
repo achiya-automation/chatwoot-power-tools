@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw, UploadCloud, Loader2, CheckCircle2, X } from 'lucide-react';
+import { RotateCcw, UploadCloud, Loader2, CheckCircle2, X, CalendarClock } from 'lucide-react';
 import Modal from './ui/Modal.jsx';
 import Button from './ui/Button.jsx';
 import Input from './ui/Input.jsx';
@@ -29,7 +29,7 @@ import { translate } from '../i18n.js';
 const M = {
   he: {
     title: 'שליחה מחדש לנכשלים',
-    desc: 'ההודעה תישלח שוב ל-{n} נמענים שנכשלו. ההודעות יוצאות מיד, אחת אחרי השנייה, והדוח יתעדכן תוך כדי.',
+    desc: 'ההודעה תישלח שוב ל-{n} נמענים שנכשלו, אחת אחרי השנייה, והדוח יתעדכן תוך כדי.',
     sameTpl: 'אותה תבנית', otherTpl: 'תבנית אחרת',
     sameHint: 'בדיוק מה שנשלח בפעם הראשונה — כולל ערכי המשתנים של הקמפיין',
     otherHint: 'ניסוי חדש: אותם נמענים, תבנית אחרת. התוצאות של כל ניסוי נשמרות בנפרד בדוח',
@@ -42,13 +42,20 @@ const M = {
     uploading: 'מעלה…', dropHere: 'גרירה או לחיצה להעלאת {label}',
     sizeLimit: 'עד {max}', uploadFailed: 'ההעלאה נכשלה',
     pasteLink: 'או הדבקת קישור https',
-    tierWarn: '⚠️ בתקציב היומי של המספר נותרו {left} הודעות בלבד — חלק מהשליחות עלולות להיכשל שוב.',
+    tierWarn: '⚠️ בתקציב היומי של המספר נותרו {left} הודעות בלבד — חלק מהשליחות עלולות להיכשל שוב. אפשר לתזמן למחר במקום.',
     needTpl: 'צריך לבחור תבנית', needVars: 'צריך למלא ערך לכל משתנה', needMedia: 'צריך להעלות קובץ לכותרת',
     send: 'שליחה', cancel: 'ביטול', preview: 'כך ההודעה תיראה ללקוח',
+    // ── מתי לשלוח ──
+    whenNow: 'עכשיו', whenLater: 'בשעה שאבחר',
+    whenNowHint: 'ההודעות מתחילות לצאת מיד',
+    whenLaterHint: 'שימושי כשנגמרה המכסה היומית — מחר בבוקר היא מתאפסת',
+    scheduleAt: 'תאריך ושעה', schedule: 'תזמון',
+    needFuture: 'צריך לבחור מועד עתידי',
+    tomorrowMorning: 'מחר בבוקר',
   },
   en: {
     title: 'Resend to failed recipients',
-    desc: 'The message will be sent again to {n} failed recipients. Messages go out immediately, one after another, and the report updates as it runs.',
+    desc: 'The message will be sent again to {n} failed recipients, one after another, and the report updates as it runs.',
     sameTpl: 'Same template', otherTpl: 'A different template',
     sameHint: 'Exactly what went out the first time — including the campaign’s variable values',
     otherHint: 'A new experiment: same recipients, different template. Each experiment’s results are kept separately in the report',
@@ -61,11 +68,26 @@ const M = {
     uploading: 'Uploading…', dropHere: 'Drag or click to upload {label}',
     sizeLimit: 'up to {max}', uploadFailed: 'Upload failed',
     pasteLink: 'Or paste an https link',
-    tierWarn: "⚠️ Only {left} messages remain in the number's daily budget — some sends may fail again.",
+    tierWarn: "⚠️ Only {left} messages remain in the number's daily budget — some sends may fail again. You can schedule this for tomorrow instead.",
     needTpl: 'Choose a template', needVars: 'Fill in every variable', needMedia: 'Upload a file for the header',
     send: 'Send', cancel: 'Cancel', preview: 'This is what the customer sees',
+    whenNow: 'Now', whenLater: 'At a time I pick',
+    whenNowHint: 'Messages start going out immediately',
+    whenLaterHint: 'Useful when the daily quota is spent — it resets tomorrow morning',
+    scheduleAt: 'Date and time', schedule: 'Schedule',
+    needFuture: 'Pick a time in the future',
+    tomorrowMorning: 'Tomorrow morning',
   },
 };
+
+// "מחר ב-09:00" בשעון המקומי, בפורמט של <input type="datetime-local">.
+function tomorrowMorningLocal() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(9, 0, 0, 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 const VAR_RE = /\{\{\s*\d+\s*\}\}/g;
 const MEDIA_FORMATS = new Set(['IMAGE', 'VIDEO', 'DOCUMENT']);
@@ -99,11 +121,14 @@ export default function ResendDialog({ open, onClose, onConfirm, campaign, faile
   const [params, setParams] = useState([]);
   const [mediaUrl, setMediaUrl] = useState('');
   const [error, setError] = useState('');
+  const [when, setWhen] = useState('now');          // 'now' | 'later'
+  const [runAt, setRunAt] = useState('');
 
   // פתיחה נקייה בכל פעם — דיאלוג ששומר בחירה מהפעם הקודמת שולח הודעה שלא התכוונו אליה.
   useEffect(() => {
     if (!open) return;
     setMode('same'); setTplName(''); setParams([]); setMediaUrl(''); setError('');
+    setWhen('now'); setRunAt(tomorrowMorningLocal());
   }, [open]);
 
   // התבניות של המספר שהקמפיין נשלח ממנו (לא של המספר שנבחר לחשבון היום).
@@ -132,28 +157,45 @@ export default function ResendDialog({ open, onClose, onConfirm, campaign, faile
   };
 
   const submit = () => {
-    if (mode === 'same') { onConfirm(null); return; }
-    if (!tpl) { setError(translate(M, 'needTpl')); return; }
-    if (params.slice(0, varCount).some((v) => String(v || '').trim() === '')) {
-      setError(translate(M, 'needVars')); return;
+    let template = null;
+    if (mode === 'other') {
+      if (!tpl) { setError(translate(M, 'needTpl')); return; }
+      if (params.slice(0, varCount).some((v) => String(v || '').trim() === '')) {
+        setError(translate(M, 'needVars')); return;
+      }
+      if (format && !/^https:\/\/\S+/i.test(String(mediaUrl).trim())) {
+        setError(translate(M, 'needMedia')); return;
+      }
+      template = {
+        name: tpl.name,
+        language: tpl.language,
+        params: Object.fromEntries(
+          params.slice(0, varCount).map((v, i) => [String(i + 1), LIQUID[v] ?? v])
+        ),
+        mediaUrl: format ? String(mediaUrl).trim() : null,
+      };
     }
-    if (format && !/^https:\/\/\S+/i.test(String(mediaUrl).trim())) {
-      setError(translate(M, 'needMedia')); return;
+    if (when === 'later') {
+      const at = new Date(runAt);
+      if (Number.isNaN(at.getTime()) || at.getTime() <= Date.now()) {
+        setError(translate(M, 'needFuture')); return;
+      }
+      onConfirm(template, at.toISOString());
+      return;
     }
-    onConfirm({
-      name: tpl.name,
-      language: tpl.language,
-      params: Object.fromEntries(
-        params.slice(0, varCount).map((v, i) => [String(i + 1), LIQUID[v] ?? v])
-      ),
-      mediaUrl: format ? String(mediaUrl).trim() : null,
-    });
+    onConfirm(template, null);
   };
 
   const footer = (
     <div className="flex w-full items-center justify-between gap-3">
       <Button variant="faded" color="slate" className="w-full" onClick={onClose} disabled={loading}>{t('cancel')}</Button>
-      <Button variant="solid" color="blue" className="w-full" icon={RotateCcw} onClick={submit} loading={loading}>{t('send')}</Button>
+      <Button
+        variant="solid" color="blue" className="w-full"
+        icon={when === 'later' ? CalendarClock : RotateCcw}
+        onClick={submit} loading={loading}
+      >
+        {when === 'later' ? t('schedule') : t('send')}
+      </Button>
     </div>
   );
 
@@ -231,9 +273,49 @@ export default function ResendDialog({ open, onClose, onConfirm, campaign, faile
         </div>
       ) : null}
 
+      {/* מתי — עכשיו או בשעה שנבחרה. התזמון הוא התשובה האמיתית לכישלון-מכסה: המכסה
+          מתאפסת כל 24 שעות, ושליחה חוזרת מיידית תיפול שוב על אותו קיר. */}
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {[
+          { key: 'now', label: t('whenNow'), hint: t('whenNowHint') },
+          { key: 'later', label: t('whenLater'), hint: t('whenLaterHint') },
+        ].map((o) => (
+          <button
+            key={o.key}
+            type="button"
+            onClick={() => { setWhen(o.key); setError(''); }}
+            aria-pressed={when === o.key}
+            className={`rounded-xl px-3 py-2.5 text-start transition-colors ${
+              when === o.key ? 'bg-n-brand/10 ring-1 ring-n-brand' : 'bg-n-alpha-1 ring-1 ring-n-weak hover:bg-n-alpha-2'
+            }`}
+          >
+            <span className="block text-sm font-medium text-n-slate-12">{o.label}</span>
+            <span className="mt-0.5 block text-xs text-n-slate-11">{o.hint}</span>
+          </button>
+        ))}
+      </div>
+      {when === 'later' ? (
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <div className="min-w-[14rem] flex-1">
+            <label className="mb-1.5 block text-sm font-medium text-n-slate-12" htmlFor="resend-at">{t('scheduleAt')}</label>
+            <Input
+              id="resend-at"
+              type="datetime-local"
+              value={runAt}
+              onChange={(e) => { setRunAt(e.target.value); setError(''); }}
+            />
+          </div>
+          <Button variant="faded" color="slate" size="sm" onClick={() => setRunAt(tomorrowMorningLocal())}>
+            {t('tomorrowMorning')}
+          </Button>
+        </div>
+      ) : null}
+
       {error ? <p className="mb-0 mt-3 text-xs font-medium text-n-ruby-11">{error}</p> : null}
 
-      {tier && !tier.unlimited && tier.remaining < failedCount ? (
+      {/* אזהרת מכסה — רק כשהמכסה באמת ידועה. tier.unknown = המנוע עוד לא קרא אותה
+          ממטא, ואז אין מספר להזהיר בו (ניחוש כאן הרתיע לקוח משליחה לגיטימית). */}
+      {tier && !tier.unlimited && !tier.unknown && tier.remaining < failedCount ? (
         <p className="mb-0 mt-3 rounded-lg bg-n-amber-3 px-3 py-2 text-xs text-n-amber-11">
           {translate(M, 'tierWarn', { left: tier.remaining })}
         </p>
