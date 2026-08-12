@@ -134,6 +134,13 @@ async function resolveSendInbox(query, accountId, campaign, chosenInboxId, local
   return wanted;
 }
 
+/** Only {{N}} body params — never header/namespace/whatever else shares the hash. */
+function numericKeysOnly(obj) {
+  return Object.fromEntries(
+    Object.entries(obj || {}).filter(([k]) => /^\d+$/.test(k))
+  );
+}
+
 /** Body params in Chatwoot's flat hash shape ({"1":v1,…}) whatever the caller sent. */
 function normalizeParams(params) {
   if (Array.isArray(params)) {
@@ -158,12 +165,18 @@ async function resolveTemplate(query, campaign, chosen, locale, sendInboxId) {
     // processed_params is either the flat body hash ({"1":"..."}) or the enhanced
     // { body, header:{ media_url } } shape — sendTemplate rebuilds the enhanced shape itself
     // from mediaUrl, so split it here rather than teaching it a third input format.
+    //
+    // ⚠️ A media template with NO variables stores just { header: {...} } — no `body` key at
+    // all. Taking the whole object as the body then shipped {"header": {...}} as a body
+    // PARAMETER, and Meta rejected every single message with 132012 ("Parameter format does
+    // not match format in the created template") — 1,888 of them on 12.8.26. Body params are
+    // numbered ({{1}}, {{2}}…) by definition, so keep only the numeric keys.
     const raw = tpl.processed_params || {};
     return {
       name: tpl.name,
       language: tpl.language || tpl.lang_code,
       category: tpl.category,
-      bodyParams: raw.body && typeof raw.body === 'object' ? raw.body : raw,
+      bodyParams: raw.body && typeof raw.body === 'object' ? raw.body : numericKeysOnly(raw),
       mediaUrl: raw.header?.media_url || null,
     };
   }
@@ -187,7 +200,7 @@ async function resolveTemplate(query, campaign, chosen, locale, sendInboxId) {
   // {{1}} needs ONE value, and counting occurrences would reject a perfectly valid send.
   const need = [...body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)]
     .reduce((max, m) => Math.max(max, Number(m[1])), 0);
-  const bodyParams = normalizeParams(chosen.params);
+  const bodyParams = numericKeysOnly(normalizeParams(chosen.params));
   const filled = Array.from({ length: need }, (_, i) => String(bodyParams[String(i + 1)] ?? '').trim());
   if (filled.some((v) => v === '')) throw new Error(t(locale, 'tplParams', { n: need }));
 
