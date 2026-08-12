@@ -2,6 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
+import { handleAction } from '../src/store.js';
 import { listCampaigns, campaignExperiments, campaignsTierInfo } from '../src/campaigns.js';
 import {
   startResend, resendStatus, liquidContactParams, _resetResendJobs,
@@ -277,6 +278,26 @@ test('campaignExperiments: one row per run, each with its template, results and 
   assert.equal(experiment.replied, 1);
 });
 
+test('startResend: a media template with no variables sends an EMPTY body, not the header hash', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+  // בדיוק מה שקמפיין-תמונה בלי משתנים שומר: header בלבד, בלי מפתח body.
+  await query(`UPDATE public.campaigns SET template_params = $1 WHERE id = 50`,
+    [JSON.stringify({
+      name: 'with_image', language: 'he', category: 'MARKETING', namespace: '',
+      processed_params: { header: { media_url: 'https://cdn.example/warm.jpg', media_type: 'image' } },
+    })]);
+
+  const client = makeFakeClient();
+  await startResend({ query, makeClientFor: async () => client, delayMs: 0 }, 1, 50);
+  await waitForDone(1, 50);
+
+  // ⛔ הרגרסיה: params שכולל את המפתח "header" נשלח כפרמטר גוף, ומטא דחתה הכל ב-132012.
+  const sent = client.calls.sendTemplate[0].t;
+  assert.deepEqual(sent.params, {});
+  assert.equal(sent.mediaUrl, 'https://cdn.example/warm.jpg');   // המדיה עדיין נשלחת
+});
+
 test('startResend: the client reads templates from the SENDING number, not the account default', async () => {
   await seedResendCampaign();
   await seedInboxTemplates();
@@ -364,6 +385,30 @@ test('cancelScheduledResend: removes the pending run and nothing fires', async (
   assert.deepEqual(client.calls.sendTemplate, []);
 });
 
+test('campaignsTierInfo: a batch Meta rejected does not eat the daily budget', async () => {
+  await seedResendCampaign();
+  await query(`INSERT INTO drip.number_quality(phone_id, inbox_id, account_id, phone, quality, tier)
+               VALUES ('pid-10', 10, 1, '+972500000000', 'GREEN', 'TIER_2K')`);
+
+  await query('DELETE FROM drip.campaign_send_snapshots');   // רק האצווה שלמטה נמדדת
+
+  // אצווה שיצאה עכשיו ונדחתה: שורות ה-ledger עדיין 0 (הוובהוק מעדכן את ההודעה, לא אותן),
+  // וההודעות עצמן כבר status=3. לפני התיקון כל אחת נספרה כשיחה שצרכה מהמכסה.
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id, inbox_id)
+               VALUES (720,9720,1,60,10), (721,9721,1,61,10)`);
+  await query(`INSERT INTO public.messages(id,conversation_id,account_id,message_type,status,created_at)
+               VALUES (8300,720,1,1,3,now()), (8301,721,1,1,1,now())`);
+  await query(`INSERT INTO drip.campaign_send_snapshots
+    (account_id,campaign_id,contact_id,phone,source_id,conversation_id,message_id,status,attempted_at) VALUES
+    (1,50,60,'0501111111','retry:a',720,8300,0,now()),
+    (1,50,61,'0502222222','retry:b',721,8301,0,now())`);
+
+  const info = await campaignsTierInfo(query, null, 1, {}, 10);
+  assert.equal(info.cap, 2000);
+  assert.equal(info.used_24h, 1);            // רק זו שנמסרה — לא זו שמטא דחתה
+  assert.equal(info.remaining, 1999);
+});
+
 test('campaignsTierInfo: never invents a cap — unknown when Meta was never read', async () => {
   await seedResendCampaign();
 
@@ -381,6 +426,26 @@ test('campaignsTierInfo: never invents a cap — unknown when Meta was never rea
   assert.equal(known.unknown, false);
   assert.equal(known.cap, 2000);
   assert.ok(known.remaining <= 2000);
+});
+
+test('templates: media memory carries the warm URL of a campaign that already used it', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+  await query(`UPDATE public.campaigns SET template_params = $1 WHERE id = 50`,
+    [JSON.stringify({
+      name: 'with_image', language: 'he', category: 'MARKETING',
+      processed_params: { header: { media_url: 'https://cdn.example/warm.jpg', media_type: 'image' } },
+    })]);
+  // המספר הזה נבחר לחשבון — actionTemplates קורא ממנו.
+  await query(`INSERT INTO drip.account_tokens(account_id, chatwoot_token, base_url, inbox_id)
+               VALUES (1,'tok','http://cw',10)
+               ON CONFLICT (account_id) DO UPDATE SET inbox_id = 10`);
+
+  // ⛔ הרגרסיה: sequence_steps.id הוא uuid ו-campaigns.id הוא bigint, ה-UNION נפל על
+  // אי-התאמת טיפוסים וה-catch בלע — התוצאה הייתה שדה מדיה ריק בכל שליחה מחדש.
+  const { data } = await handleAction(1, 'templates', {});
+  const withImage = data.find((x) => x.name === 'with_image');
+  assert.equal(withImage.media_url, 'https://cdn.example/warm.jpg');
 });
 
 test('liquidContactParams: substitutes contact fields; blank render is flagged', () => {

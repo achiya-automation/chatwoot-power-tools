@@ -649,11 +649,23 @@ export async function campaignsTierInfo(query, _reads, accountId, deps = {}, inb
             AND sm.sent_at > now() - interval '24 hours'
             AND (m.status IS NULL OR m.status <> 3)
          UNION
+         -- ⚠️ s.status לבדו משקר: שורת ledger נכתבת כ-0 ("נשלח") ורק וובהוק מאוחר מעדכן
+         -- אותה. אצווה שמטא דחתה נשארה 0 ב-ledger בזמן שההודעות עצמן כבר status=3,
+         -- וכך 2,634 כשלים נספרו כמכסה שנוצלה והדשבורד הכריז "נותרו 0 הודעות" על מספר
+         -- שלא שלח כמעט כלום. אותו CASE שכל שאר הדוח משתמש בו — הסטטוס האפקטיבי.
          SELECT s.conversation_id
            FROM drip.campaign_send_snapshots s
+           LEFT JOIN LATERAL (
+             SELECT mm.status FROM public.messages mm
+              WHERE mm.account_id = s.account_id
+                AND (mm.id = s.message_id OR (mm.source_id IS NOT NULL AND mm.source_id = s.source_id))
+              ORDER BY (mm.id = s.message_id) DESC, mm.id DESC
+              LIMIT 1
+           ) sm ON true
           WHERE s.account_id = $1
             AND s.attempted_at > now() - interval '24 hours'
-            AND s.status <> 3
+            AND (CASE WHEN s.status = 3 THEN 3
+                      ELSE greatest(s.status, coalesce(sm.status, 0)) END) <> 3
             AND s.conversation_id IS NOT NULL
          UNION
          SELECT m.conversation_id

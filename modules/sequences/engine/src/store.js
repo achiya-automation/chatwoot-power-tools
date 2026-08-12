@@ -771,28 +771,40 @@ async function actionTemplates(accountId, inboxId = null) {
   // הקישור החם הוא בדיוק זה ששרד את הקמפיין.
   try {
     const mediaRows = await query(
+      // ⚠️ sequence_steps.id הוא uuid ו-campaigns.id הוא bigint — UNION ישיר עליהם נכשל
+      // ב-"UNION types uuid and bigint cannot be matched", וה-catch למטה בלע את זה בשקט
+      // כך שזיכרון המדיה מת לגמרי (גם של הרצפים, שעבד קודם). row_number מייצר סדר
+      // מקומי לכל מקור בנפרד, ואז אין טיפוס משותף להתנגש עליו.
+      // pri: רצפים קודמים לקמפיינים — כך ההתנהגות שהייתה נשמרת, והקמפיין רק משלים
+      // תבניות שלא מופיעות בשום שלב רצף.
       `SELECT DISTINCT ON (template_name) template_name, media_url FROM (
-         SELECT st.template_name, st.media_url, st.id AS ord
+         SELECT st.template_name, st.media_url, 1 AS pri,
+                row_number() OVER (ORDER BY st.id DESC) AS ord
            FROM drip.sequence_steps st
            JOIN drip.sequences s ON s.id = st.sequence_id
           WHERE s.account_id = $1 AND coalesce(st.media_url, '') <> ''
          UNION ALL
          SELECT c.template_params ->> 'name' AS template_name,
                 c.template_params -> 'processed_params' -> 'header' ->> 'media_url' AS media_url,
-                c.id AS ord
+                2 AS pri,
+                row_number() OVER (ORDER BY c.id DESC) AS ord
            FROM public.campaigns c
           WHERE c.account_id = $1
             AND coalesce(c.template_params -> 'processed_params' -> 'header' ->> 'media_url', '') <> ''
        ) m
         WHERE coalesce(template_name, '') <> ''
-        ORDER BY template_name, ord DESC`,
+        ORDER BY template_name, pri, ord`,
       [accountId]
     );
     const mediaByTemplate = new Map(mediaRows.map((r) => [r.template_name, r.media_url]));
     for (const t of data) {
       if (mediaByTemplate.has(t.name)) t.media_url = mediaByTemplate.get(t.name);
     }
-  } catch { /* sequence_steps absent — skip media memory */ }
+  } catch (e) {
+    // נשאר fail-open (בלי זיכרון מדיה עדיין אפשר לעבוד), אבל לא בשקט: השתיקה כאן היא
+    // שהסתירה שגיאת טיפוסים ב-UNION למשך יום שלם, וכל מה שהמשתמש ראה זה שדה מדיה ריק.
+    console.error('[drip] media memory skipped:', e.message);
+  }
 
   return { data };
 }
