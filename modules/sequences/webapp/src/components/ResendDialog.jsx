@@ -7,7 +7,8 @@ import Skeleton from './ui/Skeleton.jsx';
 import TemplatePicker from './ui/TemplatePicker.jsx';
 import VariableRow from './ui/VariableRow.jsx';
 import MessageBubble from './ui/MessageBubble.jsx';
-import { listTemplates, uploadMedia } from '../api/sequencesApi.js';
+import Dropdown from './ui/Dropdown.jsx';
+import { listTemplates, uploadMedia, listCampaignInboxes } from '../api/sequencesApi.js';
 import { validateWhatsAppMedia, acceptFor, formatBytes, WA_MEDIA } from '../lib/waMedia.js';
 import useT from '../useT.js';
 import { translate } from '../i18n.js';
@@ -33,6 +34,10 @@ const M = {
     sameTpl: 'אותה תבנית', otherTpl: 'תבנית אחרת',
     sameHint: 'בדיוק מה שנשלח בפעם הראשונה — כולל ערכי המשתנים של הקמפיין',
     otherHint: 'ניסוי חדש: אותם נמענים, תבנית אחרת. התוצאות של כל ניסוי נשמרות בנפרד בדוח',
+    fromNumber: 'המספר ששולח', fromNumberHint: 'מספר שהדירוג שלו ירד ייחסם שוב — עדיף לשלוח ממספר תקין',
+    campaignNumber: 'המספר של הקמפיין',
+    q_GREEN: 'דירוג תקין', q_YELLOW: 'דירוג יורד', q_RED: 'דירוג נמוך — מטא מגבילה', q_UNKNOWN: 'אין דירוג',
+    redWarn: '⚠️ הדירוג של המספר הזה נמוך אצל מטא. שליחה נוספת ממנו צפויה להיחסם, ומחריפה את הדירוג.',
     pickTpl: 'התבנית שתישלח', noTemplates: 'לא נמצאו תבניות מאושרות למספר הזה',
     tplLoadFailed: 'לא הצלחנו לטעון את התבניות',
     varsTitle: 'ערכי המשתנים', noVars: 'התבנית לא דורשת משתנים',
@@ -59,6 +64,10 @@ const M = {
     sameTpl: 'Same template', otherTpl: 'A different template',
     sameHint: 'Exactly what went out the first time — including the campaign’s variable values',
     otherHint: 'A new experiment: same recipients, different template. Each experiment’s results are kept separately in the report',
+    fromNumber: 'Sending number', fromNumberHint: 'A number whose rating dropped will be throttled again — prefer a healthy one',
+    campaignNumber: "The campaign's number",
+    q_GREEN: 'Healthy', q_YELLOW: 'Rating slipping', q_RED: 'Low rating — Meta is throttling it', q_UNKNOWN: 'No rating',
+    redWarn: '⚠️ This number has a low quality rating at Meta. Sending more from it is likely to be blocked, and makes the rating worse.',
     pickTpl: 'Template to send', noTemplates: 'No approved templates found for this number',
     tplLoadFailed: 'Could not load the templates',
     varsTitle: 'Variable values', noVars: 'This template requires no variables',
@@ -88,6 +97,9 @@ function tomorrowMorningLocal() {
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+// דירוג האיכות של מטא לכל מספר — נקודת צבע לזיהוי מיידי ברשימה.
+const QUALITY_DOT = { GREEN: '🟢', YELLOW: '🟡', RED: '🔴', UNKNOWN: '⚪' };
 
 const VAR_RE = /\{\{\s*\d+\s*\}\}/g;
 const MEDIA_FORMATS = new Set(['IMAGE', 'VIDEO', 'DOCUMENT']);
@@ -123,23 +135,36 @@ export default function ResendDialog({ open, onClose, onConfirm, campaign, faile
   const [error, setError] = useState('');
   const [when, setWhen] = useState('now');          // 'now' | 'later'
   const [runAt, setRunAt] = useState('');
+  const [inboxes, setInboxes] = useState([]);
+  const [inboxId, setInboxId] = useState(null);     // null = המספר של הקמפיין
 
   // פתיחה נקייה בכל פעם — דיאלוג ששומר בחירה מהפעם הקודמת שולח הודעה שלא התכוונו אליה.
   useEffect(() => {
     if (!open) return;
     setMode('same'); setTplName(''); setParams([]); setMediaUrl(''); setError('');
     setWhen('now'); setRunAt(tomorrowMorningLocal());
-  }, [open]);
+    setInboxId(campaign?.inbox_id ?? null);
+  }, [open, campaign?.inbox_id]);
 
-  // התבניות של המספר שהקמפיין נשלח ממנו (לא של המספר שנבחר לחשבון היום).
+  // המספרים של החשבון + דירוג האיכות שלהם — הבחירה "ממי לשלוח" צריכה להיות מיודעת.
   useEffect(() => {
-    if (!open || mode !== 'other' || templates !== null || accountId == null) return;
+    if (!open || accountId == null) return undefined;
     let alive = true;
-    listTemplates(accountId, campaign?.inbox_id)
+    listCampaignInboxes(accountId).then((list) => { if (alive) setInboxes(list); }).catch(() => {});
+    return () => { alive = false; };
+  }, [open, accountId]);
+
+  // התבניות של המספר ששולח (לא של המספר שנבחר לחשבון היום, ולא בהכרח של הקמפיין).
+  // מספר אחר = WABA אחר = רשימת תבניות אחרת, ולכן הבחירה מתאפסת כשמחליפים מספר.
+  useEffect(() => {
+    if (!open || mode !== 'other' || accountId == null || !inboxId) return undefined;
+    let alive = true;
+    setTemplates(null); setTplName(''); setParams([]); setMediaUrl('');
+    listTemplates(accountId, inboxId)
       .then((list) => { if (alive) setTemplates(list); })
       .catch(() => { if (alive) { setTemplates([]); setTplError(translate(M, 'tplLoadFailed')); } });
     return () => { alive = false; };
-  }, [open, mode, templates, accountId, campaign?.inbox_id]);
+  }, [open, mode, accountId, inboxId]);
 
   const tpl = useMemo(() => (templates || []).find((x) => x.name === tplName) || null, [templates, tplName]);
   const varCount = countVars(tpl);
@@ -175,15 +200,17 @@ export default function ResendDialog({ open, onClose, onConfirm, campaign, faile
         mediaUrl: format ? String(mediaUrl).trim() : null,
       };
     }
+    // המספר נשלח רק כשהוא שונה מזה של הקמפיין — כך ריצה רגילה נשארת בדיוק כשהייתה.
+    const sendFrom = inboxId && inboxId !== campaign?.inbox_id ? inboxId : null;
     if (when === 'later') {
       const at = new Date(runAt);
       if (Number.isNaN(at.getTime()) || at.getTime() <= Date.now()) {
         setError(translate(M, 'needFuture')); return;
       }
-      onConfirm(template, at.toISOString());
+      onConfirm(template, at.toISOString(), sendFrom);
       return;
     }
-    onConfirm(template, null);
+    onConfirm(template, null, sendFrom);
   };
 
   const footer = (
@@ -202,6 +229,31 @@ export default function ResendDialog({ open, onClose, onConfirm, campaign, faile
   return (
     <Modal open={open} onClose={onClose} title={t('title')} size="2xl" footer={footer} closeOnOverlay={!loading}>
       <p className="mt-0 text-sm leading-relaxed text-n-slate-11">{translate(M, 'desc', { n: failedCount })}</p>
+
+      {/* ממי לשלוח. מוצג רק כשיש באמת יותר ממספר אחד — אחרת זו שאלה בלי תשובה.
+          הדירוג ליד כל מספר הוא העיקר: מספר ב-RED הוא בדיוק הסיבה שהאצווה נכשלה. */}
+      {inboxes.length > 1 ? (
+        <div className="mt-3">
+          <label className="mb-1.5 block text-sm font-medium text-n-slate-12" htmlFor="resend-inbox">
+            {t('fromNumber')} <span className="font-normal text-n-slate-11">· {t('fromNumberHint')}</span>
+          </label>
+          <Dropdown
+            id="resend-inbox"
+            options={inboxes.map((i) => ({
+              value: String(i.id),
+              label: `${QUALITY_DOT[i.quality] || '⚪'} ${i.phone || i.name}`
+                + `${i.id === campaign?.inbox_id ? ` — ${translate(M, 'campaignNumber')}` : ''}`
+                + ` · ${translate(M, `q_${i.quality || 'UNKNOWN'}`)}`,
+            }))}
+            value={String(inboxId ?? campaign?.inbox_id ?? '')}
+            onChange={(v) => { setInboxId(Number(v)); setError(''); }}
+            ariaLabel={t('fromNumber')}
+          />
+          {inboxes.find((i) => i.id === inboxId)?.quality === 'RED' ? (
+            <p className="mb-0 mt-2 rounded-lg bg-n-ruby-3 px-3 py-2 text-xs text-n-ruby-11">{t('redWarn')}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* בחירת מסלול — אותה תבנית או ניסוי חדש */}
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">

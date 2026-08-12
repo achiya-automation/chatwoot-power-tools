@@ -44,9 +44,10 @@ const M = {
     noContact: 'אין מזהה איש קשר — אי אפשר לפתוח שיחה',
     suppressed: 'הנמען ביקש הסרה (opt-out)',
     liquidBlank: 'משתנה בתבנית נשאר ריק עבור הנמען',
-    tplNotApproved: 'התבנית שנבחרה אינה מאושרת במספר של הקמפיין',
+    tplNotApproved: 'התבנית שנבחרה אינה מאושרת במספר שנבחר לשליחה',
     tplParams: 'התבנית דורשת {n} ערכי משתנים, וכולם חייבים להיות מלאים',
     tplNeedsMedia: 'התבנית פותחת בתמונה/וידאו/מסמך — צריך קישור מדיה',
+    badInbox: 'המספר שנבחר לשליחה אינו מספר וואטסאפ של החשבון',
   },
   en: {
     notFound: 'Campaign not found',
@@ -56,9 +57,10 @@ const M = {
     noContact: 'No contact id — cannot open a conversation',
     suppressed: 'The recipient opted out',
     liquidBlank: 'A template variable rendered empty for this recipient',
-    tplNotApproved: 'The selected template is not approved on the campaign’s number',
+    tplNotApproved: 'The selected template is not approved on the number chosen for sending',
     tplParams: 'The template needs {n} variable values, and none may be empty',
     tplNeedsMedia: 'The template opens with an image/video/document — a media link is required',
+    badInbox: 'The chosen number is not a WhatsApp inbox of this account',
   },
 };
 const t = (locale, key, vars) => {
@@ -112,11 +114,25 @@ export function resendStatus(accountId, campaignId) {
     failed: job.failed,                 // [{ phone, name, error }]
     template_name: job.templateName,    // which template THIS run is sending
     run_id: job.runId,
+    inbox_id: job.inboxId,              // and from which number
     started_at: job.startedAt,
   };
 }
 
 const MEDIA_HEADERS = new Set(['IMAGE', 'VIDEO', 'DOCUMENT']);
+
+/** מספר הוואטסאפ שהריצה תשלח ממנו — של הקמפיין, או אחר שנבחר ואומת מול החשבון. */
+async function resolveSendInbox(query, accountId, campaign, chosenInboxId, locale) {
+  const wanted = Number.parseInt(chosenInboxId, 10);
+  if (!Number.isInteger(wanted) || wanted === Number(campaign.inbox_id)) return campaign.inbox_id;
+  const ok = (await query(
+    `SELECT id FROM public.inboxes
+      WHERE id = $1 AND account_id = $2 AND channel_type = 'Channel::Whatsapp'`,
+    [wanted, accountId]
+  ))[0];
+  if (!ok) throw new Error(t(locale, 'badInbox'));
+  return wanted;
+}
 
 /** Body params in Chatwoot's flat hash shape ({"1":v1,…}) whatever the caller sent. */
 function normalizeParams(params) {
@@ -135,7 +151,7 @@ function normalizeParams(params) {
  * value, and a media header must come with a link. Failing here costs one error message;
  * failing at Meta costs the whole batch.
  */
-async function resolveTemplate(query, campaign, chosen, locale) {
+async function resolveTemplate(query, campaign, chosen, locale, sendInboxId) {
   if (!chosen?.name) {
     const tpl = campaign.template_params || {};
     if (!tpl.name) throw new Error(t(locale, 'noTemplate'));
@@ -157,7 +173,7 @@ async function resolveTemplate(query, campaign, chosen, locale) {
        FROM public.inboxes i
        JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
       WHERE i.id = $1`,
-    [campaign.inbox_id]
+    [sendInboxId]
   );
   const list = Array.isArray(rows[0]?.message_templates) ? rows[0].message_templates : [];
   const match = list.find((x) => x.name === chosen.name
@@ -195,6 +211,8 @@ async function resolveTemplate(query, campaign, chosen, locale) {
  * startResend(deps, accountId, campaignId, locale, options) → { total, run_id, template_name }
  * deps: { query, makeClientFor, delayMs?, now? } — client injected so tests never send.
  * options.template: { name, language, params, mediaUrl } — omit to reuse the campaign's own.
+ * options.inboxId: send from a DIFFERENT number than the campaign's — the way out when the
+ *   original number's quality rating dropped and Meta is throttling everything it sends.
  */
 export async function startResend(deps, accountId, campaignId, locale = 'he', options = {}) {
   const { query } = deps;
@@ -205,7 +223,11 @@ export async function startResend(deps, accountId, campaignId, locale = 'he', op
 
   const detail = await getCampaignDetail(query, accountId, id);
   if (!detail) throw new Error(t(locale, 'notFound'));
-  const template = await resolveTemplate(query, detail.campaign, options?.template, locale);
+
+  // המספר לשלוח ממנו: של הקמפיין כברירת מחדל. בחירה אחרת מאומתת מול החשבון — מזהה
+  // תיבה מגיע מהדפדפן, ותיבה של חשבון אחר הייתה שולחת בשם מישהו אחר.
+  const sendInboxId = await resolveSendInbox(query, accountId, detail.campaign, options?.inboxId, locale);
+  const template = await resolveTemplate(query, detail.campaign, options?.template, locale, sendInboxId);
 
   // Final state per recipient is already collapsed by getCampaignDetail — status 3 is
   // "still failed after every attempt so far", exactly the set the report shows in red.
@@ -238,12 +260,13 @@ export async function startResend(deps, accountId, campaignId, locale = 'he', op
     // experiments table without a second column.
     runId: `r${Date.now()}`,
     templateName: template.name,
+    inboxId: sendInboxId,
     startedAt: new Date().toISOString(),
   };
   jobs.set(key, job);
 
   // Fire-and-forget: the HTTP request returns immediately; the UI polls resendStatus.
-  runJob(deps, { accountId, campaign: detail.campaign, template, recipients: failedRecipients, suppressed, contactById, job, locale })
+  runJob(deps, { accountId, campaign: detail.campaign, template, sendInboxId, recipients: failedRecipients, suppressed, contactById, job, locale })
     .catch((e) => { job.failed.push({ phone: '', name: '', error: e.message }); })
     .finally(() => {
       job.status = 'done';
@@ -251,13 +274,15 @@ export async function startResend(deps, accountId, campaignId, locale = 'he', op
       if (timer.unref) timer.unref();
     });
 
-  return { total: job.total, run_id: job.runId, template_name: job.templateName };
+  return { total: job.total, run_id: job.runId, template_name: job.templateName, inbox_id: sendInboxId };
 }
 
 async function runJob(deps, ctx) {
   const { query, makeClientFor, delayMs = SEND_GAP_MS } = deps;
-  const { accountId, campaign, template, recipients, suppressed, contactById, job, locale } = ctx;
-  const client = await makeClientFor(accountId);
+  const { accountId, campaign, template, sendInboxId, recipients, suppressed, contactById, job, locale } = ctx;
+  // הלקוח קורא את התבניות מהמספר ששולח. בלי זה הוא נופל ל"המספר הנבחר לחשבון",
+  // ובחשבון בלי מספר נבחר הוא לא מוצא את התבנית כלל — ראו ההערה ב-makeClient.
+  const client = await makeClientFor(accountId, sendInboxId);
   const { bodyParams, mediaUrl } = template;
 
   let attempt = 0;
@@ -272,7 +297,7 @@ async function runJob(deps, ctx) {
       const { params, blank } = liquidContactParams(bodyParams, contact);
       if (blank) throw new Error(t(locale, 'liquidBlank'));
 
-      const displayId = await resolveConversation(query, client, accountId, campaign, r, locale);
+      const displayId = await resolveConversation(query, client, accountId, sendInboxId, r, locale);
       const sent = await client.sendTemplate(displayId, {
         name: template.name,
         language: template.language,
@@ -311,32 +336,38 @@ async function runJob(deps, ctx) {
 }
 
 /**
- * The conversation to send into: the recipient's existing one (legacy failures that DID get a
- * message row), else the contact's newest conversation on the campaign's inbox, else a fresh
- * one. A Meta-rejected first send usually left NOTHING behind, so the create path is the
- * common case — source_id is the phone in digits, the same convention the whole stack uses.
+ * The conversation to send into: the contact's newest conversation ON THE SENDING INBOX,
+ * else a fresh one. A Meta-rejected first send usually left NOTHING behind, so the create
+ * path is the common case — source_id is the phone in digits, the same convention the whole
+ * stack uses.
+ *
+ * ⚠️ The recipient's existing conversation is only reused when it belongs to the sending
+ * inbox. Sending from a DIFFERENT number (the escape hatch when the original number's
+ * quality dropped) into the old number's conversation would go out from the old number
+ * anyway — the inbox owns the channel, not the message.
  */
-async function resolveConversation(query, client, accountId, campaign, recipient, locale) {
-  if (recipient.conversation_display_id) return recipient.conversation_display_id;
-
+async function resolveConversation(query, client, accountId, sendInboxId, recipient, locale) {
   const contactId = recipient.contact_id;
-  if (!contactId) throw new Error(t(locale, 'noContact'));
+  if (!contactId) {
+    if (recipient.conversation_display_id) return recipient.conversation_display_id;
+    throw new Error(t(locale, 'noContact'));
+  }
 
   const existing = (await query(
     `SELECT cv.display_id FROM public.conversations cv
       WHERE cv.account_id = $1 AND cv.contact_id = $2 AND cv.inbox_id = $3
       ORDER BY cv.id DESC LIMIT 1`,
-    [accountId, contactId, campaign.inbox_id]
+    [accountId, contactId, sendInboxId]
   ))[0];
   if (existing?.display_id) return existing.display_id;
 
   const ci = (await query(
     `SELECT source_id FROM public.contact_inboxes WHERE contact_id = $1 AND inbox_id = $2 LIMIT 1`,
-    [contactId, campaign.inbox_id]
+    [contactId, sendInboxId]
   ))[0];
   const sourceId = ci?.source_id || normalizeCampaignPhone(recipient.phone).replace(/^\+/, '');
   const opened = await client.createConversation({
-    sourceId, inboxId: campaign.inbox_id, contactId,
+    sourceId, inboxId: sendInboxId, contactId,
   });
   return opened.id;
 }
@@ -345,7 +376,7 @@ async function resolveConversation(query, client, accountId, campaign, recipient
 // הנכשלים נקבעים בזמן ההרצה (startResend מחשב אותם מחדש), לא בזמן התזמון.
 
 /** קביעה/החלפה של התזמון היחיד לקמפיין. run_at ISO. מחזיר { run_at }. */
-export async function scheduleResend(query, accountId, campaignId, runAt, { template = null, locale = 'he' } = {}) {
+export async function scheduleResend(query, accountId, campaignId, runAt, { template = null, locale = 'he', inboxId = null } = {}) {
   const id = Number.parseInt(campaignId, 10);
   const when = new Date(runAt);
   if (!Number.isInteger(id) || Number.isNaN(when.getTime())) throw new Error(t(locale, 'notFound'));
@@ -355,9 +386,10 @@ export async function scheduleResend(query, accountId, campaignId, runAt, { temp
     [accountId, id]
   );
   await query(
-    `INSERT INTO drip.campaign_resend_schedule (account_id, campaign_id, run_at, template, locale)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [accountId, id, when.toISOString(), template ? JSON.stringify(template) : null, locale]
+    `INSERT INTO drip.campaign_resend_schedule (account_id, campaign_id, run_at, template, locale, inbox_id)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [accountId, id, when.toISOString(), template ? JSON.stringify(template) : null, locale,
+      Number.isInteger(Number.parseInt(inboxId, 10)) ? Number.parseInt(inboxId, 10) : null]
   );
   return { run_at: when.toISOString() };
 }
@@ -367,13 +399,31 @@ export async function pendingResend(query, accountId, campaignId) {
   const id = Number.parseInt(campaignId, 10);
   if (!Number.isInteger(id)) return null;
   const row = (await query(
-    `SELECT id, run_at, template ->> 'name' AS template_name
-       FROM drip.campaign_resend_schedule
-      WHERE account_id = $1 AND campaign_id = $2 AND started_at IS NULL
-      ORDER BY run_at LIMIT 1`,
+    `SELECT s.id, s.run_at, s.template ->> 'name' AS template_name, s.inbox_id,
+            i.name AS inbox_name
+       FROM drip.campaign_resend_schedule s
+       LEFT JOIN public.inboxes i ON i.id = s.inbox_id
+      WHERE s.account_id = $1 AND s.campaign_id = $2 AND s.started_at IS NULL
+      ORDER BY s.run_at LIMIT 1`,
     [accountId, id]
   ))[0];
   return row || null;
+}
+
+/**
+ * מספרי הוואטסאפ של החשבון עם דירוג האיכות של כל אחד — כדי שהבחירה "ממי לשלוח" תהיה
+ * מיודעת. הדירוג מגיע מתצפית המספרים (drip.number_quality), שסורקת כל מספר בחשבון.
+ */
+export async function accountWhatsappInboxes(query, accountId) {
+  return query(
+    `SELECT i.id, i.name, cw.phone_number AS phone, nq.quality, nq.tier
+       FROM public.inboxes i
+       JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
+       LEFT JOIN drip.number_quality nq ON nq.inbox_id = i.id
+      WHERE i.account_id = $1 AND i.channel_type = 'Channel::Whatsapp'
+      ORDER BY i.id`,
+    [accountId]
+  );
 }
 
 export async function cancelScheduledResend(query, accountId, campaignId) {
@@ -402,13 +452,13 @@ export async function runDueResends(deps) {
          WHERE started_at IS NULL AND run_at <= now()
          ORDER BY run_at LIMIT 20 FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, account_id, campaign_id, template, locale`
+      RETURNING id, account_id, campaign_id, template, locale, inbox_id`
   );
   let started = 0;
   for (const row of due) {
     try {
       await startResend(deps, Number(row.account_id), Number(row.campaign_id), row.locale || 'he',
-        { template: row.template || null });
+        { template: row.template || null, inboxId: row.inbox_id });
       started += 1;
     } catch (e) {
       await query('UPDATE drip.campaign_resend_schedule SET error = $2 WHERE id = $1',

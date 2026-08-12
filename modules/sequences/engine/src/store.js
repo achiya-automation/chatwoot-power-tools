@@ -50,7 +50,10 @@ import { makeDbReads } from './reads.js';
 import { createTemplateCopy } from './meta.js';
 import { projectSchedule } from './schedule.js';
 import { listCampaigns, getCampaignDetail, campaignExperiments, campaignsTrend, campaignsTierInfo } from './campaigns.js';
-import { startResend, resendStatus, scheduleResend, pendingResend, cancelScheduledResend } from './campaignResend.js';
+import {
+  startResend, resendStatus, scheduleResend, pendingResend, cancelScheduledResend,
+  accountWhatsappInboxes,
+} from './campaignResend.js';
 import { handleTemplatesAction } from './templates.js';
 import { handleJourneysAction, makeJourneysCtx } from './journeys.js';
 import { handlePresenceAction } from './presence.js';
@@ -163,13 +166,16 @@ export async function handleAction(accountId, action, payload) {
       return { data: await campaignsTierInfo(query, makeDbReads(query), accId, {}, payload?.inbox_id) };
     // שליחה מחדש לנכשלים — עבודה ברקע; הלקוח מתשאל את הסטטוס. admin-only (נאכף ב-api.js).
     case 'campaign_resend':
-      return { data: await startResend({ query, makeClientFor: makeAccountClient }, accId, payload?.campaign_id, payload?.locale, { template: payload?.template }) };
+      return { data: await startResend({ query, makeClientFor: makeAccountClient }, accId, payload?.campaign_id, payload?.locale, { template: payload?.template, inboxId: payload?.inbox_id }) };
+    // מספרי הוואטסאפ של החשבון + דירוג האיכות — לבחירה "ממי לשלוח".
+    case 'campaign_inboxes':
+      return { data: await accountWhatsappInboxes(query, accId) };
     case 'campaign_resend_status':
       return { data: resendStatus(accId, payload?.campaign_id) };
     // תזמון שליחה מחדש (מיגרציה 049). admin-only כמו השליחה עצמה — נאכף ב-api.js.
     case 'campaign_resend_schedule':
       return { data: await scheduleResend(query, accId, payload?.campaign_id, payload?.run_at,
-        { template: payload?.template, locale: payload?.locale }) };
+        { template: payload?.template, locale: payload?.locale, inboxId: payload?.inbox_id }) };
     case 'campaign_resend_pending':
       return { data: await pendingResend(query, accId, payload?.campaign_id) };
     case 'campaign_resend_unschedule':
@@ -215,7 +221,7 @@ export async function handleAction(accountId, action, payload) {
 // Chatwoot client for a specific account — same token source as the journeys ctx
 // (drip.account_tokens, the auto-provisioned AgentBot). Used by campaign resend —
 // exported so the tick can run SCHEDULED resends through the exact same path.
-export async function makeAccountClient(accountId) {
+export async function makeAccountClient(accountId, templatesInboxId = null) {
   const rows = await query(
     `SELECT chatwoot_token, base_url FROM drip.account_tokens WHERE account_id = $1`,
     [accountId]
@@ -228,6 +234,7 @@ export async function makeAccountClient(accountId) {
     accountId,
     reads: makeDbReads(query),
     query,
+    templatesInboxId,
   });
 }
 

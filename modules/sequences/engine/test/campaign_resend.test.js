@@ -277,6 +277,52 @@ test('campaignExperiments: one row per run, each with its template, results and 
   assert.equal(experiment.replied, 1);
 });
 
+test('startResend: the client reads templates from the SENDING number, not the account default', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+  // בדיוק התקלה של 11.8.26: חשבון עם כמה מספרים ובלי מספר "נבחר" — loadTemplates ברמת
+  // חשבון החזיר ריק, ולכן ההודעה יצאה בלי גוף ובלי כותרת-מדיה ומטא דחתה 451 מהן ב-132012.
+  await query(`INSERT INTO public.inboxes(id, account_id, name, channel_type, channel_id)
+               VALUES (11,1,'WA-2','Channel::Whatsapp',11) ON CONFLICT (id) DO NOTHING`);
+
+  const seen = [];
+  const client = makeFakeClient();
+  const makeClientFor = async (_acct, templatesInboxId) => { seen.push(templatesInboxId); return client; };
+  await startResend({ query, makeClientFor, delayMs: 0 }, 1, 50);
+  await waitForDone(1, 50);
+  assert.deepEqual(seen, [10]);   // המספר של הקמפיין, לא null וגם לא ניחוש
+});
+
+test('startResend: sending from a different number of the account, and only that account', async () => {
+  await seedResendCampaign();
+  await query(`INSERT INTO public.inboxes(id, account_id, name, channel_type, channel_id)
+               VALUES (11,1,'WA-2','Channel::Whatsapp',11), (12,2,'other-acct','Channel::Whatsapp',12)
+               ON CONFLICT (id) DO NOTHING`);
+  await query(`INSERT INTO public.channel_whatsapp(id, phone_number, message_templates)
+               VALUES (11,'+972511111111',$1) ON CONFLICT (id) DO UPDATE SET message_templates = EXCLUDED.message_templates`,
+    [JSON.stringify(INBOX_TEMPLATES)]);
+
+  // תיבה של חשבון אחר נדחית — המזהה מגיע מהדפדפן.
+  await assert.rejects(
+    startResend({ query, makeClientFor: async () => makeFakeClient(), delayMs: 0 }, 1, 50, 'he', { inboxId: 12 }),
+    /אינו מספר וואטסאפ של החשבון/
+  );
+  _resetResendJobs();
+
+  const seen = [];
+  const client = makeFakeClient();
+  const makeClientFor = async (_acct, templatesInboxId) => { seen.push(templatesInboxId); return client; };
+  const res = await startResend({ query, makeClientFor, delayMs: 0 }, 1, 50, 'he', { inboxId: 11 });
+  assert.equal(res.inbox_id, 11);
+  await waitForDone(1, 50);
+  assert.deepEqual(seen, [11]);
+
+  // ⚠️ לא נכנסים לשיחה הקיימת של המספר הישן — היא שייכת לתיבה ההיא, וההודעה הייתה
+  // יוצאת מהמספר שברחנו ממנו. כל נמען מקבל שיחה חדשה בתיבה החדשה.
+  assert.equal(client.calls.createConversation.length, 2);
+  assert.ok(client.calls.createConversation.every((c) => c.inboxId === 11));
+});
+
 test('scheduleResend: one pending run per campaign, executed by the tick when it comes due', async () => {
   await seedResendCampaign();
   await seedInboxTemplates();

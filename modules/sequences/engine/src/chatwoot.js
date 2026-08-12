@@ -9,7 +9,14 @@ import { isHumanOutgoing } from './reads.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
-export function makeClient({ baseUrl, token, accountId, reads, query }) {
+// templatesInboxId — קרא את התבניות מהמספר הזה במקום מהמספר "הנבחר" של החשבון.
+// ⚠️ קריטי לשליחות שאינן של מנוע הרצפים (קמפיין / שליחה מחדש): תבניות שייכות ל-WABA,
+// ולחשבון עם כמה מספרים ובלי מספר נבחר `loadTemplates` מחזיר רשימה ריקה. אז sendTemplate
+// לא מוצא את התבנית, ואז — בשקט — ה-content יוצא ריק ("אין תוכן להצגה" בשיחה) והכותרת
+// לא מזוהה כמדיה, כך שהתמונה לא נשלחת כלל ומטא דוחה את הכול ב-132012
+// ("Parameter format does not match format in the created template"). 451 הודעות מתו כך
+// ב-11.8.26, כולן עם אותה שגיאה, בלי רמז אחד לסיבה.
+export function makeClient({ baseUrl, token, accountId, reads, query, templatesInboxId = null }) {
   const base = `${baseUrl}/api/v1/accounts/${accountId}`;
   const h = { 'Content-Type': 'application/json', api_access_token: token };
   const REQUEST_TIMEOUT_MS = 15_000;
@@ -51,7 +58,7 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
   const loadRawTemplates = async () => {
     if (_rawTemplates) return _rawTemplates;
     if (reads?.loadTemplates) {
-      _rawTemplates = await reads.loadTemplates(accountId);
+      _rawTemplates = await reads.loadTemplates(accountId, templatesInboxId);
     } else {
       const inboxes = await req(`/inboxes`);
       _rawTemplates = (inboxes.payload || []).flatMap((i) => i.message_templates || []);

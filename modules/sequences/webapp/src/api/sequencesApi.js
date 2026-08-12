@@ -278,10 +278,19 @@ export async function getCampaignsTier(accountId, inboxId = null) {
 // → { total, run_id, template_name }. אדמינים בלבד (403 לכל השאר).
 // template (אופציונלי) — { name, language, params:{"1":…}, mediaUrl } לשליחה בתבנית אחרת;
 // בהשמטה נשלחת תבנית הקמפיין המקורית. השרת מאמת שהתבנית מאושרת במספר של הקמפיין.
-export async function resendCampaignFailed(campaignId, accountId, locale, template = null) {
+// inboxId — לשלוח ממספר אחר מזה של הקמפיין (למשל כשהדירוג של המקורי ירד).
+export async function resendCampaignFailed(campaignId, accountId, locale, template = null, inboxId = null) {
   const payload = { campaign_id: campaignId, locale };
   if (template) payload.template = template;
+  if (inboxId) payload.inbox_id = inboxId;
   return call('campaign_resend', payload, accountId);
+}
+
+// campaign_inboxes — מספרי הוואטסאפ של החשבון לבחירה "ממי לשלוח":
+// [{ id, name, phone, quality, tier }]. quality = GREEN|YELLOW|RED|UNKNOWN|null.
+export async function listCampaignInboxes(accountId) {
+  const data = await call('campaign_inboxes', {}, accountId);
+  return data || [];
 }
 
 // campaign_resend_status — { status:'running'|'done', total, done, sent, failed:[{phone,name,error}],
@@ -299,9 +308,10 @@ export async function getCampaignExperiments(campaignId, accountId) {
 
 // campaign_resend_schedule — "תריץ שליחה מחדש בשעה הזו" (ISO). מחליף תזמון קיים.
 // רשימת הנכשלים נקבעת בזמן ההרצה, לא עכשיו. אדמינים בלבד.
-export async function scheduleCampaignResend(campaignId, accountId, runAt, locale, template = null) {
+export async function scheduleCampaignResend(campaignId, accountId, runAt, locale, template = null, inboxId = null) {
   const payload = { campaign_id: campaignId, run_at: runAt, locale };
   if (template) payload.template = template;
+  if (inboxId) payload.inbox_id = inboxId;
   return call('campaign_resend_schedule', payload, accountId);
 }
 

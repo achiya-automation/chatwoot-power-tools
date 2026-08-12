@@ -262,17 +262,18 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
 
   // template = null → תבנית הקמפיין המקורית; אחרת { name, language, params, mediaUrl }.
   // runAt = null → שליחה מיידית; אחרת ISO — נכנס לתור בשרת ומורץ שם בשעה שנקבעה.
-  const startResend = async (template, runAt) => {
+  // inboxId = null → המספר של הקמפיין; אחרת מספר אחר של אותו חשבון.
+  const startResend = async (template, runAt, inboxId) => {
     setResendBusy(true);
     try {
       if (runAt) {
-        await scheduleCampaignResend(campaignId, accountId, runAt, locale, template);
+        await scheduleCampaignResend(campaignId, accountId, runAt, locale, template, inboxId);
         setResendOpen(false);
         setPending({ run_at: runAt, template_name: template?.name || campaign.template_name });
         toast({ message: translate(M, 'scheduleSaved', { when: fmtWhen(runAt) }), variant: 'success' });
         return;
       }
-      const { total, template_name } = await resendCampaignFailed(campaignId, accountId, locale, template);
+      const { total, template_name } = await resendCampaignFailed(campaignId, accountId, locale, template, inboxId);
       setResendOpen(false);
       setResendJob({ status: 'running', total, done: 0, sent: 0, failed: [], template_name });
       toast({ message: translate(M, 'resendStarted'), variant: 'success' });

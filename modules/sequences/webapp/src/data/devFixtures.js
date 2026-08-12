@@ -413,7 +413,7 @@ const CAMPAIGN_DETAIL = {
   campaign: {
     id: 9001, title: 'השקת מסלול קיץ',
     message: 'מתנה בשבילך {{1}} 🎁 — 15% הנחה על הקמת אוטומציה ראשונה. הקוד בתוקף השבוע.',
-    campaign_type: 'one_off', campaign_status: 'completed', audience: 'תווית: לידים',
+    campaign_type: 'one_off', campaign_status: 'completed', audience: 'תווית: לידים', inbox_id: 21,
     template_name: 'offer_discount', language: 'he', category: 'MARKETING', created_at: '2026-06-17 15:20',
   },
   funnel: { audience: 248, attempted: 240, sent: 232, delivered: 221, read: 148, failed: 8 },
@@ -521,6 +521,12 @@ function dataFor(action, payload = {}) {
       ],
     };
     case 'campaign_resend_pending': return null;
+    // שלושה מספרים בחשבון, אחד מהם בדירוג נמוך — בדיוק המצב שבו הבחירה "ממי לשלוח" נחוצה.
+    case 'campaign_inboxes': return [
+      { id: 21, name: 'העסק שלי — ראשי', phone: '+972551111111', quality: 'RED', tier: 'TIER_2K' },
+      { id: 22, name: 'העסק שלי — משני', phone: '+972552222222', quality: 'GREEN', tier: 'TIER_2K' },
+      { id: 23, name: 'העסק שלי — שירות', phone: '+972553333333', quality: 'UNKNOWN', tier: null },
+    ];
     case 'campaign_resend_schedule': return { run_at: payload.run_at };
     case 'campaign_resend_unschedule': return { cancelled: 1 };
     case 'campaigns_trend': return CAMPAIGNS_TREND;
