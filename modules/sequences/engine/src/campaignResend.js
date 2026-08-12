@@ -35,12 +35,28 @@ const JOB_TTL_MS = 15 * 60 * 1000;
 // hammering /messages concurrently just moves the failure into Chatwoot's queue.
 const SEND_GAP_MS = 300;
 
+// ── בלם לחץ (12.8.26) ────────────────────────────────────────────────────────
+// POST /messages רק *יוצר* את ההודעה; את השליחה בפועל למטא עושה Sidekiq ברקע. הקצב
+// שלנו (3.3 הודעות/שנייה, וכפול מספר הקמפיינים שרצים במקביל) גבוה מהקצב שבו Sidekiq
+// מספיק לשלוח — התור 'high' תפח ל-1,310 עבודות עם פיגור של 4 דקות, וכל הודעה של לקוח
+// אמיתי נתקעה מאחוריהן. למשתמש זה נראה כאילו "הכל בהמתנה".
+//
+// המדד: הודעה שנוצרה אצלנו ועדיין אין לה source_id (wamid) = Sidekiq עוד לא שלח אותה.
+// כשמצטברות יותר מדי כאלה — עוצרים ונותנים לתור לנשום. בלי גישה ל-Redis של Chatwoot,
+// וזה המדד הנכון בלאו הכי: מה שמעניין הוא ההודעות שלנו, לא עומק התור הכללי.
+const BACKPRESSURE_CHECK_EVERY = 40;   // כל כמה שליחות בודקים
+const BACKPRESSURE_HIGH = 250;         // מעל זה — עוצרים
+const BACKPRESSURE_OK = 80;            // יורדים לזה — ממשיכים
+const BACKPRESSURE_WAIT_MS = 2000;     // בין בדיקות בזמן ההמתנה
+const BACKPRESSURE_MAX_WAIT_MS = 120000; // גג המתנה, כדי שריצה לא תיתקע לנצח
+
 const M = {
   he: {
     notFound: 'הקמפיין לא נמצא',
     noTemplate: 'לקמפיין אין תבנית שמורה — אין מה לשלוח מחדש',
     noFailed: 'אין נמענים שנכשלו בקמפיין הזה',
     running: 'שליחה מחדש כבר רצה לקמפיין הזה',
+    runningOther: 'שליחה מחדש כבר רצה בקמפיין אחר של החשבון — ההודעות יוצאות דרך אותו תור ואותה מכסה, אז מריצים אחת בכל פעם',
     noContact: 'אין מזהה איש קשר — אי אפשר לפתוח שיחה',
     suppressed: 'הנמען ביקש הסרה (opt-out)',
     liquidBlank: 'משתנה בתבנית נשאר ריק עבור הנמען',
@@ -54,6 +70,7 @@ const M = {
     noTemplate: 'The campaign has no saved template — nothing to resend',
     noFailed: 'This campaign has no failed recipients',
     running: 'A resend is already running for this campaign',
+    runningOther: 'A resend is already running for another campaign in this account — they share one queue and one daily quota, so they run one at a time',
     noContact: 'No contact id — cannot open a conversation',
     suppressed: 'The recipient opted out',
     liquidBlank: 'A template variable rendered empty for this recipient',
@@ -115,6 +132,7 @@ export function resendStatus(accountId, campaignId) {
     template_name: job.templateName,    // which template THIS run is sending
     run_id: job.runId,
     inbox_id: job.inboxId,              // and from which number
+    waiting: !!job.waiting,             // עוצר כרגע כדי לא להציף את התור של Chatwoot
     started_at: job.startedAt,
   };
 }
@@ -231,8 +249,13 @@ export async function startResend(deps, accountId, campaignId, locale = 'he', op
   const { query } = deps;
   const id = Number.parseInt(campaignId, 10);
   if (!Number.isInteger(id)) throw new Error(t(locale, 'notFound'));
+  // ⚠️ נעילה ברמת החשבון, לא ברמת הקמפיין (12.8.26). ארבע שליחות מחדש שהותנעו בתוך
+  // דקה וחצי הזרימו ~1,000 הודעות לאותו תור Sidekiq, שתפח לפיגור של ארבע דקות — וכל
+  // הודעה של לקוח אמיתי חיכתה מאחוריהן. הן גם מתחרות על אותה מכסה יומית של אותו מספר,
+  // אז אין שום יתרון בהרצה במקביל: ריצה אחת בכל רגע, השאר ממתינות לתורן.
   const key = jobKey(accountId, id);
-  if (jobs.get(key)?.status === 'running') throw new Error(t(locale, 'running'));
+  const busy = [...jobs.values()].find((j) => j.accountId === accountId && j.status === 'running');
+  if (busy) throw new Error(t(locale, busy.campaignId === id ? 'running' : 'runningOther'));
 
   const detail = await getCampaignDetail(query, accountId, id);
   if (!detail) throw new Error(t(locale, 'notFound'));
@@ -274,6 +297,9 @@ export async function startResend(deps, accountId, campaignId, locale = 'he', op
     runId: `r${Date.now()}`,
     templateName: template.name,
     inboxId: sendInboxId,
+    accountId,
+    campaignId: id,
+    waiting: false,          // עוצרים כרגע כדי לתת לתור של Chatwoot להתנקז
     startedAt: new Date().toISOString(),
   };
   jobs.set(key, job);
@@ -297,6 +323,7 @@ async function runJob(deps, ctx) {
   // ובחשבון בלי מספר נבחר הוא לא מוצא את התבנית כלל — ראו ההערה ב-makeClient.
   const client = await makeClientFor(accountId, sendInboxId);
   const { bodyParams, mediaUrl } = template;
+  const sentIds = [];   // מזהי ההודעות שיצרנו — המדד ללחץ על התור של Chatwoot
 
   let attempt = 0;
   for (const r of recipients) {
@@ -338,6 +365,7 @@ async function runJob(deps, ctx) {
           msgRow?.conversation_id || null, sent?.id || null,
           job.runId, template.name]
       );
+      if (sent?.id) sentIds.push(sent.id);
       job.sent += 1;
     } catch (e) {
       job.failed.push({ ...label, error: e.message });
@@ -345,7 +373,36 @@ async function runJob(deps, ctx) {
       job.done += 1;
     }
     if (delayMs) await new Promise((res) => setTimeout(res, delayMs));
+    if (delayMs && attempt % BACKPRESSURE_CHECK_EVERY === 0) {
+      await awaitQueueDrain(query, accountId, sentIds, job);
+    }
   }
+  job.waiting = false;
+}
+
+/**
+ * עוצר את הריצה כשיותר מדי הודעות שלנו עדיין ממתינות ל-Sidekiq של Chatwoot.
+ * ⛔ לעולם לא זורק: בלם שנשבר לא אמור להפיל שליחה שכבר יצאה לדרך — במקרה הגרוע
+ * ממשיכים בקצב המקורי, בדיוק כמו קודם.
+ */
+async function awaitQueueDrain(query, accountId, sentIds, job) {
+  const recent = sentIds.slice(-1500);   // מספיק כדי למדוד לחץ, בלי שאילתה שתופחת
+  if (!recent.length) return;
+  const pending = async () => Number((await query(
+    `SELECT count(*)::int AS n FROM public.messages
+      WHERE account_id = $1 AND id = ANY($2::bigint[]) AND source_id IS NULL AND status = 0`,
+    [accountId, recent]
+  ))[0]?.n || 0);
+  try {
+    if (await pending() < BACKPRESSURE_HIGH) return;
+    const until = Date.now() + BACKPRESSURE_MAX_WAIT_MS;
+    job.waiting = true;
+    while (Date.now() < until) {
+      await new Promise((res) => setTimeout(res, BACKPRESSURE_WAIT_MS));
+      if (await pending() <= BACKPRESSURE_OK) break;
+    }
+  } catch { /* המדידה נכשלה — ממשיכים בקצב הרגיל */ }
+  job.waiting = false;
 }
 
 /**

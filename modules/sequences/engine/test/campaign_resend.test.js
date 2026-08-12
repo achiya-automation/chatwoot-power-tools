@@ -278,6 +278,40 @@ test('campaignExperiments: one row per run, each with its template, results and 
   assert.equal(experiment.replied, 1);
 });
 
+test('startResend: one run at a time per ACCOUNT — parallel campaigns would flood one queue', async () => {
+  await seedResendCampaign();
+  // קמפיין שני, אותו חשבון, עם נכשל משלו.
+  await query(`INSERT INTO public.campaigns(id, display_id, account_id, inbox_id, title, campaign_type, campaign_status, template_params, created_at)
+               VALUES (51,51,1,10,'קמפיין שני',1,1,$1, now())`,
+    [JSON.stringify({ name: 'promo', language: 'he', category: 'MARKETING', processed_params: { 1: 'שלום' } })]);
+  await query(`INSERT INTO drip.campaign_audience_snapshots(account_id,campaign_id,contact_id,contact_name,phone)
+               VALUES (1,51,60,'דנה לוי','0501111111')`);
+  await query(`INSERT INTO drip.campaign_send_snapshots
+    (account_id,campaign_id,contact_id,contact_name,phone,source_id,status,error_title)
+    VALUES (1,51,60,'דנה לוי','0501111111','wamid-51',3,'131049')`);
+
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const slow = {
+    createConversation: makeFakeClient().createConversation,
+    sendTemplate: async (...args) => { await gate; return makeFakeClient().sendTemplate(...args); },
+  };
+  await startResend({ query, makeClientFor: async () => slow, delayMs: 0 }, 1, 50);
+
+  // ⛔ קמפיין *אחר* של אותו חשבון — נדחה, כי שתיהן חולקות תור ומכסה.
+  await assert.rejects(
+    startResend({ query, makeClientFor: async () => slow, delayMs: 0 }, 1, 51),
+    /קמפיין אחר של החשבון/
+  );
+  // חשבון אחר לא מושפע.
+  await assert.rejects(
+    startResend({ query, makeClientFor: async () => slow, delayMs: 0 }, 2, 51),
+    /הקמפיין לא נמצא/          // אין לו קמפיין כזה — אבל הוא לא נחסם בנעילה
+  );
+  release();
+  await waitForDone(1, 50);
+});
+
 test('startResend: a media template with no variables sends an EMPTY body, not the header hash', async () => {
   await seedResendCampaign();
   await seedInboxTemplates();
