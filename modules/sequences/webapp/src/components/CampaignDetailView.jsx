@@ -42,6 +42,8 @@ const M = {
         breakdownTitle: 'כשלים לפי סיבה', breakdownHint: 'לחיצה על סיבה מסננת את הטבלה',
         resend: 'שליחה מחדש לנכשלים',
         resendRunning: 'שולח מחדש…', resendDoneMsg: 'שליחה מחדש הסתיימה: {ok} נשלחו, {bad} נכשלו',
+        resendWaiting: 'ממתין — וואטסאפ עוד מוציא את הקודמות',
+        resendPendingNote: 'שעון ליד הודעה = יצאה מהמערכת וממתינה לאישור מוואטסאפ. זה לא תזמון.',
         resendStarted: 'השליחה מחדש התחילה', adminOnly: 'שליחה מחדש דורשת הרשאת מנהל בחשבון',
         // ── סיכום אחרי ריצה + תזמון ──
         resendDoneTitle: 'השליחה מחדש הסתיימה', resendOk: 'יצאו בהצלחה', resendBad: 'נכשלו שוב',
@@ -77,6 +79,8 @@ const M = {
         breakdownTitle: 'Failures by reason', breakdownHint: 'Click a reason to filter the table',
         resend: 'Resend to failed',
         resendRunning: 'Resending…', resendDoneMsg: 'Resend finished: {ok} sent, {bad} failed',
+        resendWaiting: 'Paused — WhatsApp is still working through the previous ones',
+        resendPendingNote: 'A clock next to a message means it left the system and is awaiting WhatsApp confirmation. It is not scheduled.',
         resendStarted: 'The resend has started', adminOnly: 'Resending requires an administrator role',
         resendDoneTitle: 'The resend has finished', resendOk: 'went out', resendBad: 'failed again',
         resendAgain: 'Try the failed ones again', resendDismiss: 'Dismiss',
@@ -536,15 +540,20 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
 
           {/* עבודת שליחה-מחדש רצה — פס התקדמות חי במקום הכפתור */}
           {resendJob?.status === 'running' ? (
-            <div className="mb-3 flex items-center gap-3" role="status">
-              <span className="h-2 flex-1 overflow-hidden rounded-full bg-n-alpha-3">
-                <span className="block h-full rounded-full bg-n-blue-9 transition-all duration-500" style={{ width: `${resendJob.total ? Math.round((resendJob.done / resendJob.total) * 100) : 0}%` }} />
-              </span>
-              <span className="shrink-0 text-xs tabular-nums text-n-slate-11">
-                {resendJob.template_name ? <span className="text-n-slate-12">{resendJob.template_name} · </span> : null}
-                {t('resendRunning')} {resendJob.done}/{resendJob.total}
-                {resendJob.failed.length ? <span className="text-n-ruby-11"> · {resendJob.failed.length}</span> : null}
-              </span>
+            <div className="mb-3" role="status">
+              <div className="flex items-center gap-3">
+                <span className="h-2 flex-1 overflow-hidden rounded-full bg-n-alpha-3">
+                  <span className={`block h-full rounded-full transition-all duration-500 ${resendJob.waiting ? 'bg-n-amber-9' : 'bg-n-blue-9'}`} style={{ width: `${resendJob.total ? Math.round((resendJob.done / resendJob.total) * 100) : 0}%` }} />
+                </span>
+                <span className="shrink-0 text-xs tabular-nums text-n-slate-11">
+                  {resendJob.template_name ? <span className="text-n-slate-12">{resendJob.template_name} · </span> : null}
+                  {resendJob.waiting ? <span className="text-n-amber-11">{t('resendWaiting')} · </span> : null}
+                  {t('resendRunning')} {resendJob.done}/{resendJob.total}
+                  {resendJob.failed.length ? <span className="text-n-ruby-11"> · {resendJob.failed.length}</span> : null}
+                </span>
+              </div>
+              {/* השעון בשיחה מבלבל — הוא נראה כמו "מתוזמן" ובעצם אומר "ממתין לאישור" */}
+              <p className="mb-0 mt-1.5 text-xs text-n-slate-10">{t('resendPendingNote')}</p>
             </div>
           ) : null}
           <div className="flex flex-col gap-1.5">
