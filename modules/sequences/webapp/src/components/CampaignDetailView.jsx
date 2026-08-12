@@ -28,6 +28,7 @@ const M = {
         recipients: 'נמענים', notSent: 'לא נוסו לשליחה', snapshotNote: 'לפי תמונת הקהל שנשמרה בזמן הקמפיין', currentLabelNote: 'לפי החברות בתווית כרגע — לקמפיין הישן אין תמונת קהל שמורה',
         name: 'שם', phone: 'טלפון', status: 'סטטוס', attempts: 'ניסיונות', when: 'זמן', reason: 'סיבה', conversation: 'קישור לשיחה', noAttempt: 'לא נוצר ניסיון שליחה',
         export: 'ייצוא CSV', print: 'הדפסה / PDF', printedAt: 'הופק', openConv: 'פתיחת השיחה ב-Chatwoot',
+        msgMore: 'הצגת ההודעה המלאה', msgLess: 'קיצור ההודעה',
         noReplyText: '(מדיה או הודעה ללא טקסט)', errLoad: 'שגיאה בטעינת הקמפיין', notFound: 'הקמפיין לא נמצא', retry: 'ניסיון חוזר',
         s_sent: 'נשלח — ממתין למסירה', s_delivered: 'נמסר', s_read: 'נקרא', s_failed: 'נכשל', s_pending: 'ממתין', s_notsent: 'לא נוסה לשליחה',
         // ── סינון + עמודות תגובה ──
@@ -64,6 +65,7 @@ const M = {
         recipients: 'Recipients', notSent: 'Not attempted', snapshotNote: 'from the audience snapshot captured at campaign time', currentLabelNote: 'from current label membership — this legacy campaign has no saved audience snapshot',
         name: 'Name', phone: 'Phone', status: 'Status', attempts: 'Attempts', when: 'Time', reason: 'Reason', conversation: 'Conversation link', noAttempt: 'No send attempt was created',
         export: 'Export CSV', print: 'Print / PDF', printedAt: 'Generated', openConv: 'Open the conversation in Chatwoot',
+        msgMore: 'Show the full message', msgLess: 'Show less',
         noReplyText: '(media or empty message)', errLoad: 'Failed to load campaign', notFound: 'Campaign not found', retry: 'Retry',
         s_sent: 'Sent — awaiting delivery', s_delivered: 'Delivered', s_read: 'Read', s_failed: 'Failed', s_pending: 'Pending', s_notsent: 'Not attempted',
         filter: 'Filter', clearFilter: 'Clear filter', outOf: 'of', noMatch: 'No recipients match the filter',
@@ -195,6 +197,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   const [experiments, setExperiments] = useState([]);
   // תזמון ממתין ({ run_at, template_name }) — נטען מהשרת, שורד רענון דף.
   const [pending, setPending] = useState(null);
+  const [msgOpen, setMsgOpen] = useState(false);   // הודעת הקמפיין פרושה או מקופלת
   const alive = useRef(true);
   // איפוס בגוף האפקט ולא רק ב-cleanup — אחרת ה-double-mount של StrictMode משאיר את
   // הדגל false לתמיד והתשובות של ה-fetch נזרקות (skeleton נצחי בפיתוח).
@@ -396,8 +399,21 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
             </span>
           ) : null}
         </div>
+        {/* ⚠️ max-height + גלילה חתך שורה באמצע האותיות ונראה כמו תקלה. line-clamp נעצר
+            בסוף שורה שלמה, והלחיצה פורשת את ההודעה המלאה — בלי פס גלילה בתוך פסקה. */}
         {campaign.message ? (
-          <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap rounded-lg bg-n-alpha-1 px-3 py-2 text-sm text-n-slate-11">{campaign.message}</p>
+          <button
+            type="button"
+            onClick={() => setMsgOpen((v) => !v)}
+            aria-expanded={msgOpen}
+            title={msgOpen ? t('msgLess') : t('msgMore')}
+            className="mt-2 block w-full rounded-lg bg-n-alpha-1 px-3 py-2 text-start transition-colors hover:bg-n-alpha-2"
+          >
+            <span className={`block whitespace-pre-wrap text-sm text-n-slate-11 ${msgOpen ? '' : 'line-clamp-4'}`}>
+              {campaign.message}
+            </span>
+            <span className="mt-1 block text-xs text-n-blue-11">{msgOpen ? t('msgLess') : t('msgMore')}</span>
+          </button>
         ) : null}
       </div>
 
@@ -543,7 +559,9 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
                   className="flex w-full items-center gap-3 rounded-lg px-2 py-1 text-start hover:bg-n-alpha-2"
                 >
                   <span className={`h-2 w-2 shrink-0 rounded-full ${g.statusKey === 'notsent' ? 'bg-n-amber-9' : 'bg-n-ruby-9'}`} aria-hidden="true" />
-                  <span className={`min-w-0 flex-1 truncate text-xs ${g.statusKey === 'notsent' ? 'text-n-amber-11' : 'text-n-ruby-11'}`}>
+                  {/* ההסבר של מטא ארוך (ובאנגלית ארוך עוד יותר) — truncate בשורה אחת קטע
+                      אותו באמצע מילה. שתי שורות מכילות את כולו כמעט תמיד. */}
+                  <span className={`min-w-0 flex-1 text-start text-xs line-clamp-2 ${g.statusKey === 'notsent' ? 'text-n-amber-11' : 'text-n-ruby-11'}`}>
                     {errorLabel(g.error_title) || t(`s_${g.statusKey}`)}
                   </span>
                   {/* חלקה של הסיבה מכלל הכשלים — אותו דפוס bar-list של כרטיס ההשוואה */}

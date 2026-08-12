@@ -24,8 +24,10 @@
   // ── i18n: Hebrew for RTL (he) users, English for everyone else — same #app[dir]=rtl signal the
   // sibling injectors use (Chatwoot doesn't expose the locale on the DOM otherwise). ──
   function locale() {
-    var a = document.querySelector('#app[dir]');
-    return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
+    // כל אלמנט rtl בדף מספיק. #app[dir] לבדו היה שביר: הוא נולד רק אחרי טעינת החשבון,
+    // ושינוי במבנה של Chatwoot היה מפיל את הזיהוי לאנגלית בלי שאיש ישים לב.
+    if (document.querySelector('#app[dir="rtl"], [dir="rtl"]')) return 'he';
+    return document.documentElement.getAttribute('dir') === 'rtl' ? 'he' : 'en';
   }
   var I18N = {
     he: { sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו', report: 'דוח מלא', overview: 'סטטיסטיקה', close: 'סגירה', total: 'קמפיינים', left: 'נותרו להיום', leftTitle: 'תקציב שליחה יומי מול תקרת ה-tier של Meta (משוער)', unlimited: 'ללא הגבלה' },
@@ -312,6 +314,21 @@
     holder.style.width = r.width + 'px';
     holder.style.height = (window.innerHeight - top) + 'px';
   }
+  // ⚠️ ה-iframe נולד עם ?locale=<מה שהיה באותו רגע>, ו-Chatwoot קובע rtl רק אחרי שהחשבון
+  // נטען. גרוע מזה: הוא לא *משנה* את ה-dir אלא מרנדר את #app מאפס עם ה-dir כבר עליו
+  // (v-if="!authUIFlags.isFetching" ב-App.vue), ולכן ה-MutationObserver על attributeFilter
+  // ['dir'] לא נורה לעולם — דוח שנפתח מוקדם נשאר אנגלי לנצח בממשק עברי. כאן מסתנכרנים
+  // מתוך ה-tick התקופתי, ורק כשהשפה באמת השתנתה מזו שנשלחה קודם.
+  var sentLocale = null;
+  function syncFrameLocale() {
+    var loc = locale();
+    if (!shown || !frame || !frame.contentWindow || loc === sentLocale) return;
+    try {
+      frame.contentWindow.postMessage({ type: 'drip-locale', locale: loc }, window.location.origin);
+      sentLocale = loc;
+    } catch (e) { /* ה-iframe עדיין לא מוכן — הטיק הבא ינסה שוב */ }
+  }
+
   function reportSrc(cid) {
     // cid → deep-link straight to that campaign's detail, solo=1 so its Back button closes the
     // overlay (drip-close); no cid → the campaigns overview list.
@@ -376,6 +393,7 @@
   function hideReport() {
     if (!shown) return;
     shown = false;
+    sentLocale = null;   // ה-iframe ייטען מחדש בפתיחה הבאה — שולחים לו את השפה שוב
     if (holder) holder.style.display = 'none';
     if (crepFromUrl()) {
       try {
@@ -456,9 +474,7 @@
   // קובע rtl רק אחרי טעינת החשבון, אז תוויות שנוצרו לפני כן חייבות להתעדכן.
   new MutationObserver(function () {
     tick();
-    if (shown && frame && frame.contentWindow) {
-      try { frame.contentWindow.postMessage({ type: 'drip-locale', locale: locale() }, window.location.origin); } catch (e) {}
-    }
+    syncFrameLocale();
   }).observe(document.documentElement, { attributes: true, attributeFilter: ['dir'], subtree: true });
 
   // bootstrap: fetch on entering the page (or account change), render cards + header button as Vue
@@ -473,6 +489,7 @@
       renderCards();
       renderHeader();
       renderKpiBar();
+      syncFrameLocale();
       // restore the report from ?crep= after a refresh (once — afterwards popstate owns it)
       if (!crepRestored) {
         crepRestored = true;
