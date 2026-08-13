@@ -17,7 +17,7 @@ beforeEach(async () => {
   await pool.query(`TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations,
     public.contact_inboxes, public.inboxes, public.channel_whatsapp, drip.campaign_audience_snapshots,
     drip.campaign_send_snapshots, drip.contact_state, drip.campaign_resend_schedule,
-    drip.account_health, drip.number_quality`);
+    drip.account_health, drip.number_quality, drip.template_media`);
   _resetResendJobs();
 });
 
@@ -480,6 +480,50 @@ test('templates: media memory carries the warm URL of a campaign that already us
   const { data } = await handleAction(1, 'templates', {});
   const withImage = data.find((x) => x.name === 'with_image');
   assert.equal(withImage.media_url, 'https://cdn.example/warm.jpg');
+});
+
+test('templates: media memory falls back to template_media (resend-only / modal uploads)', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+  // אין קמפיין עם מדיה לתבנית הזו ואין שלב רצף — רק רישום של העלאה קודמת (מודאל / שליחה-מחדש).
+  await handleAction(1, 'save_template_media', { template_name: 'with_image', media_url: 'https://cdn.example/uploaded-once.jpg' });
+  await query(`INSERT INTO drip.account_tokens(account_id, chatwoot_token, base_url, inbox_id)
+               VALUES (1,'tok','http://cw',10)
+               ON CONFLICT (account_id) DO UPDATE SET inbox_id = 10`);
+  const { data } = await handleAction(1, 'templates', {});
+  assert.equal(data.find((x) => x.name === 'with_image').media_url, 'https://cdn.example/uploaded-once.jpg');
+});
+
+test('templates: a campaign that actually sent the file outranks the template_media fallback', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+  await query(`UPDATE public.campaigns SET template_params = $1 WHERE id = 50`,
+    [JSON.stringify({
+      name: 'with_image', language: 'he', category: 'MARKETING',
+      processed_params: { header: { media_url: 'https://cdn.example/warm.jpg', media_type: 'image' } },
+    })]);
+  await handleAction(1, 'save_template_media', { template_name: 'with_image', media_url: 'https://cdn.example/newer-upload.jpg' });
+  await query(`INSERT INTO drip.account_tokens(account_id, chatwoot_token, base_url, inbox_id)
+               VALUES (1,'tok','http://cw',10)
+               ON CONFLICT (account_id) DO UPDATE SET inbox_id = 10`);
+  const { data } = await handleAction(1, 'templates', {});
+  // הקישור ששרד קמפיין הוא "חם" אצל מטא — עדיף על העלאה שלא נשלחה (ראו 131053).
+  assert.equal(data.find((x) => x.name === 'with_image').media_url, 'https://cdn.example/warm.jpg');
+});
+
+test('startResend: a chosen template with media is remembered for the next dialog', async () => {
+  await seedResendCampaign();
+  await seedInboxTemplates();
+  const client = makeFakeClient();
+  await startResend(
+    { query, makeClientFor: async () => client, delayMs: 0 }, 1, 50, 'he',
+    { template: { name: 'with_image', language: 'he', params: { 1: 'שלום' }, mediaUrl: 'https://cdn.example/v7.mp4' } }
+  );
+  await waitForDone(1, 50);
+  const rows = await query(
+    `SELECT media_url FROM drip.template_media WHERE account_id = 1 AND template_name = 'with_image'`
+  );
+  assert.equal(rows[0]?.media_url, 'https://cdn.example/v7.mp4');
 });
 
 test('liquidContactParams: substitutes contact fields; blank render is flagged', () => {

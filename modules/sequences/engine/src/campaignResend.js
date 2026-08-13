@@ -265,6 +265,24 @@ export async function startResend(deps, accountId, campaignId, locale = 'he', op
   const sendInboxId = await resolveSendInbox(query, accountId, detail.campaign, options?.inboxId, locale);
   const template = await resolveTemplate(query, detail.campaign, options?.template, locale, sendInboxId);
 
+  // זיכרון מדיה (13.8.26): קובץ שהועלה בדיאלוג השליחה-מחדש לא נשמר בשום מקום — בפתיחה
+  // הבאה הדיאלוג היה ריק והמשתמש נדרש להעלות את אותו קובץ שוב. כל שליחה עם מדיה נרשמת
+  // ל-drip.template_media (המקור שממנו רשימת התבניות מושלמת). fail-open — כישלון ברישום
+  // לא עוצר שליחה, אבל נרשם ללוג (שתיקה כאן היא בדיוק מה שהסתיר את החור הזה).
+  if (template.mediaUrl) {
+    try {
+      await query(
+        `INSERT INTO drip.template_media (account_id, template_name, media_url, updated_at)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (account_id, template_name)
+         DO UPDATE SET media_url = excluded.media_url, updated_at = now()`,
+        [accountId, template.name, template.mediaUrl]
+      );
+    } catch (e) {
+      console.error('[drip] resend media memory skipped:', e.message);
+    }
+  }
+
   // Final state per recipient is already collapsed by getCampaignDetail — status 3 is
   // "still failed after every attempt so far", exactly the set the report shows in red.
   const failedRecipients = detail.recipients.filter((r) => r.status === 3);
