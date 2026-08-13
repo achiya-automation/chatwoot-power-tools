@@ -292,7 +292,14 @@
     spinner.innerHTML =
       '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
     holder.appendChild(spinner);
-    frame.addEventListener('load', function () { spinner.style.display = 'none'; });
+    frame.addEventListener('load', function () {
+      spinner.style.display = 'none';
+      // הודעת locale שנשלחת בזמן שה-iframe עוד נטען נמסרת לריק (המאזין טרם נרשם) בלי שום
+      // שגיאה — ו-sentLocale כבר ננעל, אז אף טיק לא ישלח שוב. אחרי כל load מאפסים ושולחים
+      // מחדש; סקריפטי ה-module של ה-iframe רצים לפני אירוע load, כך שהמאזין כבר רשום.
+      sentLocale = null;
+      syncFrameLocale();
+    });
     // close control (×) — returns to the native campaigns list. z above the iframe.
     var close = document.createElement('button');
     close.type = 'button';
