@@ -765,10 +765,12 @@ async function actionTemplates(accountId, inboxId = null) {
   // "זיכרון מדיה" — לכל תבנית, הקישור (media_url) שכבר שימש אותה. כך העורך ממלא
   // אוטומטית את המדיה לתבנית-header, ואין צורך להזין קישור שוב (אחרי הפעם הראשונה).
   //
-  // שני מקורות: שלבי רצף, ו*גם* קמפיינים שכבר יצאו (10.8.26). בלי הקמפיינים, שליחה
-  // מחדש של קמפיין-תמונה ביקשה להעלות מחדש בדיוק את הקובץ שכבר יצא לאלפי נמענים —
-  // וכתובת חדשה היא כתובת "קרה" אצל מטא, מה שמזמין 131053 (ראו מיגרציה 047).
-  // הקישור החם הוא בדיוק זה ששרד את הקמפיין.
+  // שלושה מקורות: שלבי רצף, קמפיינים שכבר יצאו (10.8.26), ו-drip.template_media (13.8.26).
+  // בלי הקמפיינים, שליחה מחדש של קמפיין-תמונה ביקשה להעלות מחדש בדיוק את הקובץ שכבר
+  // יצא לאלפי נמענים — וכתובת חדשה היא כתובת "קרה" אצל מטא, מה שמזמין 131053 (ראו
+  // מיגרציה 047). הקישור החם הוא בדיוק זה ששרד את הקמפיין.
+  // template_media משלים את מה שאין לו שורת קמפיין: העלאות ממודאל יצירת הקמפיין,
+  // ותבניות ששימשו רק שליחה-מחדש (v7 של 13.8 — הועלה וידאו, נשלח ל-363, ולא נזכר בשום מקום).
   try {
     const mediaRows = await query(
       // ⚠️ sequence_steps.id הוא uuid ו-campaigns.id הוא bigint — UNION ישיר עליהם נכשל
@@ -791,6 +793,11 @@ async function actionTemplates(accountId, inboxId = null) {
            FROM public.campaigns c
           WHERE c.account_id = $1
             AND coalesce(c.template_params -> 'processed_params' -> 'header' ->> 'media_url', '') <> ''
+         UNION ALL
+         SELECT tm.template_name, tm.media_url, 3 AS pri,
+                row_number() OVER (ORDER BY tm.updated_at DESC) AS ord
+           FROM drip.template_media tm
+          WHERE tm.account_id = $1 AND coalesce(tm.media_url, '') <> ''
        ) m
         WHERE coalesce(template_name, '') <> ''
         ORDER BY template_name, pri, ord`,
