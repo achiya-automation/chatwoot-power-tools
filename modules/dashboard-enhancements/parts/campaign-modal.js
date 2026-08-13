@@ -416,7 +416,7 @@
         var rawTxt = d.rawBody.textContent;
         // אורך CUSTOM_FIELDS בחתימה — הטקסט הגולמי לא משתנה כשהשדות חוזרים מה-API, אבל
         // התוויות כן (מפתח → שם תצוגה), וצריך רינדור מחדש.
-        var bodySig = rawTxt + ' ' + CUSTOM_FIELDS.length;
+        var bodySig = rawTxt + ' ' + CUSTOM_FIELDS.length;
         if (d.myBody.__sig !== bodySig) {
           d.myBody.__sig = bodySig;
           renderParts(d.myBody, splitTokens(rawTxt), 'drip-token-pill sm', null);
