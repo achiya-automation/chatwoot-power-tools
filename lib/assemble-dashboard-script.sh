@@ -39,10 +39,17 @@ _cwpt_module_parts() {
         "modules/sequences/inject/journey-launch.js"
       ;;
     enhancements)
+      # auto-direction is first on purpose: it is pure CSS with no dependencies, so a later
+      # part that throws during its own IIFE cannot stop the direction fix from applying.
+      # schedule-send probes the sequences engine at runtime and renders nothing without it,
+      # so installing enhancements alone stays valid.
       printf '%s\n' \
+        "modules/dashboard-enhancements/parts/auto-direction.js" \
         "modules/dashboard-enhancements/parts/campaign-modal.js" \
         "modules/dashboard-enhancements/parts/campaign-stats.js" \
-        "modules/dashboard-enhancements/parts/video-compressor.js"
+        "modules/dashboard-enhancements/parts/video-compressor.js" \
+        "modules/dashboard-enhancements/parts/bot-mode.js" \
+        "modules/dashboard-enhancements/parts/schedule-send.js"
       ;;
     *)
       return 1

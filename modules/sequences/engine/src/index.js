@@ -5,6 +5,7 @@ import { startLoop } from './loop.js';
 import { runMigrations } from './migrate.js';
 import { reconcileAccount } from './reconcile.js';
 import { runDueResends } from './campaignResend.js';
+import { runDueScheduledMessages } from './scheduledMessages.js';
 import { makeAccountClient } from './store.js';
 import { refreshHealth, fetchNumberHealth } from './meta.js';
 import { notifyNewLeads } from './notify.js';
@@ -258,6 +259,16 @@ async function tick() {
     if (started) console.log(`[drip] ${started} scheduled campaign resend(s) started`);
   } catch (e) {
     console.error('[drip] scheduled resend sweep failed:', e.message);
+  }
+
+  // הודעות בודדות שתוזמנו בתוך שיחה (מיגרציה 051). רב-חשבוני כמו התור שמעליו, ובאותו
+  // דפוס fail-open: הודעה שנופלת נרשמת בשורה שלה ולא מפילה את הטיק.
+  try {
+    const { sent, skipped } = await runDueScheduledMessages({ query, makeClientFor: makeAccountClient });
+    if (sent) console.log(`[drip] ${sent} scheduled message(s) sent`);
+    if (skipped) console.warn(`[drip] ${skipped} scheduled message(s) skipped — past the staleness window`);
+  } catch (e) {
+    console.error('[drip] scheduled message sweep failed:', e.message);
   }
 }
 
