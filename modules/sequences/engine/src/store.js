@@ -58,6 +58,7 @@ import { handleTemplatesAction } from './templates.js';
 import { handleJourneysAction, makeJourneysCtx } from './journeys.js';
 import { handlePresenceAction } from './presence.js';
 import { makeClient } from './chatwoot.js';
+import { scheduleMessage, listScheduled, cancelScheduled } from './scheduledMessages.js';
 
 let _config = null;
 
@@ -213,6 +214,13 @@ export async function handleAction(accountId, action, payload) {
       return { data: await rpcJson('drip.ack_alert', { ...payload, account_id: accId }) };
     case 'suppressed':
       return actionSuppressed(accId, payload);
+    // שליחה מתוזמנת של הודעה בודדת בשיחה — ראה scheduledMessages.js
+    case 'schedule_message':
+      return { data: await scheduleMessage({ query }, accId, payload) };
+    case 'scheduled_messages':
+      return { data: await listScheduled({ query }, accId, payload) };
+    case 'cancel_scheduled_message':
+      return { data: await cancelScheduled({ query }, accId, payload) };
     default:
       throw new Error(`Unknown action: ${action}`);
   }

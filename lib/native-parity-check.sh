@@ -63,6 +63,27 @@ REQUIRED_CLASSES=(
   'active:enabled:scale-[0.97]'
   'underline-offset-2'
   'border-s'
+  # ── bot-mode (מתג בוט/אדם בתוך שיחה) ──
+  # ⚠️ i-lucide-headset הוא האייקון המתבקש ל"נציג אנושי" ואינו מקומפל — נבחר user-round
+  # דווקא כי הוא כן. אם הבדיקה כאן נכשלת, האייקון ייעלם בשקט ולא תהיה שגיאה בקונסול.
+  'i-lucide-bot'
+  'i-lucide-user-round'
+  'text-n-blue-11'
+  'border-n-weak'
+  'border-n-strong'
+  'rounded-full'
+  'shadow-xl'
+  # ── schedule-send (כפתור תזמון ליד השליחה) ──
+  # המחרוזת של Button.vue variant=ghost color=slate size=sm icon-only, מילה במילה.
+  'i-lucide-alarm-clock'
+  'i-lucide-trash-2'
+  'outline-transparent'
+  'disabled:opacity-50'
+  'bg-n-alpha-1'
+  # ── auto-direction (זיהוי כיוון כתיבה) ──
+  # הסלקטור שעליו נשענת ההחלה על בועות ההודעה. .ProseMirror מגיע מ-prosemirror עצמו
+  # ולכן אינו נבדק כאן.
+  'prose-bubble'
 )
 # משתני CSS שהסטיילים המוזרקים (campaign-modal.js) קוראים ישירות
 REQUIRED_VARS=(
