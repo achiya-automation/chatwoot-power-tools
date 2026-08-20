@@ -75,7 +75,7 @@ test('toGraph: keeps node position (rounded) — the editor needs it, the runtim
   assert.deepEqual(g.nodes[0].position, { x: 11, y: -3 });
 });
 
-test('toGraph: generates an edge id when React Flow did not provide one', () => {
+test('toGraph: generates an edge id when the editor did not provide one', () => {
   const g = toGraph([], [{ source: 'a', target: 'b', sourceHandle: 'yes' }]);
   assert.ok(g.edges[0].id.length > 0);
 });
@@ -228,15 +228,15 @@ test('validateGraph: buttons need 1-10 non-empty options', () => {
   assert.deepEqual(validateGraph(mk([{ title: 'yes' }, { title: 'no' }])), []);
 });
 
-test('validateGraph: condition needs BOTH yes and no edges (else runtime misroutes)', () => {
+test('validateGraph: an unconnected condition branch is a valid terminal path', () => {
   const cond = { id: 'c', type: 'condition', data: { field: 'x', op: 'eq', value: '1' } };
   const end = { id: 'e', type: 'handoff', data: {} };
-  // only "yes" wired → cond_branch
+  // Only "yes" is wired; "no" intentionally ends the flow.
   const onlyYes = connectedGraph([cond, end], [
     { id: 'e2', source: 'n1', target: 'c', sourceHandle: null },
     { id: 'e3', source: 'c', target: 'e', sourceHandle: 'yes' },
   ]);
-  assert.deepEqual(validateGraph(onlyYes), [{ code: 'cond_branch', nodeId: 'c' }]);
+  assert.deepEqual(validateGraph(onlyYes), []);
   // both wired → valid
   const both = connectedGraph([cond, end], [
     { id: 'e2', source: 'n1', target: 'c', sourceHandle: null },

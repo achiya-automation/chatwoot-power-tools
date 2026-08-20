@@ -8,7 +8,7 @@
  *   toOutline(graph)          → { ok: true, triggerId, steps } | { ok: false, reason, nodeId? }
  *   outlineToEdges(steps, …)  → edges[]   (רשימת הקשתות המלאה — נבנית מחדש כל פעם)
  *   insertStep / removeStep / moveStep — עריכות טהורות על עץ הצעדים
- *   outlineLayout(steps)      → { id: {x,y} }  מיקומים לתצוגת המפה
+ *   outlineLayout(steps)      → { id: {x,y} }  מיקומי מטא-דאטה עקביים לגרף השמור
  *
  * Step = { id, type, branches: null | [{ handle, steps: Step[], ends: boolean }] }
  * ends=true — הענף מסיים את הפלואו ואינו ממשיך אל הזנב המשותף שמתחת להסתעפות.
@@ -23,8 +23,8 @@
  * המוקדם ביותר של הענפים. אם יש יותר ממועמד אחד (התכנסות לא-מובנית), או שצומת
  * היה מרונדר פעמיים — הטור לא יכול לייצג את הגרף נאמנה ומחזירים ok:false.
  *
- * מה שהטור לא מייצג ולכן נופל למפה: לולאה, צמתים מנותקים, התכנסות לא-מובנית,
- * ו-handle שלא שייך לצומת.
+ * מבנים חופשיים שהעץ לא מייצג (לולאה, צמתים מנותקים או התכנסות לא-מובנית)
+ * נשארים כגרף ונערכים ברשימת המאקרו דרך בוררי "המשך אל" — בלי קנבס נפרד.
  *
  * ⚠️ נורמליזציה יחידה: צומת כפתורים שיציאת ברירת המחדל שלו לא מחווטת מקבל אותה
  * בכתיבה חזרה, מחוברת לזנב המשותף. במנוע, יציאה כזו נופלת ל"קשת הראשונה במערך" —
@@ -280,6 +280,60 @@ export function moveStep(steps, id, delta) {
   return move(next) ? next : steps;
 }
 
+/** גרירה למיקום מדויק בתוך אותה רשימה; צעד לעולם אינו בורח מהמסלול שלו. */
+export function moveStepTo(steps, id, targetIndex) {
+  const next = cloneList(steps);
+  const move = (list) => {
+    const from = list.findIndex((step) => step.id === id);
+    if (from >= 0) {
+      const to = Math.max(0, Math.min(Number(targetIndex) || 0, list.length - 1));
+      if (from === to) return true;
+      const [step] = list.splice(from, 1);
+      list.splice(to, 0, step);
+      return true;
+    }
+    return list.some((step) => (step.branches || []).some((branch) => move(branch.steps)));
+  };
+  return move(next) ? next : steps;
+}
+
+/**
+ * החלפת סוג של צעד בלי להזיז אותו ברשימה. תוכן של מסלולים ישנים מוחזר למתקשר
+ * כדי שיוכל להסיר מהגרף השמור צמתים שאינם נגישים עוד.
+ */
+export function replaceStepType(steps, id, replacement) {
+  const next = cloneList(steps);
+  let removedIds = [];
+  const replace = (list) => {
+    const index = list.findIndex((step) => step.id === id);
+    if (index >= 0) {
+      removedIds = (list[index].branches || []).flatMap((branch) => stepIds(branch.steps));
+      list[index] = replacement;
+      return true;
+    }
+    return list.some((step) => (step.branches || []).some((branch) => replace(branch.steps)));
+  };
+  return replace(next) ? { steps: next, removedIds } : { steps, removedIds: [] };
+}
+
+/** בחירה אם ענף חוזר להמשך המשותף או מסיים את הפלואו במקום. */
+export function setBranchEnds(steps, nodeId, handle, ends) {
+  const next = cloneList(steps);
+  const change = (list) => {
+    for (const step of list) {
+      if (step.id === nodeId) {
+        const branch = (step.branches || []).find((item) => item.handle === handle);
+        if (!branch) return false;
+        branch.ends = !!ends;
+        return true;
+      }
+      if ((step.branches || []).some((branch) => change(branch.steps))) return true;
+    }
+    return false;
+  };
+  return change(next) ? next : steps;
+}
+
 /** כל המזהים בטור, לפי סדר התצוגה. */
 export function stepIds(steps) {
   const out = [];
@@ -294,8 +348,8 @@ export function stepIds(steps) {
 }
 
 /*
- * מיקומים לתצוגת המפה: הטור יורד למטה, כל ענף מוזח צעד נוסף הצידה. מוחל רק אחרי
- * עריכה מהטור — פלואו שנערך רק בקנבס שומר על המיקומים שהמשתמש סידר.
+ * מיקומי מטא-דאטה לגרף השמור: הטור יורד למטה וכל ענף מוזח צעד נוסף הצידה.
+ * המנוע מתעלם מהמיקומים, אבל ערכים עקביים מקלים על ייצוא ועל תאימות לאחור.
  */
 export function outlineLayout(steps, { triggerId = 'trigger', x0 = 260, y0 = 40, dx = 260, dy = 130 } = {}) {
   const pos = {};

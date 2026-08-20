@@ -834,6 +834,7 @@ export default function Inspector({
   fieldSuggestions = [],
   vars = [],
   accountId,
+  embedded = false,
 }) {
   const t = useT(M);
 
@@ -847,10 +848,8 @@ export default function Inspector({
   const patch = (p) => patchNode(node.id, p);
   const dlId = `cond-fields-${node.id}`;
 
-  return (
-    <div className="flex flex-col gap-3">
-      <h3 className="m-0 text-sm font-semibold text-n-slate-12">{t('nodeTitle')}</h3>
-
+  const fields = (
+    <>
       {node.type === 'message' ? (
         <>
           <Textarea
@@ -1037,6 +1036,17 @@ export default function Inspector({
           <AssignPickers data={d} patch={patch} meta={meta} />
         </>
       ) : null}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="flex flex-col gap-3">{fields}</div>;
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="m-0 text-sm font-semibold text-n-slate-12">{t('nodeTitle')}</h3>
+      {fields}
 
       <div className="border-t border-n-weak pt-3 mt-1">
         <Button variant="outline" color="ruby" size="sm" icon={Trash2} onClick={() => removeNode(node.id)}>

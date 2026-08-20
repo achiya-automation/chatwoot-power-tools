@@ -9,6 +9,9 @@ import {
   insertStep,
   removeStep,
   moveStep,
+  moveStepTo,
+  replaceStepType,
+  setBranchEnds,
   stepIds,
   forkHandlesOf,
   outlineLayout,
@@ -402,6 +405,43 @@ test('reorder swaps two neighbours and rewires around them', () => {
   assert.equal(nextNodeId(g2, 'n2'), null);
 });
 
+test('drag reorder moves a step to an exact index inside its own path', () => {
+  const o = toOutline(LINEAR());
+  const steps = moveStepTo(o.steps, 'n1', 2);
+  assert.deepEqual(stepIds(steps), ['n2', 'n3', 'n1']);
+  const g2 = { edges: outlineToEdges(steps, { triggerId: 'trigger' }) };
+  assert.equal(nextNodeId(g2, 'trigger'), 'n2');
+  assert.equal(nextNodeId(g2, 'n3'), 'n1');
+});
+
+test('changing a fork step type preserves its position and reports removed branch nodes', () => {
+  const g = G(
+    [N('trigger', 'trigger'), N('c', 'condition'), N('a'), N('b'), N('x')],
+    [E('trigger', 'c'), E('c', 'a', 'yes'), E('c', 'b', 'no'), E('a', 'x'), E('b', 'x')]
+  );
+  const changed = replaceStepType(
+    toOutline(g).steps,
+    'c',
+    { id: 'c', type: 'message', branches: null }
+  );
+  assert.deepEqual(changed.removedIds.sort(), ['a', 'b']);
+  assert.deepEqual(stepIds(changed.steps), ['c', 'x']);
+  const rewired = { edges: outlineToEdges(changed.steps, { triggerId: 'trigger' }) };
+  assert.equal(nextNodeId(rewired, 'trigger'), 'c');
+  assert.equal(nextNodeId(rewired, 'c'), 'x');
+});
+
+test('a branch can explicitly end instead of rejoining the shared continuation', () => {
+  const g = G(
+    [N('trigger', 'trigger'), N('c', 'condition'), N('a'), N('b'), N('x')],
+    [E('trigger', 'c'), E('c', 'a', 'yes'), E('c', 'b', 'no'), E('a', 'x'), E('b', 'x')]
+  );
+  const changed = setBranchEnds(toOutline(g).steps, 'c', 'yes', true);
+  const rewired = { edges: outlineToEdges(changed, { triggerId: 'trigger' }) };
+  assert.equal(nextNodeId(rewired, 'a'), null);
+  assert.equal(nextNodeId(rewired, 'b'), 'x');
+});
+
 test('reorder past the edge of the list is a no-op', () => {
   const o = toOutline(LINEAR());
   assert.deepEqual(stepIds(moveStep(o.steps, 'n1', -1)), ['n1', 'n2', 'n3']);
@@ -443,7 +483,7 @@ test('an edited outline is still representable — derive → edit → derive is
 });
 
 // ---------------------------------------------------------------------------
-// גרפים שהטור לא יכול לייצג — חייבים ליפול למפה, לא לעוות בשקט
+// גרפים שהעץ לא יכול לייצג — נשארים לעריכת ניתוב מפורשת, בלי לעוות בשקט
 // ---------------------------------------------------------------------------
 
 test('a cycle falls back instead of looping forever', () => {
