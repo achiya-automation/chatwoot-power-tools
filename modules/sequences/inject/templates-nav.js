@@ -1,10 +1,10 @@
 // templates-nav — injected as part of DASHBOARD_SCRIPTS (see sequences-nav.js for the full
 // mechanism). Native-first since the 4.17 upgrade (20.8.26, Achiya's standing rule):
-//   * Administrators no longer get our separate "WhatsApp Templates" sidebar item — Chatwoot
-//     4.17 ships a native read-only Templates screen (settings/templates). Instead, a
-//     "New template" button is planted INSIDE that native screen (cloned from the native
-//     "Sync templates" button for pixel parity), opening our Template Studio panel — the
-//     creation/editing/submission capability Chatwoot still doesn't have.
+//   * Administrators use Chatwoot's native Templates screen (settings/templates), where
+//     creation/editing/deletion is now a real components-next panel COMPILED INTO the
+//     dashboard bundle (settings/templates/studio/, built from chatwoot-campaign-assignee-core)
+//     — this script no longer injects anything into that screen (it only removes the button
+//     an older DASHBOARD_SCRIPTS may have left there).
 //   * Non-admin users an administrator granted access to (drip.template_access) cannot reach
 //     the admin-only native screen at all, so ONLY they still get the sidebar item.
 // Own <script> block (own IIFE scope) — shares window/document with sequences-nav.js but not
@@ -18,10 +18,9 @@
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
   }
   var I18N = {
-    he: { label: 'תבניות WhatsApp', newTpl: 'תבנית חדשה' },
-    en: { label: 'WhatsApp Templates', newTpl: 'New template' },
+    he: { label: 'תבניות WhatsApp' },
+    en: { label: 'WhatsApp Templates' },
   };
-  function newTplLabel() { return (I18N[dripLocale()] || I18N.en).newTpl; }
   function tplLabel() { return (I18N[dripLocale()] || I18N.en).label; }
 
   // This item is TOP-LEVEL (sibling of the #drip-nav-item group), so it must look like a
@@ -118,45 +117,14 @@
       });
   }
 
-  function onNativeTemplatesPage() {
-    return /\/accounts\/\d+\/settings\/templates\b/.test(location.pathname);
-  }
-
-  // Plant a "New template" button inside the native settings/templates header, right before
-  // the native "Sync templates" button — CLONED from it, so styling tracks Chatwoot's own
-  // Button.vue classes forever (native parity with zero hardcoded class strings). Idempotent.
-  function renderNativeButton(access) {
+  // Native-first, round 2 (20.8.26): creation/editing now lives INSIDE the dashboard bundle
+  // (settings/templates/studio/TemplateStudioPanel.vue, built from chatwoot-campaign-assignee-core)
+  // — a real components-next panel, not an iframe. The button this function used to clone in
+  // became a duplicate the moment that build shipped, so all that remains is cleanup of any
+  // button an older DASHBOARD_SCRIPTS left behind. Granted non-admins keep the sidebar item.
+  function renderNativeButton() {
     var existing = document.getElementById('cwpt-tpl-new');
-    if (!onNativeTemplatesPage() || !access.granted) { if (existing) existing.remove(); return; }
-    // the sync button is the only i-lucide-refresh-cw button on this screen
-    var syncIcon = document.querySelector('span[class*="i-lucide-refresh-cw"]');
-    var syncBtn = syncIcon && syncIcon.closest('button');
-    if (!syncBtn || !syncBtn.parentElement) return;
-    var want = newTplLabel();
-    if (existing) {
-      var lb = existing.querySelector('.cwpt-tpl-new-label');
-      if (lb && lb.textContent !== want) lb.textContent = want;
-      return;
-    }
-    var btn = syncBtn.cloneNode(true);
-    btn.id = 'cwpt-tpl-new';
-    btn.disabled = false;
-    btn.removeAttribute('disabled');
-    var icon = btn.querySelector('span[class*="i-lucide-refresh-cw"]');
-    if (icon) icon.className = icon.className.replace('i-lucide-refresh-cw', 'i-lucide-plus');
-    // the cloned label span is the first non-icon child; normalize to a single labeled span
-    var labelSpan = null;
-    for (var i = 0; i < btn.children.length; i++) {
-      if (btn.children[i] !== icon && btn.children[i].tagName === 'SPAN') { labelSpan = btn.children[i]; break; }
-    }
-    if (!labelSpan) { labelSpan = document.createElement('span'); btn.appendChild(labelSpan); }
-    labelSpan.className = (labelSpan.className || '') + ' cwpt-tpl-new-label';
-    labelSpan.textContent = want;
-    btn.addEventListener('click', function (e) {
-      e.preventDefault(); e.stopPropagation();
-      if (window.__dripShowPanel) window.__dripShowPanel('templates');
-    });
-    syncBtn.parentElement.insertBefore(btn, syncBtn);
+    if (existing) existing.remove();
   }
 
   function removeItem() {
@@ -297,8 +265,8 @@
     if (!accId) return;
     templateAccess(accId, function (access) {
       if (accountId() !== accId) return; // account switched again while the fetch was in flight
-      // native-first: admins use Chatwoot's own Templates screen (plus our button inside it);
-      // the sidebar item survives only for granted non-admins, who can't open that screen.
+      // Native-first: admins use Chatwoot's own Templates screen and compiled editor; the
+      // sidebar item survives only for granted non-admins, who cannot open that screen.
       if (access.granted && !access.admin) { inject(); relabel(); markActive(); }
       else removeItem();
       renderNativeButton(access);
