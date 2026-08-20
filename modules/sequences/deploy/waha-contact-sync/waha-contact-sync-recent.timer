@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh recently active WAHA contacts in Chatwoot
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1min
+RandomizedDelaySec=15s
+Unit=waha-contact-sync@recent.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
