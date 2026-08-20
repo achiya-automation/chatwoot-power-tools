@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
-import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo, normalizeCampaignPhone } from '../src/campaigns.js';
+import { listCampaigns, getCampaignDetail, campaignExperiments, campaignsTrend, campaignsTierInfo, normalizeCampaignPhone } from '../src/campaigns.js';
 import { _resetHealthCache } from '../src/meta.js';
 import { buildRows, toCsv } from '../src/campaignCsv.js';
 import { handleAction } from '../src/store.js';
@@ -28,7 +28,7 @@ beforeEach(async () => {
   `);
   // drip.sent_messages משתתפת בחישוב ה-tier (union) — מנקים גם אותה כדי שבדיקות מקבצים
   // אחרים (delivery/send_cap) לא ידלפו לספירת ה-24h.
-  await pool.query('TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations, public.contact_inboxes, public.inboxes, public.labels, public.tags, public.taggings, drip.sent_messages, drip.campaign_audience_snapshots, drip.campaign_send_snapshots');
+  await pool.query('TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations, public.contact_inboxes, public.inboxes, public.labels, public.tags, public.taggings, public.campaign_recipients, drip.sent_messages, drip.campaign_audience_snapshots, drip.campaign_send_snapshots');
 });
 
 test('scaffold: campaigns table is queryable', async () => {
@@ -507,4 +507,135 @@ test('handleAction: campaigns_trend wiring', async () => {
   const res = await handleAction(1, 'campaigns_trend', {});
   assert.ok(Array.isArray(res.data));
   assert.equal(res.data[res.data.length - 1].sent, 1);
+});
+
+// ── 4.17 native-first: public.campaign_recipients is the source of truth ──
+// Native enum: queued:0 skipped:1 sent:2 delivered:3 read:4 failed:5.
+
+async function seedRecipient({ id, campaignId, account = 1, inbox = 10, contactId, status,
+  sourceId = null, errorCode = null, errorTitle = null, errorMessage = null,
+  sentAt = null, failedAt = null }) {
+  await query(`INSERT INTO public.campaign_recipients
+      (id, account_id, campaign_id, contact_id, inbox_id, source_id, status,
+       error_code, error_title, error_message, sent_at, failed_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [id, account, campaignId, contactId, inbox, sourceId, status,
+      errorCode, errorTitle, errorMessage, sentAt, failedAt]);
+}
+
+test('listCampaigns: native recipients aggregate; queued is not an attempt; audience from recipients', async () => {
+  await seedCampaign({ id: 60, title: 'נייטיב' });
+  for (let i = 61; i <= 66; i += 1) {
+    await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES ($1,1,$2,$3)`,
+      [i, `איש ${i}`, `+97250000${i}`]);
+  }
+  await seedRecipient({ id: 601, campaignId: 60, contactId: 61, status: 2, sourceId: 'wamid-601', sentAt: utcNow() });
+  await seedRecipient({ id: 602, campaignId: 60, contactId: 62, status: 3, sourceId: 'wamid-602', sentAt: utcNow() });
+  await seedRecipient({ id: 603, campaignId: 60, contactId: 63, status: 4, sourceId: 'wamid-603', sentAt: utcNow() });
+  await seedRecipient({ id: 604, campaignId: 60, contactId: 64, status: 5, errorCode: '131049', errorTitle: 'blocked', failedAt: utcNow() });
+  await seedRecipient({ id: 605, campaignId: 60, contactId: 65, status: 1, errorMessage: 'Phone number is missing' });
+  await seedRecipient({ id: 606, campaignId: 60, contactId: 66, status: 0 }); // queued — still mid-run
+
+  const c = (await listCampaigns(query, 1)).find((x) => x.id === 60);
+  assert.equal(c.audience_size, 6);      // every recipient, queued included
+  assert.equal(c.attempted, 5);          // queued excluded; the skip stays visible (like drip)
+  assert.equal(c.sent, 3);               // sent + delivered + read
+  assert.equal(c.delivered, 2);
+  assert.equal(c.read, 1);
+  assert.equal(c.failed, 1);
+});
+
+test('listCampaigns: native campaign ignores graft-era drip duplicates and tagged echoes', async () => {
+  await seedCampaign({ id: 61, title: 'מעבר' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (70,1,'כפול','+972500000070')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (610,9610,1,70)`);
+  await seedRecipient({ id: 611, campaignId: 61, contactId: 70, status: 2, sourceId: 'wamid-611', sentAt: utcNow() });
+  // the same send, as the pre-trim graft recorded it: a drip row + a tagged message (delivered)
+  await query(`INSERT INTO drip.campaign_send_snapshots
+    (account_id,campaign_id,contact_id,contact_name,phone,source_id,conversation_id,status)
+    VALUES (1,61,70,'כפול','+972500000070','wamid-611',610,0)`);
+  await seedCampaignMessage({ id: 612, conv: 610, campaignId: 61, status: 1, sourceId: 'wamid-611' });
+
+  const c = (await listCampaigns(query, 1)).find((x) => x.id === 61);
+  assert.equal(c.attempted, 1);          // one person, one attempt — not three
+  assert.equal(c.delivered, 1);          // native says sent, its message says delivered → delivered
+  const d = await getCampaignDetail(query, 1, 61);
+  assert.equal(d.recipients.length, 1);
+  assert.equal(d.recipients[0].status, 1);
+});
+
+test('getCampaignDetail: native funnel — skip reason, queued → not_sent, audience_source recipients', async () => {
+  await seedCampaign({ id: 62, title: 'נייטיב מלא' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES
+    (71,1,'קוראת','+972500000071'),(72,1,'בלי טלפון',NULL),(73,1,'בתור','+972500000073')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (620,9620,1,71)`);
+  await seedRecipient({ id: 621, campaignId: 62, contactId: 71, status: 4, sourceId: 'wamid-621', sentAt: utcNow() });
+  await seedRecipient({ id: 622, campaignId: 62, contactId: 72, status: 1, errorMessage: 'Phone number is missing' });
+  await seedRecipient({ id: 623, campaignId: 62, contactId: 73, status: 0 }); // queued
+  // the graft's conversation message for the successful send + an incoming reply
+  await seedCampaignMessage({ id: 624, conv: 620, campaignId: 62, status: 2, sourceId: 'wamid-621' });
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, content, status, created_at)
+               VALUES (625, 620, 1, 0, 'מעניין אותי', 0, now() + interval '1 minute')`);
+
+  const d = await getCampaignDetail(query, 1, 62);
+  assert.equal(d.audience_source, 'recipients');
+  assert.deepEqual(d.funnel, { audience: 3, attempted: 1, sent: 1, delivered: 1, read: 1, failed: 0, pending: 0, skipped: 1 });
+  const reader = d.recipients.find((r) => r.contact_name === 'קוראת');
+  assert.equal(reader.status, 2);
+  assert.equal(reader.conversation_display_id, 9620);
+  assert.equal(reader.replied, true);
+  const skipped = d.recipients.find((r) => r.contact_name === 'בלי טלפון');
+  assert.equal(skipped.status, 4);
+  assert.equal(skipped.error_title, 'Phone number is missing');
+  // queued was never attempted — it belongs to not_sent, not to the attempt table
+  assert.equal(d.not_sent.length, 1);
+  assert.equal(d.not_sent[0].contact_name, 'בתור');
+  // the CSV translates the native skip wording like our own ledger keys
+  const rows = buildRows(d);
+  const skipRow = rows.find((r) => r.contact_name === 'בלי טלפון');
+  assert.equal(skipRow.statusKey, 'notsent');
+  assert.match(toCsv([skipRow], { locale: 'he' }), /אין מספר טלפון/);
+});
+
+test('native failed + drip retry: recipient collapses to the retry; experiments show both runs', async () => {
+  await seedCampaign({ id: 63, title: 'ריטריי' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (74,1,'ניצולה','+972500000074')`);
+  await query(`INSERT INTO public.conversations(id, display_id, account_id, contact_id) VALUES (630,9630,1,74)`);
+  await seedRecipient({ id: 631, campaignId: 63, contactId: 74, status: 5,
+    errorCode: '131049', errorTitle: 'blocked', failedAt: utcNow(-3600000) });
+  await query(`INSERT INTO public.messages(id, conversation_id, account_id, message_type, status, source_id, created_at)
+               VALUES (632, 630, 1, 1, 2, 'wamid-632', now())`);
+  await query(`INSERT INTO drip.campaign_send_snapshots
+    (account_id,campaign_id,contact_id,contact_name,phone,source_id,conversation_id,message_id,status,resend_run_id,template_name)
+    VALUES (1,63,74,'ניצולה','+972500000074','retry:63:74:1',630,632,0,'r1','rescue_utility')`);
+
+  const d = await getCampaignDetail(query, 1, 63);
+  assert.equal(d.recipients.length, 1);
+  assert.equal(d.recipients[0].status, 2);        // the retry was read
+  assert.equal(d.recipients[0].attempt_count, 2); // both attempts are real history
+  assert.equal(d.funnel.failed, 0);
+
+  const exps = await campaignExperiments(query, 1, 63);
+  assert.equal(exps.length, 2);
+  assert.equal(exps[0].run_id, null);             // the original (native) batch
+  assert.equal(exps[0].failed, 1);
+  assert.equal(exps[1].run_id, 'r1');
+  assert.equal(exps[1].template_name, 'rescue_utility');
+  assert.equal(exps[1].read, 1);
+});
+
+test('campaignsTrend + campaignsTierInfo read native recipients', async () => {
+  await seedCampaign({ id: 64, title: 'מדדים' });
+  await query(`INSERT INTO public.contacts(id, account_id, name, phone_number) VALUES (75,1,'נמענת','+972500000075')`);
+  // a successful native send with NO conversation message — the native branch must still count it
+  await seedRecipient({ id: 641, campaignId: 64, contactId: 75, status: 3, sourceId: 'wamid-641', sentAt: utcNow() });
+
+  const trend = await campaignsTrend(query, 1, 14);
+  const today = trend[trend.length - 1];
+  assert.equal(today.attempted, 1);
+  assert.equal(today.sent, 1);
+  assert.equal(today.delivered, 1);
+
+  const info = await campaignsTierInfo(query, {}, 1, { getCap: async () => 1000 });
+  assert.deepEqual(info, { cap: 1000, unlimited: false, unknown: false, used_24h: 1, remaining: 999 });
 });

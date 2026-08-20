@@ -15,7 +15,8 @@ const pool = getPool(cfg);
 beforeEach(async () => {
   await setupDb(pool);
   await pool.query(`TRUNCATE public.campaigns, public.messages, public.contacts, public.conversations,
-    public.contact_inboxes, public.inboxes, public.channel_whatsapp, drip.campaign_audience_snapshots,
+    public.contact_inboxes, public.inboxes, public.channel_whatsapp, public.campaign_recipients,
+    drip.campaign_audience_snapshots,
     drip.campaign_send_snapshots, drip.contact_state, drip.campaign_resend_schedule,
     drip.account_health, drip.number_quality, drip.template_media`);
   _resetResendJobs();

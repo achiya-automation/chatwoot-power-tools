@@ -20,8 +20,10 @@ async function readCapFromHealth(query, accountId) {
 /**
  * campaigns.js — read-only campaign analytics from Chatwoot's own tables.
  *
- * New sends are linked through drip.campaign_send_snapshots, an immutable per-attempt ledger
- * keyed by Meta's message id. Legacy rows fall back to messages.content_attributes.campaign_id.
+ * 4.17+ campaigns are read from public.campaign_recipients (native, webhook-fresh — see the
+ * native-first block below). Pre-native sends are linked through drip.campaign_send_snapshots,
+ * an immutable per-attempt ledger keyed by Meta's message id, which also carries every
+ * resend/retry attempt. Legacy rows fall back to messages.content_attributes.campaign_id.
  * We compare the parsed numeric value — never LIKE/substring and never jsonb type-sensitive
  * containment — so campaign 16 cannot swallow 160/216 and string campaign ids still match.
  *
@@ -81,6 +83,48 @@ const notInLedger = (scope = '') => `NOT EXISTS (
                 AND m.source_id IS NOT NULL AND s.source_id = m.source_id
            )`;
 
+// ── 4.17 native-first ─────────────────────────────────────────────────────────
+// Campaigns sent by Chatwoot's enterprise pipeline live in public.campaign_recipients:
+// one row per recipient (UNIQUE on campaign+contact), statuses queued:0 skipped:1 sent:2
+// delivered:3 read:4 failed:5, advanced by Chatwoot's own delivery webhooks. For any
+// campaign that HAS such rows they are the source of truth. drip.campaign_send_snapshots
+// remains only for (a) campaigns that predate 4.17 and (b) resend/retry attempts, which
+// the native unique(campaign, contact) constraint cannot represent. Every reader below
+// follows one rule: native rows + drip retry rows (resend_run_id IS NOT NULL) when the
+// campaign is native; the full drip + tagged-message fallback otherwise.
+//
+// Maps the native enum onto the message/drip scale the whole stack speaks
+// (0 sent, 1 delivered, 2 read, 3 failed, 4 local skip; queued → -1 = pending).
+const nativeStatus = (col) => `CASE ${col} WHEN 2 THEN 0 WHEN 3 THEN 1 WHEN 4 THEN 2 WHEN 5 THEN 3 WHEN 1 THEN 4 ELSE -1 END`;
+
+// Effective status of a native row given its presentation message (same rule as the drip
+// ledger: a terminal state — failed/skip — wins; otherwise the row and its message race
+// forward together, so a webhook that only reached one of them still shows).
+const nativeEffectiveStatus = `CASE WHEN ${nativeStatus('r.status')} IN (3, 4) THEN ${nativeStatus('r.status')}
+                ELSE greatest(${nativeStatus('r.status')}, coalesce(m.status, 0)) END`;
+
+// The recipient's presentation message (the graft-created conversation message), by wamid.
+const nativeMessageLateral = `LEFT JOIN LATERAL (
+        SELECT mm.* FROM public.messages mm
+         WHERE mm.account_id = r.account_id
+           AND r.source_id IS NOT NULL AND mm.source_id = r.source_id
+         ORDER BY mm.id DESC
+         LIMIT 1
+      ) m ON true`;
+
+// error_title in the drip ledger's shape: failed → "131049: title" (errorLabel parses the
+// leading code), skipped → the native reason sentence (translated by key in campaignCsv).
+const nativeErrorTitle = `CASE
+           WHEN r.status = 5 THEN coalesce(
+             nullif(r.error_code, '') || ': ' || coalesce(nullif(r.error_title, ''), nullif(r.error_message, ''), ''),
+             nullif(r.error_title, ''), nullif(r.error_message, ''))
+           WHEN r.status = 1 THEN coalesce(nullif(r.error_message, ''), 'skipped')
+         END`;
+
+// When a recipient was processed: sent_at for sends, failed_at for pre-send failures,
+// updated_at for skips (the native row has no dedicated skip timestamp).
+const nativeAttemptedAt = `coalesce(r.sent_at, r.failed_at, r.updated_at)`;
+
 /** Canonical E.164-ish display for campaign reports (Israeli local numbers get +972). */
 export function normalizeCampaignPhone(value) {
   let digits = String(value ?? '').split('@', 1)[0].replace(/\D/g, '');
@@ -97,14 +141,22 @@ const asPositiveInt = (value) => {
 };
 
 // A campaign may create a second, channel-bound Contact record for an imported contact. The
-// immutable audience snapshot (new campaigns) or current label membership (legacy fallback)
-// is the canonical source for the human name and phone shown in the report.
+// native recipient list (4.17 campaigns), the immutable audience snapshot (drip-era
+// campaigns) or current label membership (legacy fallback) is the canonical source for the
+// human name and phone shown in the report — in that order of precedence.
 async function loadAudienceContacts(query, accountId, campaignId) {
   return query(
-    `WITH snap AS (
+    `WITH native AS (
+       SELECT r.contact_id::bigint AS contact_id, ct.name AS contact_name,
+              ct.phone_number AS phone, 'recipients'::text AS audience_source
+         FROM public.campaign_recipients r
+         LEFT JOIN public.contacts ct ON ct.id = r.contact_id
+        WHERE r.account_id = $1 AND r.campaign_id = $2
+     ), snap AS (
        SELECT contact_id, contact_name, phone, 'snapshot'::text AS audience_source
          FROM drip.campaign_audience_snapshots
         WHERE account_id = $1 AND campaign_id = $2
+          AND NOT EXISTS (SELECT 1 FROM native)
      ), aud AS (
        SELECT (a ->> 'id')::int AS label_id
          FROM public.campaigns c, jsonb_array_elements(c.audience) a
@@ -119,10 +171,12 @@ async function loadAudienceContacts(query, accountId, campaignId) {
               AND tg.taggable_type = 'Contact' AND tg.context = 'labels'
          JOIN public.contacts ct ON ct.id = tg.taggable_id AND ct.account_id = $1
      )
+     SELECT contact_id, contact_name, phone, audience_source FROM native
+     UNION ALL
      SELECT contact_id, contact_name, phone, audience_source FROM snap
      UNION ALL
      SELECT contact_id, contact_name, phone, audience_source FROM current_aud
-      WHERE NOT EXISTS (SELECT 1 FROM snap)
+      WHERE NOT EXISTS (SELECT 1 FROM snap) AND NOT EXISTS (SELECT 1 FROM native)
      ORDER BY contact_id`,
     [accountId, campaignId]
   );
@@ -226,10 +280,20 @@ const localTs = (col) => `((${col}) AT TIME ZONE 'UTC' AT TIME ZONE '${TZ}')`;
 // a local wall time and shifts the result three hours back — a send at 18:30 reads 12:30.
 const localTsTz = (col) => `((${col}) AT TIME ZONE '${TZ}')`;
 
-// Per-campaign status counts. The durable send ledger wins; explicitly tagged legacy messages
-// are included only when the same Meta/message id is not already represented in the ledger.
+// Per-campaign status counts. Native campaign_recipients rows win for 4.17 campaigns;
+// the durable send ledger covers pre-native campaigns and resend retries; explicitly
+// tagged legacy messages are included only when not already represented in either.
 const AGG_CTE = `
-  WITH snapshot_msg AS (
+  WITH native_campaigns AS (
+    SELECT DISTINCT campaign_id FROM public.campaign_recipients WHERE account_id = $1
+  ), native_msg AS (
+    SELECT r.campaign_id,
+           'contact:' || r.contact_id::text AS recipient_key,
+           ${nativeEffectiveStatus} AS status
+      FROM public.campaign_recipients r
+      ${nativeMessageLateral}
+     WHERE r.account_id = $1 AND r.status <> 0
+  ), snapshot_msg AS (
     SELECT s.campaign_id,
            coalesce(
              CASE WHEN s.contact_id IS NOT NULL THEN 'contact:' || s.contact_id::text END,
@@ -248,6 +312,8 @@ const AGG_CTE = `
          LIMIT 1
       ) current_message ON true
      WHERE s.account_id = $1
+       AND (s.resend_run_id IS NOT NULL
+            OR s.campaign_id NOT IN (SELECT campaign_id FROM native_campaigns))
   ), legacy_msg AS (
     SELECT (${caObj('m.content_attributes')} ->> 'campaign_id')::int AS campaign_id,
            coalesce(
@@ -290,9 +356,12 @@ const AGG_CTE = `
       ) aud ON true
      WHERE m.account_id = $1
        AND ${hasCampaignId('m.content_attributes')}
+       AND (${caObj('m.content_attributes')} ->> 'campaign_id')::int NOT IN (SELECT campaign_id FROM native_campaigns)
        AND ${notInLedger(`
                 AND s.campaign_id = (${caObj('m.content_attributes')} ->> 'campaign_id')::int`)}
   ), raw_msg AS (
+    SELECT campaign_id, recipient_key, status FROM native_msg
+    UNION ALL
     SELECT campaign_id, recipient_key, status FROM snapshot_msg
     UNION ALL
     SELECT campaign_id, recipient_key, status FROM legacy_msg
@@ -335,8 +404,12 @@ export async function listCampaigns(query, accountId) {
        JOIN public.inboxes i ON i.id = c.inbox_id AND i.channel_type = 'Channel::Whatsapp'
        LEFT JOIN agg a ON a.campaign_id = c.id
        LEFT JOIN LATERAL (
-         SELECT count(*)::int AS n FROM drip.campaign_audience_snapshots s
-          WHERE s.account_id = c.account_id AND s.campaign_id = c.id
+         SELECT coalesce(
+                  nullif((SELECT count(*)::int FROM public.campaign_recipients r
+                           WHERE r.account_id = c.account_id AND r.campaign_id = c.id), 0),
+                  (SELECT count(*)::int FROM drip.campaign_audience_snapshots s
+                    WHERE s.account_id = c.account_id AND s.campaign_id = c.id)
+                ) AS n
        ) aud ON true
       WHERE c.account_id = $1
       ORDER BY c.created_at DESC NULLS LAST, c.id DESC`,
@@ -370,7 +443,28 @@ export async function getCampaignDetail(query, accountId, campaignId) {
   // The conversation contact can be a channel-created duplicate with no useful name/phone, so
   // canonical contact data is resolved against the captured audience below.
   const rawRecipients = await query(
-    `WITH snapshot_rows AS (
+    `WITH native_rows AS (
+       SELECT m.id AS message_id,
+              cv.contact_id,
+              cct.name AS contact_name,
+              cct.phone_number AS contact_phone,
+              ci.source_id,
+              r.contact_id::text AS campaign_contact_id,
+              ct.name AS campaign_contact_name,
+              ct.phone_number AS campaign_phone,
+              ${nativeEffectiveStatus} AS status,
+              ${nativeErrorTitle} AS error_title,
+              to_char(${localTs(nativeAttemptedAt)}, 'YYYY-MM-DD HH24:MI') AS sent_at,
+              m.conversation_id,
+              cv.display_id AS conversation_display_id
+         FROM public.campaign_recipients r
+         LEFT JOIN public.contacts ct ON ct.id = r.contact_id
+         ${nativeMessageLateral}
+         LEFT JOIN public.conversations cv ON cv.id = m.conversation_id
+         LEFT JOIN public.contacts cct ON cct.id = cv.contact_id
+         LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
+        WHERE r.account_id = $1 AND r.campaign_id = $2 AND r.status <> 0
+     ), snapshot_rows AS (
        SELECT coalesce(m.id, s.message_id) AS message_id,
               cv.contact_id,
               ct.name AS contact_name,
@@ -397,6 +491,9 @@ export async function getCampaignDetail(query, accountId, campaignId) {
          LEFT JOIN public.contacts ct ON ct.id = cv.contact_id
          LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
         WHERE s.account_id = $1 AND s.campaign_id = $2
+          AND (s.resend_run_id IS NOT NULL
+               OR NOT EXISTS (SELECT 1 FROM public.campaign_recipients nr
+                               WHERE nr.account_id = $1 AND nr.campaign_id = $2))
      ), legacy_rows AS (
        SELECT m.id AS message_id,
               cv.contact_id,
@@ -417,8 +514,12 @@ export async function getCampaignDetail(query, accountId, campaignId) {
          LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
         WHERE m.account_id = $1
           AND ${campaignIdEquals('m.content_attributes')}
+          AND NOT EXISTS (SELECT 1 FROM public.campaign_recipients nr
+                           WHERE nr.account_id = $1 AND nr.campaign_id = $2)
           AND ${notInLedger(' AND s.campaign_id = $2')}
      )
+     SELECT * FROM native_rows
+     UNION ALL
      SELECT * FROM snapshot_rows
      UNION ALL
      SELECT * FROM legacy_rows
@@ -562,16 +663,14 @@ export async function campaignExperiments(query, accountId, campaignId) {
   const id = parseInt(campaignId, 10);
   if (Number.isNaN(id)) return [];
   return query(
-    `WITH att AS (
+    `WITH base AS (
        SELECT s.resend_run_id AS run_id,
               s.template_name,
               s.conversation_id,
               s.attempted_at,
+              s.source_id,
               CASE WHEN s.status = 3 THEN 3
-                   ELSE greatest(s.status, coalesce(m.status, 0)) END AS status,
-              lead(s.attempted_at) OVER (
-                PARTITION BY s.conversation_id ORDER BY s.attempted_at, s.source_id
-              ) AS next_at
+                   ELSE greatest(s.status, coalesce(m.status, 0)) END AS status
          FROM drip.campaign_send_snapshots s
          LEFT JOIN LATERAL (
            SELECT mm.status FROM public.messages mm
@@ -581,6 +680,25 @@ export async function campaignExperiments(query, accountId, campaignId) {
             LIMIT 1
          ) m ON true
         WHERE s.account_id = $1 AND s.campaign_id = $2
+          AND (s.resend_run_id IS NOT NULL
+               OR NOT EXISTS (SELECT 1 FROM public.campaign_recipients nr
+                               WHERE nr.account_id = $1 AND nr.campaign_id = $2))
+       UNION ALL
+       SELECT NULL::text AS run_id,
+              NULL::text AS template_name,
+              m.conversation_id,
+              (${nativeAttemptedAt} AT TIME ZONE 'UTC') AS attempted_at,
+              r.source_id,
+              ${nativeEffectiveStatus} AS status
+         FROM public.campaign_recipients r
+         ${nativeMessageLateral}
+        WHERE r.account_id = $1 AND r.campaign_id = $2 AND r.status <> 0
+     ), att AS (
+       SELECT base.*,
+              lead(attempted_at) OVER (
+                PARTITION BY conversation_id ORDER BY attempted_at, source_id
+              ) AS next_at
+         FROM base
      ), scored AS (
        SELECT att.*, EXISTS (
          SELECT 1 FROM public.messages mi
@@ -675,6 +793,17 @@ export async function campaignsTierInfo(query, _reads, accountId, deps = {}, inb
             AND ${hasCampaignId('m.content_attributes')}
             AND m.status <> 3
             AND ${notInLedger()}
+         UNION
+         -- 4.17 native sends. Usually the graft's conversation message (branch above) already
+         -- counts these; this branch keeps the budget honest when that message was not created.
+         -- No conversation to dedup by → -r.id, which can never collide with a real (positive)
+         -- conversation id.
+         SELECT coalesce(m.conversation_id, -r.id)
+           FROM public.campaign_recipients r
+           ${nativeMessageLateral}
+          WHERE r.account_id = $1
+            AND r.status IN (2, 3, 4)
+            AND r.sent_at > (now() AT TIME ZONE 'UTC') - interval '24 hours'
        ) u`,
       [accountId]
     ))[0]?.c || 0);
@@ -701,7 +830,16 @@ export async function campaignsTrend(query, accountId, days = 14) {
                 (now() AT TIME ZONE '${TZ}')::date - ($2::int - 1) * interval '1 day',
                 (now() AT TIME ZONE '${TZ}')::date,
                 interval '1 day') d
+     ), native_campaigns AS (
+       SELECT DISTINCT campaign_id FROM public.campaign_recipients WHERE account_id = $1
      ), attempt_rows AS (
+       SELECT ${localTs(nativeAttemptedAt)} AS local_created_at,
+              ${nativeEffectiveStatus} AS status
+         FROM public.campaign_recipients r
+         ${nativeMessageLateral}
+        WHERE r.account_id = $1 AND r.status <> 0
+          AND ${nativeAttemptedAt} >= (now() AT TIME ZONE 'UTC') - ($2::int + 1) * interval '1 day'
+       UNION ALL
        SELECT s.attempted_at AT TIME ZONE '${TZ}' AS local_created_at,
               CASE WHEN s.status = 3 THEN 3
                    ELSE greatest(s.status, coalesce(current_message.status, 0)) END AS status
@@ -715,12 +853,15 @@ export async function campaignsTrend(query, accountId, days = 14) {
          ) current_message ON true
         WHERE s.account_id = $1
           AND s.attempted_at >= now() - ($2::int + 1) * interval '1 day'
+          AND (s.resend_run_id IS NOT NULL
+               OR s.campaign_id NOT IN (SELECT campaign_id FROM native_campaigns))
        UNION ALL
        SELECT ${localTs('m.created_at')} AS local_created_at, m.status
          FROM public.messages m
         WHERE m.account_id = $1
           AND ${hasCampaignId('m.content_attributes')}
           AND m.created_at >= (now() AT TIME ZONE '${TZ}')::date - $2::int * interval '1 day'
+          AND (${caObj('m.content_attributes')} ->> 'campaign_id')::int NOT IN (SELECT campaign_id FROM native_campaigns)
           AND NOT EXISTS (
             SELECT 1 FROM drip.campaign_send_snapshots s
              WHERE s.account_id = m.account_id

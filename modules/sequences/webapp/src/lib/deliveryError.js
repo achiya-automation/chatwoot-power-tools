@@ -37,6 +37,12 @@ const LABELS = {
     template_not_found: 'לא נשלח — התבנית לא נמצאה או אינה מאושרת בשפה שנבחרה',
     send_failed: 'הבקשה ל-Meta נכשלה — הפרטים בלוג השרת',
     no_attempt_record: 'לא נוצר ניסיון שליחה',
+    // סיבות דילוג של הצינור המקורי (4.17, campaign_recipients.error_message).
+    'Phone number is missing': 'לא נשלח — לאיש הקשר אין מספר טלפון',
+    'Template parameters are missing': 'לא נשלח — לקמפיין לא הוגדרה תבנית',
+    'Template parameters could not be resolved': 'לא נשלח — לא ניתן היה למלא את משתני התבנית עבור איש הקשר',
+    'Template name could not be resolved': 'לא נשלח — התבנית לא נמצאה או אינה מאושרת בשפה שנבחרה',
+    skipped: 'לא נשלח — דילוג',
   },
   en: {
     '131026': 'The message was not delivered — the number may not be on WhatsApp, may have blocked the business, or does not accept business messages',
@@ -62,6 +68,12 @@ const LABELS = {
     template_not_found: 'Not sent — the template was not found or is not approved in the selected language',
     send_failed: 'The request to Meta failed — see the server log for details',
     no_attempt_record: 'No send attempt was created',
+    // Native pipeline skip reasons (4.17, campaign_recipients.error_message).
+    'Phone number is missing': 'Not sent — the contact has no phone number',
+    'Template parameters are missing': 'Not sent — the campaign has no template configured',
+    'Template parameters could not be resolved': 'Not sent — the template variables could not be filled for this contact',
+    'Template name could not be resolved': 'Not sent — the template was not found or is not approved in the selected language',
+    skipped: 'Not sent — skipped',
   },
 };
 

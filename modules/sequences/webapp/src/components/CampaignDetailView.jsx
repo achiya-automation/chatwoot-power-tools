@@ -631,8 +631,9 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
           כדי שסינון אחד יכסה את כל קהל היעד (ולא רק חלק ממנו). */}
       <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h2 className="text-sm font-medium text-n-slate-12">{t('recipients')} ({visible.length}{filtered ? ` ${t('outOf')} ${rows.length}` : ''})</h2>
+        {/* 'recipients' (4.17 native) קפוא בזמן הקמפיין בדיוק כמו snapshot — אותה הערה */}
         {not_sent && not_sent.length > 0 ? (
-          <span className="text-xs text-n-slate-10">· {t(audience_source === 'snapshot' ? 'snapshotNote' : 'currentLabelNote')}</span>
+          <span className="text-xs text-n-slate-10">· {t(audience_source === 'current_label' ? 'currentLabelNote' : 'snapshotNote')}</span>
         ) : null}
       </div>
 
