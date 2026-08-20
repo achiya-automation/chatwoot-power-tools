@@ -45,7 +45,8 @@ _cwpt_module_parts() {
       printf '%s\n' \
         "modules/dashboard-enhancements/parts/campaign-modal.js" \
         "modules/dashboard-enhancements/parts/campaign-stats.js" \
-        "modules/dashboard-enhancements/parts/native-i18n-he.js"
+        "modules/dashboard-enhancements/parts/native-i18n-he.js" \
+        "modules/dashboard-enhancements/parts/waha-controls.js"
       ;;
     *)
       return 1
