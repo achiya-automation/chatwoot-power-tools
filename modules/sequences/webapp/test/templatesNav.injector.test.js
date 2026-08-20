@@ -3,7 +3,8 @@
  * dashboardScript.injector.test.js: מרכיבים את ה-DASHBOARD_SCRIPTS האמיתי דרך
  * lib/assemble-dashboard-script.sh (לא קוראים את קובץ המקור ישירות), מריצים אותו ב-jsdom
  * על שלד DOM בצורת Chatwoot בשלושת השלבים (סקריפט → Vue בלי dir → dir=rtl אחרי טעינת חשבון),
- * ודורשים שהכניסה תופיע/תיעדר בפועל לפי תפקיד המשתמש — בדיוק כמו admin gating אמיתי.
+ * ודורשים שהכניסה הישנה תישאר רק לנציג שקיבל הרשאה מפורשת. מנהלים משתמשים במסך
+ * הרשמי של Chatwoot 4.17, ולכן אסור לייצר עבורם כניסה כפולה.
  *
  * הכניסה תלויה ב-#drip-nav-item (נבנה על ידי sequences-nav.js), אז ה-fixture כולל גם את
  * ה-div[name="Campaigns"] המינימלי ש-sequences-nav.js's inject() דורש כדי ליצור אותו.
@@ -60,10 +61,16 @@ function makeDom(path) {
 
 // profile mock — role-בקרה: fetch('/api/v1/profile') הוא הקריאה היחידה מתוך templates-nav.js
 // (sequences-nav.js עצמו לא נוגע ברשת בכלל).
-function withProfileFetch(dom, accounts) {
+function withProfileFetch(dom, accounts, granted = false) {
   dom.window.fetch = async (url) => {
     if (String(url).indexOf('/api/v1/profile') !== -1) {
       return { ok: true, json: async () => ({ accounts }) };
+    }
+    if (String(url).indexOf('/drip-api') !== -1) {
+      return {
+        ok: true,
+        json: async () => ({ data: { allowed: granted } }),
+      };
     }
     return { ok: false, json: async () => ({}) };
   };
@@ -89,27 +96,15 @@ async function runDashboardScript(dom) {
   return w;
 }
 
-test('templates-nav: admin — li#tpl-nav-item עם תווית אנגלית לפני dir=rtl, עברית אחריו', async () => {
+test('templates-nav: admin — אין כניסה כפולה; המסך הרשמי מנהל את התבניות', async () => {
   const { dom, errors } = makeDom('/app/accounts/1/contacts');
   withProfileFetch(dom, [{ id: 1, role: 'administrator' }]);
-
-  const w = dom.window;
-  for (const body of scriptBodies(assembleDashboardScript())) w.eval(body);
-  await new Promise((r) => setTimeout(r, 50));
-
-  mountSidebar(w.document);
-  await new Promise((r) => setTimeout(r, 900));
-
-  const preFlip = w.document.getElementById('tpl-nav-item');
-  assert.ok(preFlip, 'הפריט חייב להופיע למנהל עוד לפני dir=rtl');
-  assert.match(preFlip.textContent, /WhatsApp Templates/, 'לפני dir=rtl הממשק עדיין "אנגלי" — תווית אנגלית');
-
-  w.document.querySelector('#app').setAttribute('dir', 'rtl');
-  await new Promise((r) => setTimeout(r, 600));
-
-  const postFlip = w.document.getElementById('tpl-nav-item');
-  assert.ok(postFlip, 'הפריט חייב להישאר אחרי dir=rtl');
-  assert.match(postFlip.textContent, /תבניות WhatsApp/, 'אחרי dir=rtl התווית חייבת להתעדכן לעברית');
+  const w = await runDashboardScript(dom);
+  assert.equal(
+    w.document.getElementById('tpl-nav-item'),
+    null,
+    'למנהל אסור להציג כניסה ישנה לצד המסך הרשמי'
+  );
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 
@@ -131,13 +126,14 @@ test('templates-nav: profile fetch נכשל — fail-closed, אין li', async (
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 
-test('templates-nav: קליק שולח window.__dripShowPanel עם "templates"', async () => {
+test('templates-nav: נציג עם הרשאה מקבל כניסה מתורגמת והקליק פותח templates', async () => {
   const { dom } = makeDom('/app/accounts/1/contacts');
-  withProfileFetch(dom, [{ id: 1, role: 'administrator' }]);
+  withProfileFetch(dom, [{ id: 1, role: 'agent' }], true);
 
   const w = await runDashboardScript(dom);
   const li = w.document.getElementById('tpl-nav-item');
   assert.ok(li, 'הכניסה חייבת להיות קיימת לפני שבודקים קליק');
+  assert.match(li.textContent, /תבניות WhatsApp/);
 
   let called = null;
   w.__dripShowPanel = (tab) => { called = tab; }; // stub — דורס את הפונקציה האמיתית של sequences-nav.js
@@ -163,9 +159,9 @@ test('templates-nav + sequences-nav: ?drip=templates ב-URL ההתחלתי מש�
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 
-test('templates-nav: ה-highlight לא נתקע — קליק מדליק מיד, ומעבר ל-overview דרך sequences-nav מכבה תוך הפעימה העצמית', async () => {
+test('templates-nav: לנציג מורשה ה-highlight לא נתקע במעבר ל-overview', async () => {
   const { dom, errors } = makeDom('/app/accounts/1/contacts');
-  withProfileFetch(dom, [{ id: 1, role: 'administrator' }]);
+  withProfileFetch(dom, [{ id: 1, role: 'agent' }], true);
 
   const w = await runDashboardScript(dom);
   const li = w.document.getElementById('tpl-nav-item');

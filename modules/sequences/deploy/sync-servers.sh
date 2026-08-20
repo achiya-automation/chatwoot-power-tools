@@ -303,8 +303,11 @@ verify() {
     svc = Whatsapp::OneoffCampaignService
     raise 'patch not applied' unless svc.ancestors.include?(WhatsappCampaignGraft417)
     raise 'signature drift' unless svc.instance_method(:send_whatsapp_template_message).parameters.map(&:last) == [:recipient, :to, :template_params]
+    analytics_controller = Api::V1::Accounts::Campaigns::AnalyticsController
+    raise 'legacy analytics adapter not loaded' unless defined?(LegacyCampaignAnalytics417)
+    raise 'legacy analytics controller patch not active' unless analytics_controller.ancestors.include?(LegacyCampaignAnalyticsController417)
   \"" >/dev/null 2>&1 || die "$server: campaign patch is not active"
-  ok "campaign patch active"
+  ok "campaign patch + legacy analytics adapter active"
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────
