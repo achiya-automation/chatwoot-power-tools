@@ -131,16 +131,20 @@ md5_stdin() { md5 -q 2>/dev/null || md5sum | awk '{print $1}'; }
 check_drift() {
   local server="$1" layout="$2" blocking=0 behind=0
   local remote_src; remote_src="$(remote_engine_src "$layout")"
+  local rails_initializer_mounts sidekiq_initializer_mounts
+  rails_initializer_mounts="$(ssh "$server" "docker inspect --format '{{range .Mounts}}{{println .Destination}}{{end}}' chatwoot-rails-1 2>/dev/null" || true)"
+  sidekiq_initializer_mounts="$(ssh "$server" "docker inspect --format '{{range .Mounts}}{{println .Destination}}{{end}}' chatwoot-sidekiq-1 2>/dev/null" || true)"
   local want have patch_ok=1
   # Rebuilt per server. A file whose server copy already matches git is not listed at
   # all — deploy_patch leaves it completely untouched (no rewrite, no .bak).
   DEPLOY_PATCHES=""
   SKIP_PATCHES=""
   for patch_src in "$PATCH_DIR"/*.rb; do
-    local base rel_patch dest
+    local base rel_patch dest mount_target
     base="$(basename "$patch_src")"
     rel_patch="modules/sequences/deploy/chatwoot-initializers/$base"
     dest="$PATCH_DEST_DIR/$base"
+    mount_target="/app/config/initializers/$base"
     want="$(md5_of "$patch_src")"
     have="$(remote_md5 "$server" "$dest")"
     if [[ -z "$have" ]]; then
@@ -166,6 +170,16 @@ check_drift() {
         warn "  review before overwriting:  ssh $server 'sudo cat $dest' | diff - $patch_src"
         blocking=1; patch_ok=0
       fi
+    fi
+    if ! grep -Fqx "$mount_target" <<< "$rails_initializer_mounts"; then
+      warn "Rails patch $base exists on $server but is not mounted into chatwoot-rails-1"
+      warn "  add $dest:$mount_target:ro to the rails volumes before deploying"
+      blocking=1; patch_ok=0
+    fi
+    if ! grep -Fqx "$mount_target" <<< "$sidekiq_initializer_mounts"; then
+      warn "Rails patch $base exists on $server but is not mounted into chatwoot-sidekiq-1"
+      warn "  add $dest:$mount_target:ro to the sidekiq volumes before deploying"
+      blocking=1; patch_ok=0
     fi
   done
   [[ $patch_ok -eq 1 ]] && ok "Rails patches match git"
@@ -248,9 +262,9 @@ deploy_patch() {
     dest="$PATCH_DEST_DIR/$base"
     scp -q "$patch_src" "$server:/tmp/cwpt-patch.rb"
     # Syntax-check inside the real Rails image before it can break boot.
-    ssh "$server" "docker cp /tmp/cwpt-patch.rb chatwoot-rails-1:/tmp/c.rb >/dev/null && docker exec chatwoot-rails-1 ruby -c /tmp/c.rb >/dev/null" \
+    ssh -n "$server" "docker cp /tmp/cwpt-patch.rb chatwoot-rails-1:/tmp/c.rb >/dev/null && docker exec chatwoot-rails-1 ruby -c /tmp/c.rb >/dev/null" \
       || die "Ruby syntax check failed on $server ($base) — nothing installed"
-    ssh "$server" "sudo cp -n $dest ${dest}.bak-\$(date +%Y%m%d%H%M) 2>/dev/null; \
+    ssh -n "$server" "sudo cp -n $dest ${dest}.bak-\$(date +%Y%m%d%H%M) 2>/dev/null; \
       sudo install -o root -g root -m 644 /tmp/cwpt-patch.rb $dest && rm -f /tmp/cwpt-patch.rb"
   done <<< "$DEPLOY_PATCHES"
   ok "Rails initializers installed: $(printf '%s' "$DEPLOY_PATCHES" | tr '\n' ' ')"
@@ -291,11 +305,21 @@ wait_healthy() {
 verify() {
   local server="$1" layout="$2"
   local container; container="$(engine_container "$layout")"
-  local want have
+  local want have patch_src base initializer_container
   want="$(md5_of "$SEQ/engine/src/campaigns.js")"
   have="$(ssh "$server" "docker exec $container md5sum /app/src/campaigns.js" 2>/dev/null | awk '{print $1}')"
   [[ "$want" == "$have" ]] || die "$server runs different engine code than git ($have vs $want)"
   ok "running engine matches git"
+
+  for patch_src in "$PATCH_DIR"/*.rb; do
+    base="$(basename "$patch_src")"
+    want="$(md5_of "$patch_src")"
+    for initializer_container in chatwoot-rails-1 chatwoot-sidekiq-1; do
+      have="$(ssh "$server" "docker exec $initializer_container md5sum /app/config/initializers/$base 2>/dev/null" | awk '{print $1}')"
+      [[ "$want" == "$have" ]] || die "$server: $base is not mounted from git in $initializer_container"
+    done
+  done
+  ok "all repository initializers mounted in Rails + Sidekiq"
 
   # 4.17 enterprise-graft (native-first, 20.8.26): the prepend itself is the proof; the
   # signature check catches the next upstream reshape before it silently disables us again.
