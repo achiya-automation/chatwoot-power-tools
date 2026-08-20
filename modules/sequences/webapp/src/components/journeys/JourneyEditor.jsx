@@ -1,18 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ReactFlow,
+  Background,
+  Controls,
+  applyNodeChanges,
+  applyEdgeChanges,
+  addEdge,
+  MarkerType,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import {
   ArrowLeft,
   ArrowRight,
   AlertCircle,
   Save,
   Play,
   Pause,
-  Route,
+  Plus,
+  ListTree,
+  Workflow,
 } from 'lucide-react';
 import Button from '../ui/Button.jsx';
 import Badge from '../ui/Badge.jsx';
 import { useToast } from '../ui/Toast.jsx';
 import Inspector from './Inspector.jsx';
 import JourneyColumn from './JourneyColumn.jsx';
+import { nodeTypes, NODE_META } from './JourneyNodes.jsx';
 import {
   ADDABLE_TYPES,
   defaultDataFor,
@@ -34,12 +47,9 @@ import { listTemplates } from '../../api/sequencesApi.js';
 import {
   insertStep,
   moveStep,
-  moveStepTo,
   outlineLayout,
   outlineToEdges,
-  replaceStepType,
   removeStep,
-  setBranchEnds,
   stepFor,
   stepIds,
   toOutline,
@@ -48,15 +58,19 @@ import useT, { useLocale } from '../../useT.js';
 import { translate } from '../../i18n.js';
 
 /*
- * JourneyEditor — one macro-style builder, matching Chatwoot's native macro
- * editor. The saved runtime format remains a graph, but users edit a vertical
- * action list: ordinary flows branch inline; legacy free-form graphs expose
- * explicit route selectors inside the same cards. No canvas or map view exists.
+ * JourneyEditor — a canvas-first flow editor with the macro-style list retained
+ * as an optional accessibility and compact-reading view. Loaded lazily so
+ * @xyflow/react stays out of the main bundle.
+ *
+ * RTL note: React Flow requires LTR coordinates, so the canvas wrapper is
+ * dir="ltr" while node content (JourneyNodes) renders dir="rtl". The inspector
+ * sits at the start side — visually right in RTL.
  */
 
 const M = {
   he: {
     back: 'חזרה',
+    namePh: 'שם הפלואו…',
     save: 'שמירה',
     saved: 'הפלואו נשמר',
     activate: 'הפעלה',
@@ -64,19 +78,24 @@ const M = {
     pause: 'השהיה',
     paused: 'הפלואו הושהה',
     dirty: 'שינויים שלא נשמרו',
-    editorTitle: 'עריכת פלואו',
-    freeRoutesTitle: 'חיבורים חופשיים',
-    freeRoutesHint: 'הפלואו הזה נבנה בעבר עם חיבורים מורכבים. כל היכולות נשמרו, והיעד של כל מסלול מופיע עכשיו בתוך הכרטיס שלו.',
-    confirmTypeChange: 'שינוי סוג הצעד יאפס את התוכן שהוזן בו. להמשיך?',
-    confirmTypeBranchChange: 'שינוי סוג הצעד יאפס את התוכן וימחק את הצעדים שנמצאים במסלולים שלו. להמשיך?',
-    confirmTypeRouteChange: 'שינוי סוג הצעד יאפס את התוכן ואת החיבורים שיוצאים ממנו. צמתי היעד עצמם יישארו. להמשיך?',
+    addNode: 'הוספת צומת:',
+    viewSelector: 'בחירת תצוגת הפלואו',
+    columnView: 'רשימה',
+    mapView: 'קנבס',
+    columnViewAria: 'תצוגת רשימה קומפקטית בסגנון המאקרו',
+    mapViewAria: 'תצוגת קנבס חזותית עם צמתים וחיבורים',
+    columnUnavailable: 'הפלואו הזה כולל מבנה שניתן לערוך רק במפה.',
+    columnUnavailable_cycle: 'יש בפלואו לולאה, ולכן הוא מוצג במפה.',
+    columnUnavailable_orphan: 'יש בפלואו צומת מנותק, ולכן הוא מוצג במפה.',
+    columnUnavailable_converge: 'יש בפלואו חיבור מסלולים מורכב, ולכן הוא מוצג במפה.',
+    columnUnavailable_unsupported: 'יש בפלואו חיבור שאינו מתאים לתצוגת טור, ולכן הוא מוצג במפה.',
     confirmOptionBranchDelete: 'האפשרות הזו כוללת צעדים במסלול משלה. מחיקתה תמחק גם אותם. להמשיך?',
     confirmForkDelete: 'מחיקת הצומת תמחק גם את כל הצעדים במסלולים שיוצאים ממנו. להמשיך?',
     errSave: 'השמירה נכשלה',
     errStatus: 'עדכון הסטטוס נכשל',
     errorsTitle: 'הפלואו לא מוכן להפעלה:',
     err_name: 'חסר שם לפלואו',
-    err_no_start: 'לא נבחר צעד ראשון לפלואו',
+    err_no_start: 'הטריגר לא מחובר לצומת ראשון — גררו קו מהטריגר',
     err_q_text: '{node}: חסר טקסט לשאלה',
     err_q_key: '{node}: חסר שם שדה לשמירת התשובה',
     err_btn_options: '{node}: נדרשות 1-10 אפשרויות עם כיתוב',
@@ -105,6 +124,7 @@ const M = {
   },
   en: {
     back: 'Back',
+    namePh: 'Flow name…',
     save: 'Save',
     saved: 'Flow saved',
     activate: 'Activate',
@@ -112,19 +132,24 @@ const M = {
     pause: 'Pause',
     paused: 'Flow paused',
     dirty: 'Unsaved changes',
-    editorTitle: 'Edit flow',
-    freeRoutesTitle: 'Free-form routes',
-    freeRoutesHint: 'This flow was previously built with complex connections. Every capability is preserved, and each path target is now edited inside its action card.',
-    confirmTypeChange: 'Changing the step type will reset its contents. Continue?',
-    confirmTypeBranchChange: 'Changing the step type will reset its contents and delete the steps inside its paths. Continue?',
-    confirmTypeRouteChange: 'Changing the step type will reset its contents and outgoing routes. Destination steps will remain. Continue?',
+    addNode: 'Add node:',
+    viewSelector: 'Flow view selector',
+    columnView: 'List',
+    mapView: 'Canvas',
+    columnViewAria: 'Compact macro-style list view',
+    mapViewAria: 'Visual canvas with nodes and connections',
+    columnUnavailable: 'This flow has a structure that can only be edited on the map.',
+    columnUnavailable_cycle: 'This flow contains a loop, so it is shown on the map.',
+    columnUnavailable_orphan: 'This flow contains a disconnected node, so it is shown on the map.',
+    columnUnavailable_converge: 'This flow has a complex path merge, so it is shown on the map.',
+    columnUnavailable_unsupported: 'This flow contains a connection that cannot be represented in a column.',
     confirmOptionBranchDelete: 'This option has steps on its own path. Deleting it also deletes those steps. Continue?',
     confirmForkDelete: 'Deleting this node also deletes every step on its outgoing paths. Continue?',
     errSave: 'Save failed',
     errStatus: 'Status update failed',
     errorsTitle: 'The flow is not ready to activate:',
     err_name: 'The flow needs a name',
-    err_no_start: 'Choose a first step for the flow',
+    err_no_start: 'The trigger is not connected to a first node — drag a line from it',
     err_q_text: '{node}: question text is missing',
     err_q_key: '{node}: the answer needs a field key',
     err_btn_options: '{node}: 1-10 options with labels are required',
@@ -154,6 +179,17 @@ const M = {
 };
 
 const STATUS_COLOR = { draft: 'slate', active: 'teal', paused: 'amber' };
+
+// Palette button classes per node color — static strings for Tailwind's scanner.
+const PALETTE_CLS = {
+  teal: 'bg-n-teal-3 text-n-teal-11 hover:bg-n-teal-4',
+  blue: 'bg-n-brand/10 text-n-blue-11 hover:bg-n-brand/20',
+  violet: 'bg-n-violet-3 text-n-violet-11 hover:bg-n-violet-4',
+  amber: 'bg-n-amber-3 text-n-amber-11 hover:bg-n-amber-4',
+  iris: 'bg-n-iris-3 text-n-iris-11 hover:bg-n-iris-4',
+  ruby: 'bg-n-ruby-3 text-n-ruby-11 hover:bg-n-ruby-4',
+  slate: 'bg-n-alpha-2 text-n-slate-11 hover:bg-n-alpha-3',
+};
 
 // Keep the branch contents that still have a matching option handle. When an
 // option is removed, its nested steps become unreachable and are returned so
@@ -197,10 +233,24 @@ function findOutlineStep(steps, nodeId) {
   return null;
 }
 
+// Chatwoot's theme is the html.dark class (synced live by main.jsx) — follow it.
+function useDarkMode() {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+  useEffect(() => {
+    const obs = new MutationObserver(() =>
+      setDark(document.documentElement.classList.contains('dark'))
+    );
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => obs.disconnect();
+  }, []);
+  return dark;
+}
+
 export default function JourneyEditor({ accountId, journey, onBack }) {
   const t = useT(M);
   const locale = useLocale();
   const { toast } = useToast();
+  const dark = useDarkMode();
   const BackIcon = locale === 'he' ? ArrowRight : ArrowLeft;
 
   const initial = useMemo(() => {
@@ -213,6 +263,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
   }, [journey]);
   const [nodes, setNodes] = useState(initial.nodes);
   const [edges, setEdges] = useState(initial.edges);
+  const [viewMode, setViewMode] = useState('map');
   const [jid, setJid] = useState(journey?.id || null);
   const [name, setName] = useState(journey?.name || '');
   // פלואו חדש נולד עם הפעלה-ידנית דלוקה — אחרת אין לו שום טריגר פעיל.
@@ -261,11 +312,50 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirty]);
 
-  const applyOutline = useCallback((nextSteps, nextNodes) => {
+  // 'select' is navigation and 'dimensions' is React Flow measuring nodes on
+  // mount — neither is a user edit, so neither may trip the dirty flag.
+  const isRealChange = (c) => c.type !== 'select' && c.type !== 'dimensions';
+
+  const onNodesChange = useCallback((changes) => {
+    setNodes((ns) => applyNodeChanges(changes, ns));
+    if (changes.some(isRealChange)) markDirty();
+  }, [markDirty]);
+
+  const onEdgesChange = useCallback((changes) => {
+    setEdges((es) => applyEdgeChanges(changes, es));
+    if (changes.some(isRealChange)) markDirty();
+  }, [markDirty]);
+
+  // One outgoing edge per source handle — the runtime follows exactly one path,
+  // so a new connection replaces the previous one. Self-loops are blocked.
+  const onConnect = useCallback((conn) => {
+    if (conn.source === conn.target) return;
+    setEdges((es) =>
+      addEdge(
+        conn,
+        es.filter(
+          (e) => !(e.source === conn.source && (e.sourceHandle ?? null) === (conn.sourceHandle ?? null))
+        )
+      )
+    );
+    markDirty();
+  }, [markDirty]);
+
+  const selectedNode = useMemo(() => nodes.find((n) => n.selected) || null, [nodes]);
+
+  const selectNode = useCallback((id) => {
+    setNodes((ns) => ns.map((node) => ({
+      ...node,
+      selected: String(node.id) === String(id),
+    })));
+  }, []);
+
+  const applyOutline = useCallback((nextSteps, nextNodes, selectedId) => {
     const positions = outlineLayout(nextSteps, { triggerId });
     setNodes(nextNodes.map((node) => ({
       ...node,
       ...(positions[String(node.id)] ? { position: positions[String(node.id)] } : {}),
+      selected: selectedId != null && String(node.id) === String(selectedId),
     })));
     setEdges(outlineToEdges(nextSteps, { triggerId }));
     markDirty();
@@ -279,7 +369,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     // Adding/removing a button option also adds/removes its visual branch. Keep
     // the graph and macro-style outline in lockstep so no stray edge silently
     // sends a reply down the wrong path.
-    if (outline.ok && current.type === 'buttons' && 'options' in patch) {
+    if (viewMode === 'column' && outline.ok && current.type === 'buttons' && 'options' in patch) {
       const currentStep = findOutlineStep(outline.steps, id);
       const currentHandles = (currentStep?.branches || []).map((branch) => branch.handle);
       const nextHandles = (stepFor(updated).branches || []).map((branch) => branch.handle);
@@ -292,26 +382,20 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
         const nextNodes = nodes
           .filter((node) => !removed.has(String(node.id)))
           .map((node) => (String(node.id) === String(id) ? updated : node));
-        applyOutline(reconciled.steps, nextNodes);
+        applyOutline(reconciled.steps, nextNodes, id);
         return;
       }
     }
 
-    // A legacy free-form graph keeps its topology explicit. When a button
-    // option is removed, only that option's route disappears; the destination
-    // node is preserved because another route may still use it.
-    if (!outline.ok && current.type === 'buttons' && 'options' in patch) {
-      const liveHandles = new Set((stepFor(updated).branches || []).map((branch) => branch.handle));
-      setEdges((currentEdges) => currentEdges.filter((edge) =>
-        String(edge.source) !== String(id)
-          || edge.sourceHandle == null
-          || liveHandles.has(String(edge.sourceHandle))
-      ));
-    }
-
     setNodes((ns) => ns.map((node) => (String(node.id) === String(id) ? updated : node)));
     markDirty();
-  }, [applyOutline, markDirty, nodes, outline, t]);
+  }, [applyOutline, markDirty, nodes, outline, t, viewMode]);
+
+  const removeNode = useCallback((id) => {
+    setNodes((ns) => ns.filter((n) => n.id !== id));
+    setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
+    markDirty();
+  }, [markDirty]);
 
   const insertColumnNode = useCallback((location, type) => {
     if (!outline.ok) return;
@@ -321,9 +405,10 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
       type,
       data: defaultDataFor(type),
       position: { x: 0, y: 0 },
+      selected: true,
     };
     const nextSteps = insertStep(outline.steps, location, stepFor(node));
-    applyOutline(nextSteps, [...nodes, node]);
+    applyOutline(nextSteps, [...nodes, node], id);
   }, [applyOutline, nodes, outline]);
 
   const deleteColumnNode = useCallback((id) => {
@@ -334,127 +419,39 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     const nextSteps = removeStep(outline.steps, String(id));
     const keep = new Set([String(triggerId), ...stepIds(nextSteps)]);
     const nextNodes = nodes.filter((node) => keep.has(String(node.id)));
-    applyOutline(nextSteps, nextNodes);
+    applyOutline(nextSteps, nextNodes, triggerId);
   }, [applyOutline, nodes, outline, t, triggerId]);
 
   const moveColumnNode = useCallback((id, delta) => {
     if (!outline.ok) return;
     const nextSteps = moveStep(outline.steps, String(id), delta);
-    applyOutline(nextSteps, nodes);
-  }, [applyOutline, nodes, outline]);
+    applyOutline(nextSteps, nodes, selectedNode?.id || triggerId);
+  }, [applyOutline, nodes, outline, selectedNode?.id, triggerId]);
 
-  const moveColumnNodeTo = useCallback((id, targetIndex) => {
-    if (!outline.ok) return;
-    const nextSteps = moveStepTo(outline.steps, String(id), targetIndex);
-    applyOutline(nextSteps, nodes);
-  }, [applyOutline, nodes, outline]);
-
-  // The original macro editor changes an action type from the select inside
-  // each card. Do the same here, while explicitly guarding the extra data that
-  // a journey step can own (nested paths and graph routes).
-  const changeNodeType = useCallback((id, type) => {
-    if (!ADDABLE_TYPES.includes(type)) return;
-    const current = nodes.find((node) => String(node.id) === String(id));
-    if (!current || current.type === type) return;
-    const updated = { ...current, type, data: defaultDataFor(type) };
-
-    if (outline.ok) {
-      const changed = replaceStepType(outline.steps, String(id), stepFor(updated));
-      const message = changed.removedIds.length ? t('confirmTypeBranchChange') : t('confirmTypeChange');
-      if (!window.confirm(message)) return;
-      const removed = new Set(changed.removedIds.map(String));
-      const nextNodes = nodes
-        .filter((node) => !removed.has(String(node.id)))
-        .map((node) => (String(node.id) === String(id) ? updated : node));
-      applyOutline(changed.steps, nextNodes);
-      return;
-    }
-
-    const outgoing = edges.filter((edge) => String(edge.source) === String(id));
-    if (!window.confirm(outgoing.length ? t('confirmTypeRouteChange') : t('confirmTypeChange'))) return;
-    const continuation = outgoing.find((edge) => edge.sourceHandle == null)?.target || outgoing[0]?.target || null;
-    setNodes((currentNodes) => currentNodes.map((node) => (String(node.id) === String(id) ? updated : node)));
-    setEdges((currentEdges) => {
-      const kept = currentEdges.filter((edge) => String(edge.source) !== String(id));
-      if (!continuation || type === 'handoff') return kept;
-      const edgeFor = (handle) => ({
-        id: `e_${id}_${handle || 'out'}_${continuation}`,
-        source: String(id),
-        target: String(continuation),
-        sourceHandle: handle,
+  // New nodes land below the lowest node — predictable in a vertical flow —
+  // and the viewport pans there so the node is never added out of sight.
+  const rfInstance = useRef(null);
+  const addNode = (type) => {
+    setNodes((ns) => {
+      const maxY = ns.reduce((m, n) => Math.max(m, n.position?.y || 0), 0);
+      const position = { x: 220, y: maxY + 170 };
+      rfInstance.current?.setCenter(position.x + 110, position.y + 40, {
+        zoom: rfInstance.current.getZoom(),
+        duration: 250,
       });
-      if (type === 'condition') return [...kept, edgeFor('yes'), edgeFor('no')];
-      return [...kept, edgeFor(null)];
+      return [
+        ...ns.map((n) => ({ ...n, selected: false })),
+        {
+          id: newNodeId(ns),
+          type,
+          data: defaultDataFor(type),
+          position,
+          selected: true,
+        },
+      ];
     });
     markDirty();
-  }, [applyOutline, edges, markDirty, nodes, outline, t]);
-
-  const setColumnBranchEnds = useCallback((nodeId, handle, ends) => {
-    if (!outline.ok) return;
-    applyOutline(setBranchEnds(outline.steps, String(nodeId), handle, ends), nodes);
-  }, [applyOutline, nodes, outline]);
-
-  // Free-form compatibility: old graphs remain fully editable as macro cards.
-  // Reordering changes display order only; route selectors own execution order.
-  const insertRawNode = useCallback((type) => {
-    setNodes((current) => {
-      const id = newNodeId(current);
-      return [...current, {
-        id,
-        type,
-        data: defaultDataFor(type),
-        position: { x: 0, y: current.length * 130 },
-      }];
-    });
-    markDirty();
-  }, [markDirty]);
-
-  const deleteRawNode = useCallback((id) => {
-    const hasOutgoing = edges.some((edge) => String(edge.source) === String(id));
-    if (hasOutgoing && !window.confirm(t('confirmForkDelete'))) return;
-    setNodes((current) => current.filter((node) => String(node.id) !== String(id)));
-    setEdges((current) => current.filter(
-      (edge) => String(edge.source) !== String(id) && String(edge.target) !== String(id)
-    ));
-    markDirty();
-  }, [edges, markDirty, t]);
-
-  const moveRawNode = useCallback((id, targetIndex) => {
-    setNodes((current) => {
-      const triggerNodes = current.filter((node) => node.type === 'trigger');
-      const raw = current.filter((node) => node.type !== 'trigger');
-      const from = raw.findIndex((node) => String(node.id) === String(id));
-      if (from < 0) return current;
-      const to = Math.max(0, Math.min(Number(targetIndex) || 0, raw.length - 1));
-      if (from === to) return current;
-      const [node] = raw.splice(from, 1);
-      raw.splice(to, 0, node);
-      return [...triggerNodes, ...raw.map((item, index) => ({
-        ...item,
-        position: { x: item.position?.x || 0, y: (index + 1) * 130 },
-      }))];
-    });
-    markDirty();
-  }, [markDirty]);
-
-  const routeNode = useCallback(({ source, sourceHandle, edgeId, target }) => {
-    setEdges((current) => {
-      if (edgeId) {
-        if (target == null) return current.filter((edge) => String(edge.id) !== String(edgeId));
-        return current.map((edge) => String(edge.id) === String(edgeId)
-          ? { ...edge, target: String(target) }
-          : edge);
-      }
-      if (target == null) return current;
-      return [...current, {
-        id: `e_${source}_${sourceHandle || 'out'}_${target}`,
-        source: String(source),
-        target: String(target),
-        sourceHandle: sourceHandle ?? null,
-      }];
-    });
-    markDirty();
-  }, [markDirty]);
+  };
 
   // Field suggestions for condition nodes: saved answer keys + webhook targets +
   // contact basics + the account's custom-attribute definitions.
@@ -506,9 +503,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
 
   const focusError = (e) => {
     if (!e.nodeId) return;
-    const card = document.getElementById(`journey-node-${e.nodeId}`);
-    card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    requestAnimationFrame(() => card?.querySelector('input, textarea, select, button')?.focus());
+    setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === e.nodeId })));
   };
 
   const doSave = async () => {
@@ -587,16 +582,35 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     onBack();
   };
 
-  const triggerNode = nodes.find((node) => node.type === 'trigger') || null;
-  const errorIds = new Set(errors.map((error) => String(error.nodeId || '')).filter(Boolean));
+  const columnUnavailableText = outline.ok
+    ? ''
+    : t(`columnUnavailable_${outline.reason || 'unsupported'}`) || t('columnUnavailable');
+
+  const viewButtonClass = (active) => [
+    'inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium outline-none transition-colors',
+    'focus-visible:outline-2 focus-visible:outline-n-brand focus-visible:outline-offset-1 motion-reduce:transition-none',
+    active
+      ? 'bg-n-background text-n-slate-12 shadow-sm dark:bg-n-solid-1'
+      : 'text-n-slate-11 hover:bg-n-alpha-2 hover:text-n-slate-12',
+  ].join(' ');
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-7xl flex-col gap-4 pb-8">
-      <div className="flex flex-wrap items-center gap-2 px-1">
+    <div className="flex flex-col gap-3">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" color="slate" size="sm" icon={BackIcon} onClick={handleBack}>
           {t('back')}
         </Button>
-        <h2 className="m-0 text-base font-semibold text-n-slate-12">{name.trim() || t('editorTitle')}</h2>
+        <input
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            markDirty();
+          }}
+          placeholder={t('namePh')}
+          aria-label={t('namePh')}
+          className="h-8 grow min-w-40 max-w-xs rounded-lg border border-transparent bg-transparent px-2 text-base font-medium text-n-slate-12 outline-none transition-colors placeholder:text-n-slate-10 hover:border-n-weak focus:border-n-brand"
+        />
         <Badge color={STATUS_COLOR[status] || 'slate'}>{t(`status_${status}`)}</Badge>
         {dirty ? (
           <span className="inline-flex items-center gap-1.5 text-xs text-n-amber-11">
@@ -604,11 +618,53 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
             {t('dirty')}
           </span>
         ) : null}
+        <div
+          role="group"
+          aria-label={t('viewSelector')}
+          className="inline-flex rounded-lg border border-n-weak bg-n-solid-2 p-0.5"
+        >
+          <button
+            type="button"
+            aria-pressed={viewMode === 'column'}
+            aria-label={t('columnViewAria')}
+            title={columnUnavailableText || t('columnViewAria')}
+            disabled={!outline.ok}
+            onClick={() => setViewMode('column')}
+            className={`${viewButtonClass(viewMode === 'column')} disabled:cursor-not-allowed disabled:opacity-40`}
+          >
+            <ListTree size={14} aria-hidden="true" />
+            {t('columnView')}
+          </button>
+          <button
+            type="button"
+            aria-pressed={viewMode === 'map'}
+            aria-label={t('mapViewAria')}
+            onClick={() => setViewMode('map')}
+            className={viewButtonClass(viewMode === 'map')}
+          >
+            <Workflow size={14} aria-hidden="true" />
+            {t('mapView')}
+          </button>
+        </div>
+        <div className="ms-auto flex items-center gap-2">
+          <Button variant="faded" color="slate" size="sm" icon={Save} loading={saving} onClick={doSave}>
+            {t('save')}
+          </Button>
+          {status === 'active' ? (
+            <Button variant="faded" color="amber" size="sm" icon={Pause} loading={statusBusy} onClick={doPause}>
+              {t('pause')}
+            </Button>
+          ) : (
+            <Button variant="solid" color="teal" size="sm" icon={Play} loading={statusBusy} disabled={saving} onClick={doActivate}>
+              {t('activate')}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* API error */}
       {apiError ? (
-        <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
+        <div className="flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
           <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span>{apiError}</span>
         </div>
@@ -616,7 +672,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
 
       {/* Validation errors — click focuses the offending node */}
       {errors.length ? (
-        <div role="alert" aria-live="polite" className="rounded-xl border border-n-amber-7 bg-n-amber-3 px-4 py-3 text-sm text-n-amber-11">
+        <div className="rounded-xl border border-n-amber-7 bg-n-amber-3 px-4 py-3 text-sm text-n-amber-11">
           <p className="m-0 mb-1 font-medium">{t('errorsTitle')}</p>
           <ul className="m-0 list-disc ps-5">
             {errors.map((e, i) => (
@@ -634,78 +690,97 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
         </div>
       ) : null}
 
-      {/* Same two-column composition as Chatwoot's MacroForm.vue. */}
-      <div className="flex min-h-[620px] w-full flex-col lg:min-h-[calc(100vh-230px)] lg:flex-row">
-        <main className="min-w-0 flex-1 overflow-y-auto bg-[radial-gradient(#ebf0f5_1.2px,transparent_0)] px-6 py-4 [background-size:1rem_1rem] dark:bg-[radial-gradient(#293f51_1.2px,transparent_0)] ltr:pl-12 ltr:pr-6 rtl:pl-6 rtl:pr-12">
-          {!outline.ok ? (
-            <div className="mb-5 flex max-w-[800px] items-start gap-2 rounded-md bg-n-alpha-1 p-2 text-sm text-n-slate-11 dark:bg-n-solid-3">
-              <Route size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-              <span>
-                <strong className="font-medium text-n-slate-12">{t('freeRoutesTitle')}:</strong>{' '}
-                {t('freeRoutesHint')}
-              </span>
-            </div>
-          ) : null}
-          <JourneyColumn
-            steps={outline.ok ? outline.steps : null}
-            nodes={nodes}
-            edges={edges}
-            errorIds={errorIds}
-            onInsert={insertColumnNode}
-            onDelete={deleteColumnNode}
-            onMove={moveColumnNode}
-            onMoveTo={moveColumnNodeTo}
-            onRawInsert={insertRawNode}
-            onRawDelete={deleteRawNode}
-            onRawMove={moveRawNode}
-            onRoute={routeNode}
-            onChangeType={changeNodeType}
-            onSetBranchEnds={setColumnBranchEnds}
+      {/* The primary canvas keeps a free-position palette; the list inserts steps in place. */}
+      {viewMode === 'map' ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-medium text-n-slate-11">{t('addNode')}</span>
+          {ADDABLE_TYPES.map((type) => {
+            const meta_ = NODE_META[type];
+            const Icon = meta_.icon;
+            return (
+              <button
+                key={type}
+                type="button"
+                onClick={() => addNode(type)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium outline-none transition-colors focus-visible:outline-2 focus-visible:outline-n-brand focus-visible:outline-offset-1 motion-reduce:transition-none ${PALETTE_CLS[meta_.color]}`}
+              >
+                <Plus size={11} aria-hidden="true" />
+                <Icon size={13} aria-hidden="true" />
+                {t(`node_${type}`)}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {!outline.ok ? (
+        <div className="flex items-start gap-2.5 rounded-xl border border-n-blue-7 bg-n-blue-3 px-4 py-3 text-sm text-n-blue-11">
+          <Workflow size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <span>{columnUnavailableText}</span>
+        </div>
+      ) : null}
+
+      {/* Canvas-first flow surface + fixed properties panel. */}
+      <div className="flex min-h-[560px] flex-col overflow-hidden rounded-xl border border-n-weak bg-n-solid-1 shadow-sm lg:h-[calc(100vh-300px)] lg:flex-row">
+        <aside className="order-2 max-h-[46vh] w-full shrink-0 overflow-y-auto border-t border-n-weak bg-n-solid-2 p-4 lg:order-1 lg:max-h-none lg:w-[22rem] lg:border-e lg:border-t-0">
+          <Inspector
+            node={selectedNode}
+            name={name}
+            onName={(v) => {
+              setName(v);
+              markDirty();
+            }}
+            trigger={trigger}
+            onTrigger={(v) => {
+              setTrigger(v);
+              markDirty();
+            }}
             patchNode={patchNode}
+            removeNode={viewMode === 'column' ? deleteColumnNode : removeNode}
             meta={meta}
             fieldSuggestions={fieldSuggestions}
             vars={vars}
             accountId={accountId}
           />
-        </main>
-
-        <aside className="w-full shrink-0 pb-4 lg:w-1/3">
-          <div className="flex h-full flex-col rounded-lg border border-n-weak bg-n-solid-2 p-4 shadow-sm">
-            <Inspector
-              node={triggerNode}
-              name={name}
-              onName={(value) => {
-                setName(value);
-                markDirty();
-              }}
-              trigger={trigger}
-              onTrigger={(value) => {
-                setTrigger(value);
-                markDirty();
-              }}
-              patchNode={patchNode}
-              removeNode={() => {}}
-              meta={meta}
-              fieldSuggestions={fieldSuggestions}
-              vars={vars}
-              accountId={accountId}
-            />
-            <div className="mt-4 flex flex-col gap-2 border-t border-n-weak pt-4">
-              <Button className="w-full" variant="solid" color="blue" size="md" icon={Save} loading={saving} onClick={doSave}>
-                {t('save')}
-              </Button>
-              {status === 'active' ? (
-                <Button className="w-full" variant="faded" color="amber" size="md" icon={Pause} loading={statusBusy} onClick={doPause}>
-                  {t('pause')}
-                </Button>
-              ) : (
-                <Button className="w-full" variant="solid" color="teal" size="md" icon={Play} loading={statusBusy} disabled={saving} onClick={doActivate}>
-                  {t('activate')}
-                </Button>
-              )}
-            </div>
-          </div>
         </aside>
+        {viewMode === 'column' && outline.ok ? (
+          <div className="order-1 min-h-[34rem] min-w-0 grow overflow-y-auto bg-[radial-gradient(#ebf0f5_1.2px,transparent_0)] px-4 py-6 [background-size:1rem_1rem] dark:bg-[radial-gradient(#293f51_1.2px,transparent_0)] md:px-8 lg:order-2 lg:min-h-0 lg:px-10">
+            <JourneyColumn
+              steps={outline.steps}
+              nodes={nodes}
+              selectedId={selectedNode?.id || triggerId}
+              startId={triggerId}
+              errorIds={new Set(errors.map((error) => String(error.nodeId || '')).filter(Boolean))}
+              onSelect={selectNode}
+              onSelectStart={() => selectNode(triggerId)}
+              onInsert={insertColumnNode}
+              onDelete={deleteColumnNode}
+              onMove={moveColumnNode}
+            />
+          </div>
+        ) : (
+          /* React Flow needs LTR coordinates — content inside nodes is RTL. */
+          <div dir="ltr" className="order-1 h-[34rem] min-w-0 grow overflow-hidden bg-n-solid-1 lg:order-2 lg:h-auto">
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onInit={(inst) => { rfInstance.current = inst; }}
+              colorMode={dark ? 'dark' : 'light'}
+              fitView
+              fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+              defaultEdgeOptions={{ type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed } }}
+              deleteKeyCode={['Backspace', 'Delete']}
+              proOptions={{ hideAttribution: false }}
+            >
+              <Background gap={16} />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </div>
+        )}
       </div>
     </div>
   );
