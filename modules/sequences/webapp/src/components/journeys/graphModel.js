@@ -198,7 +198,7 @@ export function normalizeData(type, d = {}) {
   }
 }
 
-/** Serialize React Flow state → the graph jsonb the engine executes. */
+/** Serialize editor state → the graph jsonb the engine executes. */
 export function toGraph(rfNodes, rfEdges) {
   const nodes = (rfNodes || []).map((n) => ({
     id: String(n.id),
@@ -231,7 +231,7 @@ export function toGraph(rfNodes, rfEdges) {
 // Grid fallback for graphs saved without positions (e.g. seeded manually).
 const autoPos = (i) => ({ x: 120 + (i % 3) * 300, y: 60 + Math.floor(i / 3) * 200 });
 
-/** Deserialize a saved graph → React Flow nodes/edges. */
+/** Deserialize a saved graph → editor nodes/edges. */
 export function fromGraph(graph) {
   const nodes = (graph?.nodes || []).map((n, i) => ({
     id: String(n.id),
@@ -251,8 +251,8 @@ export function fromGraph(graph) {
     id: String(e.id || `e${i}`),
     source: String(e.source),
     target: String(e.target),
-    // Only condition edges carry a handle; null must stay ABSENT for React Flow
-    // (a null sourceHandle is fine, but omitting keeps round-trips clean).
+    // Keep null handles absent in editor state; toGraph restores an explicit
+    // null and round-trips stay clean.
     ...(e.sourceHandle != null ? { sourceHandle: String(e.sourceHandle) } : {}),
   }));
   return { nodes, edges };
@@ -299,7 +299,6 @@ export function startNodeOf(graph) {
  *   q_text      — question/buttons node with empty prompt text
  *   q_key       — question/buttons node without saveTo.key
  *   btn_options — buttons node without 1-10 non-empty options
- *   cond_branch — condition node missing a 'yes' AND/OR 'no' outgoing edge
  *   wh_url      — webhook node with an empty/invalid URL
  *   tpl_name    — template node without a chosen template
  *   tpl_key     — reply-waiting template node without saveTo.key
@@ -307,7 +306,6 @@ export function startNodeOf(graph) {
 export function validateGraph(graph) {
   const errors = [];
   if (!startNodeOf(graph)) errors.push({ code: 'no_start' });
-  const edges = graph?.edges || [];
   for (const n of graph?.nodes || []) {
     const d = n.data || {};
     if (n.type === 'question' || n.type === 'buttons') {
@@ -320,15 +318,9 @@ export function validateGraph(graph) {
         || opts.some((o) => !String(o?.title || '').trim());
       if (bad) errors.push({ code: 'btn_options', nodeId: n.id });
     }
-    // A condition routes by sourceHandle. If a branch is unconnected the runtime's
-    // nextNodeId falls back to the OTHER edge — silently routing the wrong way. Both
-    // 'yes' and 'no' must be wired before a flow can go live.
-    if (n.type === 'condition') {
-      const out = edges.filter((e) => e.source === n.id);
-      const hasYes = out.some((e) => e.sourceHandle === 'yes');
-      const hasNo = out.some((e) => e.sourceHandle === 'no');
-      if (!hasYes || !hasNo) errors.push({ code: 'cond_branch', nodeId: n.id });
-    }
+    // An unconnected condition branch is an intentional terminal path in the
+    // macro editor. nextNodeId only falls back to an explicit default edge, so
+    // a missing yes/no edge now ends safely instead of leaking into the other path.
     // The webhook node calls its URL unconditionally per contact — an empty URL
     // throws on every run. Require a real http(s) URL.
     if (n.type === 'webhook') {
