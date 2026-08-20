@@ -97,6 +97,20 @@ test('safe action button posts the exact WAHA command to the current Chatwoot co
   assert.match(window.document.querySelector('.cwpt-waha-status').textContent, /סנכרון ההודעות התחיל/);
 });
 
+test('keeps the bot choices after the latest reply in the conversation flow', async () => {
+  const { dom } = pageDom();
+  const window = await runInjector(dom);
+  const list = window.document.querySelector('.conversation-panel');
+  const reply = window.document.createElement('li');
+  reply.textContent = 'תשובת הבוט';
+  list.appendChild(reply);
+
+  await new Promise((resolve) => setTimeout(resolve, 320));
+
+  assert.equal(list.lastElementChild.id, 'cwpt-waha-controls');
+  assert.equal(list.lastElementChild.previousElementSibling.textContent, 'תשובת הבוט');
+});
+
 test('reconnect requires confirmation and then sends logout, start and qr in order', async () => {
   const { dom, calls } = pageDom();
   const window = await runInjector(dom);
