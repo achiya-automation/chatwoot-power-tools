@@ -297,10 +297,12 @@ verify() {
   [[ "$want" == "$have" ]] || die "$server runs different engine code than git ($have vs $want)"
   ok "running engine matches git"
 
+  # 4.17 enterprise-graft (native-first, 20.8.26): the prepend itself is the proof; the
+  # signature check catches the next upstream reshape before it silently disables us again.
   ssh "$server" "docker exec chatwoot-sidekiq-1 bundle exec rails runner \"
     svc = Whatsapp::OneoffCampaignService
-    raise 'patch not applied' unless svc.instance_method(:send_whatsapp_template_message).parameters.map(&:last) == [:to, :template_params, :error_sink]
-    raise 'status hook missing' unless Whatsapp::IncomingMessageBaseService.ancestors.include?(WhatsappCampaignIncomingStatusPatch)
+    raise 'patch not applied' unless svc.ancestors.include?(WhatsappCampaignGraft417)
+    raise 'signature drift' unless svc.instance_method(:send_whatsapp_template_message).parameters.map(&:last) == [:recipient, :to, :template_params]
   \"" >/dev/null 2>&1 || die "$server: campaign patch is not active"
   ok "campaign patch active"
 }
