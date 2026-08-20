@@ -4,6 +4,7 @@ import { buildContactPayload } from '../lib/fieldMapper.js';
 import { createImportJob } from '../lib/importRunner.js';
 import { createApiClient } from '../lib/apiClient.js';
 import { batchDedup } from '../lib/dedup.js';
+import { createServerJob, wireRow } from '../lib/serverImport.js';
 import { vendorUrl } from '../lib/basepath.js';
 import { isValidLabelTitle, normalizeLabelTitle } from '../lib/labelTitle.js';
 import { STYLES } from './styles.js';
@@ -61,6 +62,7 @@ const I18N = {
     bgCancelled: 'הייבוא הופסק', bgError: 'הייבוא נעצר עקב שגיאה',
     stopImport: 'עצירת הייבוא',
     bgHint: 'אפשר להמשיך לעבוד בינתיים — רק אל תסגרו את הטאב עד לסיום',
+    bgHintServer: (m) => (m ? `אפשר לסגור את הטאב — סיכום יישלח ל־${m}` : 'אפשר לסגור את הטאב — סיכום יישלח למייל בסיום'),
     dupInFile: 'כפולים בקובץ (ימוזגו)',
     headerEchoSkipped: (rows) =>
       `שורות כותרת בתוך הקובץ זוהו ודולגו (שורות: ${rows}) — נראה שהקובץ מורכב מכמה רשימות שהודבקו יחד. הן לא ייובאו כאנשי קשר.`,
@@ -110,6 +112,7 @@ const I18N = {
     bgCancelled: 'Import stopped', bgError: 'Import stopped due to an error',
     stopImport: 'Stop import',
     bgHint: 'You can keep working — just don\'t close this tab until it finishes',
+    bgHintServer: (m) => (m ? `You can close this tab — a summary will be emailed to ${m}` : 'You can close this tab — a summary will be emailed when it finishes'),
     dupInFile: 'duplicates in file (will be merged)',
     headerEchoSkipped: (rows) =>
       `Header rows inside the file were detected and skipped (rows: ${rows}) — the file looks like several lists pasted together. They will not be imported as contacts.`,
@@ -150,7 +153,7 @@ function loadXlsx(assetBase) {
 export function openWizard({ accountId, authHeaders, assetBase }) {
   injectStyles();
   const api = createApiClient(accountId, authHeaders);
-  const state = { table: null, mapping: [], customMap: [], labelTitle: '', labelNeedsCreation: false, waInboxId: null };
+  const state = { table: null, mapping: [], customMap: [], labelTitle: '', labelNeedsCreation: false, waInboxId: null, serverMode: false };
 
   // Resolve the WhatsApp inbox once, up front: every imported contact is linked to it
   // so Chatwoot opens future conversations on the IMPORTED contact (real name) instead
@@ -285,7 +288,12 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     });
     tbl.appendChild(thead);
 
-    state.customMap = []; // reset on each entry to mapping step
+    // ⚠️ לא מאפסים. הכניסה לשלב הזה קורית גם ב"חזור" מהתווית/התצוגה המקדימה, ואיפוס
+    // החזיר כל עמודה שמופתה לשדה מותאם ל"התעלם" בלי שום סימן — מי שהמשיך בלי לשים לב
+    // איבד את כל הנתונים בעמודה ההיא, בשקט. שומרים רק מיפויים של עמודות שעדיין קיימות
+    // (העלאת קובץ אחר מחליפה את הטבלה).
+    const colCount = state.table.headers.length;
+    state.customMap = state.customMap.filter((c) => c.index < colCount);
 
     state.table.headers.forEach((colHeader, i) => {
       const sample = (state.table.rows.find((r) => (r[i] || '').trim()) || [])[i] || '';
@@ -304,11 +312,15 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       }
       options.push({ value: '__new__', label: t('createNewField'), icon: 'plus' });
 
-      // Initial selection mirrors the old code: only a matching system field
-      // pre-selects; custom attrs never pre-select on first render.
-      const initial = state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field)
-        ? state.mapping[i].field
-        : '';
+      // הבחירה המשוחזרת: שדה מערכת מגיע מ-state.mapping, ושדה מותאם מ-state.customMap —
+      // הוא לעולם לא נכתב ל-mapping.field (ראה updateMapping/commit), ולכן הסתמכות עליו
+      // בלבד גרמה לבחירה להיעלם בכל חזרה לשלב הזה.
+      const custom = state.customMap.find((c) => c.index === i);
+      const initial = custom
+        ? (custom.create ? '__new__' : 'custom:' + custom.attribute_key)
+        : (state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field)
+          ? state.mapping[i].field
+          : '');
 
       const row = el('tr');
       const tdHeader = el('td', 'px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12');
@@ -328,6 +340,9 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
         },
       });
       tdSel.appendChild(cs.el);
+      // שדה חדש שכבר אושר בכניסה קודמת: מציגים את המצב המאושר, לא את הבורר —
+      // אחרת החזרה לשלב הזה נראית כאילו לא נבחר כלום, בזמן שהמיפוי דווקא קיים.
+      if (custom?.create) showCommittedNewField(i, custom.create.display, tdSel, cs);
 
       const tdSample = el('td', 'px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12');
       tdSample.textContent = sample;
@@ -397,6 +412,26 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     wrap.append(inp, confirmBtn, cancelBtn);
     tdSel.replaceChildren(wrap);
     inp.focus();
+  }
+
+  // מציג את המצב "שדה חדש אושר" (תווית + כפתור שינוי) בלי לפתוח מחדש את תיבת ההקלדה.
+  // משמש בשחזור אחרי "חזור", כדי שהמיפוי שכבר נבחר ייראה — ולא ייראה כאילו אבד.
+  function showCommittedNewField(i, name, tdSel, origCs) {
+    const done = el('div', 'flex items-center gap-1');
+    const lbl = el('span', 'text-sm text-n-slate-12 flex-1 truncate');
+    lbl.textContent = name;
+    const changeBtn = el('button',
+      BTN_BASE + ' text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer');
+    changeBtn.appendChild(icon('x', 'size-4'));
+    changeBtn.title = t('change');
+    changeBtn.addEventListener('click', () => {
+      state.mapping[i] = { index: i, field: null };
+      state.customMap = state.customMap.filter((c) => c.index !== i);
+      origCs.setValue('');
+      tdSel.replaceChildren(origCs.el);
+    });
+    done.append(lbl, changeBtn);
+    tdSel.replaceChildren(done);
   }
 
   function updateMapping(i, value) {
@@ -684,15 +719,21 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     let labels = [];
     try { labels = await api.listLabels().then((r) => r.payload || r); } catch { /* allow new only */ }
 
-    let selValue = ''; // tracks the chosen existing-label value (replaces sel.value)
-
     const options = [{ value: '', label: t('noLabel') }];
     (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
     const existingLabelTitles = new Set((labels || []).map((l) => String(l.title).toLowerCase()));
 
+    // ⚠️ שחזור הבחירה הקודמת. הכניסה לשלב הזה קורית גם ב"חזור" מהתצוגה המקדימה, וטופס
+    // ריק גרם ל-labelTitle להתאפס בהמשך — התווית שנבחרה נעלמה בלי שום סימן.
+    // תווית קיימת חוזרת לבורר; תווית חדשה שטרם נוצרה חוזרת לשדה ההקלדה.
+    const prior = state.labelTitle || '';
+    const priorIsExisting = prior && existingLabelTitles.has(prior.toLowerCase());
+    let selValue = priorIsExisting ? prior : ''; // tracks the chosen existing-label value
+
     const newInput = el('input',
       'h-8 w-full px-3 py-2 text-sm rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand border-0 outline-offset-[-1px]');
     newInput.placeholder = t('newLabelPlaceholder');
+    if (prior && !priorIsExisting) newInput.value = prior;
     const labelError = el('div', 'min-h-5 text-sm text-n-ruby-11');
     newInput.addEventListener('input', () => { labelError.textContent = ''; });
     newInput.addEventListener('blur', () => {
@@ -702,7 +743,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
     const cs = customSelect({
       options,
-      value: '',
+      value: selValue,
       placeholder: t('noLabel'),
       size: 'field', // roomier single-select field for the label step
       onSelect: (v) => {
@@ -785,22 +826,33 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     state.contacts = contacts;
     const N = contacts.length;
 
-    // Full dedup — batched OR-filter calls (a handful of requests instead of one
-    // per row) so runImport can skip per-row filters and the preview shows fast.
+    // Dedup counts — one POST to the server backend when it is live (SQL matching, and
+    // the probe doubles as stepRun's mode switch), else the legacy batched OR-filter
+    // calls. Any probe failure (404 = initializer not deployed, network, 5xx) simply
+    // means "run the whole import in the browser like before".
     let dedupOk = true;
+    state.serverMode = false;
+    let serverCounts = null;
     try {
-      await batchDedup(contacts, api, (d, tot) => {
-        status.textContent = `${t('checkingDupes')} ${d}/${tot}`;
-      });
-    } catch {
-      // Partial batch state is unreliable — clear it; the runner falls back to a
-      // fresh per-row filter for every row during the import itself.
-      dedupOk = false;
-      contacts.forEach((c) => { delete c.__match; delete c.__dupTail; });
+      serverCounts = await api.smartImportPreview(contacts.map(wireRow));
+      state.serverMode = true;
+    } catch { /* backend absent or unreachable — legacy path below */ }
+
+    if (!state.serverMode) {
+      try {
+        await batchDedup(contacts, api, (d, tot) => {
+          status.textContent = `${t('checkingDupes')} ${d}/${tot}`;
+        });
+      } catch {
+        // Partial batch state is unreliable — clear it; the runner falls back to a
+        // fresh per-row filter for every row during the import itself.
+        dedupOk = false;
+        contacts.forEach((c) => { delete c.__match; delete c.__dupTail; });
+      }
     }
 
-    const dupes = contacts.filter((c) => c.__dupTail).length;
-    const existing = contacts.filter((c) => c.__match).length;
+    const dupes = state.serverMode ? (serverCounts.dup_in_file || 0) : contacts.filter((c) => c.__dupTail).length;
+    const existing = state.serverMode ? serverCounts.existing : contacts.filter((c) => c.__match).length;
     const created = N - existing - dupes;
     status.textContent = dedupOk
       ? `${t('readyToImport')} ${N} · ${created} ${t('newWord')} · ${existing} ${t('existingWillUpdate')}` +
@@ -888,15 +940,48 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // the user keeps working in Chatwoot while it runs (SPA navigation is safe —
   // the job lives on window and the pill on <body>). Closing the tab mid-run is
   // guarded by beforeunload inside mountPill.
-  function stepRun() {
+  let startingImport = false;
+  async function stepRun() {
+    if (startingImport) return; // the await below opens a double-click window
     if (window.__cwImportJob && ['running', 'cancelling'].includes(window.__cwImportJob.progress.state)) {
       showError(t('alreadyRunning'));
       return;
     }
-    const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
-    window.__cwImportJob = job;
-    mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
-    close();
+    startingImport = true;
+    try {
+      if (state.serverMode) {
+        try {
+          const res = await api.smartImportStart({
+            contacts: state.contacts.map(wireRow),
+            label_title: state.labelTitle,
+            wa_inbox_id: state.waInboxId,
+            locale: DRIP_LOCALE,
+          });
+          const job = createServerJob({
+            api, jobId: res.job_id, total: state.contacts.length,
+            email: res.email, labelTitle: state.labelTitle,
+          });
+          window.__cwImportJob = job;
+          mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
+          close();
+          return;
+        } catch { /* server refused the start — the in-browser runner still works */ }
+        // ⚠️ נפילה מהשרת חזרה לדפדפן: כשמצב-שרת פעל, דילגנו על batchDedup ולכן אף שורה
+        // לא סומנה __match/__dupTail. הרצת הייבוא כך שולחת גם כפילויות-בתוך-הקובץ
+        // במקביל (concurrency 5), שתיהן לא מוצאות התאמה — ונוצרים שני אנשי קשר.
+        // מריצים את הזיהוי לפני ההעברה; אם גם הוא נכשל, מנקים סימונים חלקיים והרץ
+        // נופל לבדיקה פר-שורה, שאיטית אבל נכונה.
+        try {
+          await batchDedup(state.contacts, api);
+        } catch {
+          state.contacts.forEach((c) => { delete c.__match; delete c.__dupTail; });
+        }
+      }
+      const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
+      window.__cwImportJob = job;
+      mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
+      close();
+    } finally { startingImport = false; }
   }
 
   // ── DOM helpers ──────────────────────────────────────────────────────────────
@@ -987,14 +1072,17 @@ function mountPill(job, { dark, rtl }) {
   track.appendChild(fill);
 
   const detail = el('div', 'text-xs text-n-slate-11');
-  const hint = elWithText('div', 'text-xs text-n-slate-11', t('bgHint'));
+  const hint = elWithText('div', 'text-xs text-n-slate-11',
+    job.serverMode ? t('bgHintServer')(job.emailTo) : t('bgHint'));
   const actions = el('div', 'flex items-center gap-2');
   actions.style.display = 'none';
   pill.append(head, track, detail, hint, actions);
   document.body.appendChild(pill);
 
+  // A server-side job survives the tab — the unload guard exists only for the legacy
+  // in-browser runner, where closing the tab really does stop the import.
   function warnUnload(e) { e.preventDefault(); e.returnValue = ''; }
-  window.addEventListener('beforeunload', warnUnload);
+  if (!job.serverMode) window.addEventListener('beforeunload', warnUnload);
 
   function dismiss() {
     off();
@@ -1020,6 +1108,8 @@ function mountPill(job, { dark, rtl }) {
       title.textContent = p.state === 'running' ? t('bgImporting') : t('bgCancelling');
       xBtn.title = t('stopImport');
       detail.textContent = `${p.done}/${p.total} · ${counts}`;
+      // The email address arrives with the first status poll — keep the hint current.
+      if (job.serverMode) hint.textContent = t('bgHintServer')(job.emailTo);
       return;
     }
     // Finished: done / cancelled / error

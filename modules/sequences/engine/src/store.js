@@ -49,7 +49,11 @@ import { query, withTx, getPool } from './db.js';
 import { makeDbReads } from './reads.js';
 import { createTemplateCopy } from './meta.js';
 import { projectSchedule } from './schedule.js';
-import { listCampaigns, getCampaignDetail, campaignsTrend, campaignsTierInfo } from './campaigns.js';
+import { listCampaigns, getCampaignDetail, campaignExperiments, campaignsTrend, campaignsTierInfo } from './campaigns.js';
+import {
+  startResend, resendStatus, scheduleResend, pendingResend, cancelScheduledResend,
+  accountWhatsappInboxes,
+} from './campaignResend.js';
 import { handleTemplatesAction } from './templates.js';
 import { handleJourneysAction, makeJourneysCtx } from './journeys.js';
 import { handlePresenceAction } from './presence.js';
@@ -143,7 +147,7 @@ export async function handleAction(accountId, action, payload) {
     case 'set_sequence':
       return actionSetSequence(accId, payload);
     case 'templates':
-      return actionTemplates(accId);
+      return actionTemplates(accId, payload?.inbox_id);
     case 'storage_usage':
       return actionStorageUsage(accId);
     case 'delivery_stats':
@@ -152,10 +156,30 @@ export async function handleAction(accountId, action, payload) {
       return { data: await listCampaigns(query, accId) };
     case 'campaign_detail':
       return { data: await getCampaignDetail(query, accId, payload?.campaign_id) };
+    // תוצאות פר-ניסוי: השליחה המקורית וכל שליחה מחדש, כל אחת עם התבנית שלה.
+    case 'campaign_experiments':
+      return { data: await campaignExperiments(query, accId, payload?.campaign_id) };
     case 'campaigns_trend':
       return { data: await campaignsTrend(query, accId, payload?.days || 14) };
     case 'campaigns_tier':
-      return { data: await campaignsTierInfo(query, makeDbReads(query), accId) };
+      // inbox_id (מהקמפיין שנצפה) → המכסה של המספר ששולח, לא ניחוש ברמת חשבון.
+      return { data: await campaignsTierInfo(query, makeDbReads(query), accId, {}, payload?.inbox_id) };
+    // שליחה מחדש לנכשלים — עבודה ברקע; הלקוח מתשאל את הסטטוס. admin-only (נאכף ב-api.js).
+    case 'campaign_resend':
+      return { data: await startResend({ query, makeClientFor: makeAccountClient }, accId, payload?.campaign_id, payload?.locale, { template: payload?.template, inboxId: payload?.inbox_id }) };
+    // מספרי הוואטסאפ של החשבון + דירוג האיכות — לבחירה "ממי לשלוח".
+    case 'campaign_inboxes':
+      return { data: await accountWhatsappInboxes(query, accId) };
+    case 'campaign_resend_status':
+      return { data: resendStatus(accId, payload?.campaign_id) };
+    // תזמון שליחה מחדש (מיגרציה 049). admin-only כמו השליחה עצמה — נאכף ב-api.js.
+    case 'campaign_resend_schedule':
+      return { data: await scheduleResend(query, accId, payload?.campaign_id, payload?.run_at,
+        { template: payload?.template, locale: payload?.locale, inboxId: payload?.inbox_id }) };
+    case 'campaign_resend_pending':
+      return { data: await pendingResend(query, accId, payload?.campaign_id) };
+    case 'campaign_resend_unschedule':
+      return { data: await cancelScheduledResend(query, accId, payload?.campaign_id) };
     case 'contacts':
       return actionContacts(accId, payload);
     case 'template_media':
@@ -192,6 +216,26 @@ export async function handleAction(accountId, action, payload) {
     default:
       throw new Error(`Unknown action: ${action}`);
   }
+}
+
+// Chatwoot client for a specific account — same token source as the journeys ctx
+// (drip.account_tokens, the auto-provisioned AgentBot). Used by campaign resend —
+// exported so the tick can run SCHEDULED resends through the exact same path.
+export async function makeAccountClient(accountId, templatesInboxId = null) {
+  const rows = await query(
+    `SELECT chatwoot_token, base_url FROM drip.account_tokens WHERE account_id = $1`,
+    [accountId]
+  );
+  const a = rows[0];
+  if (!a) throw new Error('החשבון עדיין לא מחובר למנוע — נסו שוב בעוד רגע');
+  return makeClient({
+    baseUrl: a.base_url || _config?.chatwootBaseUrl || process.env.CHATWOOT_BASE_URL,
+    token: a.chatwoot_token,
+    accountId,
+    reads: makeDbReads(query),
+    query,
+    templatesInboxId,
+  });
 }
 
 // RPC helpers — the compliance surface is entirely SQL functions, so the JS side is a
@@ -668,11 +712,11 @@ async function actionContacts(accountId, payload) {
 //   { name, language, category, params_count, body_preview }
 // api.js sends: { ok: true, data: [...] }
 // sequencesApi.js: data || [] — data IS the array.
-async function actionTemplates(accountId) {
+async function actionTemplates(accountId, inboxId = null) {
   // Read templates straight from Chatwoot's WhatsApp channel (the AgentBot token can't
   // GET /inboxes). Keep only APPROVED, deduped by name+language — matching the old API path.
   const reads = makeDbReads(query);
-  const raw = await reads.loadTemplates(accountId);
+  const raw = await reads.loadTemplates(accountId, inboxId ? Number(inboxId) : null);
   const seen = new Set();
   const rawTemplates = raw.filter((t) => {
     if (String(t.status || '').toUpperCase() !== 'APPROVED') return false;
@@ -718,22 +762,56 @@ async function actionTemplates(accountId) {
     })
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
-  // "זיכרון מדיה" — לכל תבנית, הקישור (media_url) שכבר שימש אותה בשלב קיים. כך העורך
-  // ממלא אוטומטית את המדיה לתבנית-header, ואין צורך להזין קישור שוב (אחרי הפעם הראשונה).
+  // "זיכרון מדיה" — לכל תבנית, הקישור (media_url) שכבר שימש אותה. כך העורך ממלא
+  // אוטומטית את המדיה לתבנית-header, ואין צורך להזין קישור שוב (אחרי הפעם הראשונה).
+  //
+  // שלושה מקורות: שלבי רצף, קמפיינים שכבר יצאו (10.8.26), ו-drip.template_media (13.8.26).
+  // בלי הקמפיינים, שליחה מחדש של קמפיין-תמונה ביקשה להעלות מחדש בדיוק את הקובץ שכבר
+  // יצא לאלפי נמענים — וכתובת חדשה היא כתובת "קרה" אצל מטא, מה שמזמין 131053 (ראו
+  // מיגרציה 047). הקישור החם הוא בדיוק זה ששרד את הקמפיין.
+  // template_media משלים את מה שאין לו שורת קמפיין: העלאות ממודאל יצירת הקמפיין,
+  // ותבניות ששימשו רק שליחה-מחדש (v7 של 13.8 — הועלה וידאו, נשלח ל-363, ולא נזכר בשום מקום).
   try {
     const mediaRows = await query(
-      `SELECT DISTINCT ON (st.template_name) st.template_name, st.media_url
-         FROM drip.sequence_steps st
-         JOIN drip.sequences s ON s.id = st.sequence_id
-        WHERE s.account_id = $1 AND coalesce(st.media_url, '') <> ''
-        ORDER BY st.template_name, st.id DESC`,
+      // ⚠️ sequence_steps.id הוא uuid ו-campaigns.id הוא bigint — UNION ישיר עליהם נכשל
+      // ב-"UNION types uuid and bigint cannot be matched", וה-catch למטה בלע את זה בשקט
+      // כך שזיכרון המדיה מת לגמרי (גם של הרצפים, שעבד קודם). row_number מייצר סדר
+      // מקומי לכל מקור בנפרד, ואז אין טיפוס משותף להתנגש עליו.
+      // pri: רצפים קודמים לקמפיינים — כך ההתנהגות שהייתה נשמרת, והקמפיין רק משלים
+      // תבניות שלא מופיעות בשום שלב רצף.
+      `SELECT DISTINCT ON (template_name) template_name, media_url FROM (
+         SELECT st.template_name, st.media_url, 1 AS pri,
+                row_number() OVER (ORDER BY st.id DESC) AS ord
+           FROM drip.sequence_steps st
+           JOIN drip.sequences s ON s.id = st.sequence_id
+          WHERE s.account_id = $1 AND coalesce(st.media_url, '') <> ''
+         UNION ALL
+         SELECT c.template_params ->> 'name' AS template_name,
+                c.template_params -> 'processed_params' -> 'header' ->> 'media_url' AS media_url,
+                2 AS pri,
+                row_number() OVER (ORDER BY c.id DESC) AS ord
+           FROM public.campaigns c
+          WHERE c.account_id = $1
+            AND coalesce(c.template_params -> 'processed_params' -> 'header' ->> 'media_url', '') <> ''
+         UNION ALL
+         SELECT tm.template_name, tm.media_url, 3 AS pri,
+                row_number() OVER (ORDER BY tm.updated_at DESC) AS ord
+           FROM drip.template_media tm
+          WHERE tm.account_id = $1 AND coalesce(tm.media_url, '') <> ''
+       ) m
+        WHERE coalesce(template_name, '') <> ''
+        ORDER BY template_name, pri, ord`,
       [accountId]
     );
     const mediaByTemplate = new Map(mediaRows.map((r) => [r.template_name, r.media_url]));
     for (const t of data) {
       if (mediaByTemplate.has(t.name)) t.media_url = mediaByTemplate.get(t.name);
     }
-  } catch { /* sequence_steps absent — skip media memory */ }
+  } catch (e) {
+    // נשאר fail-open (בלי זיכרון מדיה עדיין אפשר לעבוד), אבל לא בשקט: השתיקה כאן היא
+    // שהסתירה שגיאת טיפוסים ב-UNION למשך יום שלם, וכל מה שהמשתמש ראה זה שדה מדיה ריק.
+    console.error('[drip] media memory skipped:', e.message);
+  }
 
   return { data };
 }

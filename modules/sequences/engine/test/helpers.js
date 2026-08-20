@@ -32,6 +32,9 @@ export async function setupDb(pool) {
   await pool.query(`CREATE TABLE IF NOT EXISTS public.messages (
     id int, conversation_id int, account_id int, message_type int, content text,
     status int, content_attributes json, source_id text, created_at timestamp)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.agent_bots (
+    id int PRIMARY KEY, account_id int, name text, description text, bot_type int,
+    bot_config jsonb DEFAULT '{}'::jsonb, created_at timestamp, updated_at timestamp)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.campaigns (
     id int PRIMARY KEY, display_id int, account_id int, inbox_id int, title text,
     message text, campaign_type int, campaign_status int,
@@ -44,6 +47,8 @@ export async function setupDb(pool) {
   await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS private boolean DEFAULT false');
   // journeys: convState מסנן הודעות של נציג אנושי (sender_type='User') — כמו ב-Chatwoot האמיתי.
   await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS sender_type text');
+  await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS sender_id int');
+  await pool.query("ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS additional_attributes jsonb DEFAULT '{}'::jsonb");
   // real Chatwoot has these; the journeys jrn_launch visibility check reads them.
   await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS assignee_id int');
   await pool.query("ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS settings jsonb DEFAULT '{}'::jsonb");
@@ -63,6 +68,15 @@ export async function setupDb(pool) {
     id int PRIMARY KEY, name text)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.taggings (
     id int PRIMARY KEY, tag_id int, taggable_type text, taggable_id int, context text)`);
+  // 4.17 native per-recipient tracking (statuses queued:0 skipped:1 sent:2 delivered:3
+  // read:4 failed:5) — the campaign queries read it first, drip is the fallback.
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.campaign_recipients (
+    id int PRIMARY KEY, account_id int, campaign_id int, contact_id int, inbox_id int,
+    source_id text, status int DEFAULT 0, error_code text, error_title text,
+    error_message text, message_content text,
+    sent_at timestamp, delivered_at timestamp, read_at timestamp, failed_at timestamp,
+    created_at timestamp DEFAULT (now() AT TIME ZONE 'UTC'),
+    updated_at timestamp DEFAULT (now() AT TIME ZONE 'UTC'))`);
   await runMigrations(pool);
 }
 
@@ -82,10 +96,14 @@ export async function setupDb(pool) {
 export async function relaxCompliance(pool, accounts = [1, 2, 3, 5, 7, 9]) {
   for (const id of accounts) {
     await pool.query(
-      `INSERT INTO drip.compliance (account_id, require_consent, max_marketing_per_day)
-       VALUES ($1, false, 9999)
+      // שעות השקט חייבות להירפות כאן גם הן. ברירת המחדל בסכימה היא 21:00–08:00, ו-qs===qe
+      // מבטל את החלון — בלי זה כל טסט שמסתמך על reconcile עבר ביום ונכשל בלילה.
+      `INSERT INTO drip.compliance
+         (account_id, require_consent, max_marketing_per_day, quiet_start_hour, quiet_end_hour)
+       VALUES ($1, false, 9999, 0, 0)
        ON CONFLICT (account_id) DO UPDATE
-         SET require_consent = false, max_marketing_per_day = 9999`,
+         SET require_consent = false, max_marketing_per_day = 9999,
+             quiet_start_hour = 0, quiet_end_hour = 0`,
       [id]
     );
   }

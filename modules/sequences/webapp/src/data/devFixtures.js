@@ -377,6 +377,9 @@ const COMPLIANCE = {
     // code+params — ה-UI מרכיב את המשפט בשפת הנציג. message הוא ה-fallback בלבד.
     { id: 1, level: 'warn', code: 'template_paused', params: { template: 'offer_discount' }, message: 'התבנית offer_discount מושהית ע"י מטא.', created_at: '2026-06-22 07:40', acked_at: null },
   ],
+  // usage — תקציב 24 השעות מול התקרה, כולל המספר שהנתונים שייכים לו (לחשבון יש כמה).
+  // cap: -1 = ללא הגבלה. מנוע ישן לא מחזיר את הבלוק הזה כלל, והמסך מתנהג כמו קודם.
+  usage: { used_24h: 312, cap: 2000, inbox: { id: 21, name: 'מכירות', phone: '+972501234567' } },
   contacts: { known: 412, with_consent: 386, suppressed: 19, stale: 7 },
   // הכיסוי נמדד על מי שנמצא ברצף בלבד (386 + 26), לא על כל 412 אנשי הקשר — מכנה
   // שכולל אנשי קשר שמחוץ לרצף היה מדלל את האחוז ומסתיר את הפער האמיתי.
@@ -410,7 +413,7 @@ const CAMPAIGN_DETAIL = {
   campaign: {
     id: 9001, title: 'השקת מסלול קיץ',
     message: 'מתנה בשבילך {{1}} 🎁 — 15% הנחה על הקמת אוטומציה ראשונה. הקוד בתוקף השבוע.',
-    campaign_type: 'one_off', campaign_status: 'completed', audience: 'תווית: לידים',
+    campaign_type: 'one_off', campaign_status: 'completed', audience: 'תווית: לידים', inbox_id: 21,
     template_name: 'offer_discount', language: 'he', category: 'MARKETING', created_at: '2026-06-17 15:20',
   },
   funnel: { audience: 248, attempted: 240, sent: 232, delivered: 221, read: 148, failed: 8 },
@@ -422,16 +425,23 @@ const CAMPAIGN_DETAIL = {
     ],
   },
   recipients: [
-    { contact_name: 'דנה כהן',   phone: '+972541234567', status: 'read',      sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 101, replied_at: '2026-06-18 10:22', content: 'מעניין! אפשר פרטים?', error_title: null },
-    { contact_name: 'יואב אלון', phone: '+972529876543', status: 'delivered', sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 102, replied_at: null, content: null, error_title: null },
-    { contact_name: 'שירה פרץ',  phone: '+972501112233', status: 'sent',      sent_at: '2026-06-18 10:01', attempt_count: 1, conversation_display_id: 103, replied_at: null, content: null, error_title: null },
-    { contact_name: 'אורי נחום', phone: '+972536667788', status: 'failed',    sent_at: '2026-06-18 10:01', attempt_count: 2, conversation_display_id: 104, replied_at: null, content: null, error_title: 'הנמען חרג מהמכסה האישית (131049)' },
+    { contact_name: 'דנה כהן',   phone: '+972541234567', status: 2,      sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 101, replied: true, replied_at: '2026-06-18 10:22', reply_content: 'מעניין! אפשר פרטים?', error_title: null },
+    { contact_name: 'יואב אלון', phone: '+972529876543', status: 1, sent_at: '2026-06-18 10:00', attempt_count: 1, conversation_display_id: 102, replied: false, replied_at: null, reply_content: null, error_title: null },
+    { contact_name: 'שירה פרץ',  phone: '+972501112233', status: 0,      sent_at: '2026-06-18 10:01', attempt_count: 1, conversation_display_id: 103, replied: false, replied_at: null, reply_content: null, error_title: null },
+    { contact_name: 'אורי נחום', phone: '+972536667788', status: 3,    sent_at: '2026-06-18 10:01', attempt_count: 2, conversation_display_id: 104, replied: false, replied_at: null, reply_content: null, error_title: 'הנמען חרג מהמכסה האישית (131049)' },
   ],
   not_sent: [
     { contact_id: 305, contact_name: 'נועה גל', phone: '+972544445555', reason: 'no_attempt_record' },
   ],
   audience_source: 'snapshot',
 };
+
+// תוצאות פר-ניסוי: השליחה המקורית ושתי שליחות חוזרות, כל אחת בתבנית אחרת.
+const CAMPAIGN_EXPERIMENTS = [
+  { run_id: null,        template_name: 'offer_discount',  started_at: '2026-06-18 10:00', attempted: 240, sent: 232, delivered: 221, read: 148, failed: 8, replied: 34 },
+  { run_id: 'r17501001', template_name: 'offer_discount',  started_at: '2026-06-19 09:12', attempted: 8,   sent: 3,   delivered: 3,   read: 1,   failed: 5, replied: 0 },
+  { run_id: 'r17502002', template_name: 'service_followup', started_at: '2026-06-20 11:40', attempted: 5,  sent: 5,   delivered: 5,   read: 4,   failed: 0, replied: 2 },
+];
 
 const CAMPAIGNS_TREND = [
   { day: '09/06', attempted: 41,  sent: 39,  delivered: 38,  failed: 2 },
@@ -498,6 +508,27 @@ function dataFor(action, payload = {}) {
     case 'resume_account': return { ok: true };
     case 'campaigns': return CAMPAIGNS;
     case 'campaign_detail': return CAMPAIGN_DETAIL;
+    case 'campaign_experiments': return CAMPAIGN_EXPERIMENTS;
+    // שליחה מחדש: התנעה מחזירה total, והסטטוס חוזר "הסתיים" מיד — כך אפשר לראות את
+    // פאנל הסיכום (כמה יצאו / כמה נכשלו שוב) בלי engine מקומי.
+    case 'campaign_resend': return { total: 8, run_id: 'r-mock', template_name: 'service_followup' };
+    case 'campaign_resend_status': return {
+      status: 'done', total: 8, done: 8, sent: 5, run_id: 'r-mock', template_name: 'service_followup',
+      failed: [
+        { phone: '+972541111111', name: 'רון', error: 'Meta חסמה את ההודעה כדי לשמור על מעורבות תקינה' },
+        { phone: '+972542222222', name: 'גילי', error: 'Meta חסמה את ההודעה כדי לשמור על מעורבות תקינה' },
+        { phone: '+972543333333', name: 'תמר', error: 'הנמען ביקש הסרה (opt-out)' },
+      ],
+    };
+    case 'campaign_resend_pending': return null;
+    // שלושה מספרים בחשבון, אחד מהם בדירוג נמוך — בדיוק המצב שבו הבחירה "ממי לשלוח" נחוצה.
+    case 'campaign_inboxes': return [
+      { id: 21, name: 'העסק שלי — ראשי', phone: '+972551111111', quality: 'RED', tier: 'TIER_2K' },
+      { id: 22, name: 'העסק שלי — משני', phone: '+972552222222', quality: 'GREEN', tier: 'TIER_2K' },
+      { id: 23, name: 'העסק שלי — שירות', phone: '+972553333333', quality: 'UNKNOWN', tier: null },
+    ];
+    case 'campaign_resend_schedule': return { run_at: payload.run_at };
+    case 'campaign_resend_unschedule': return { cancelled: 1 };
     case 'campaigns_trend': return CAMPAIGNS_TREND;
     case 'campaigns_tier': return CAMPAIGNS_TIER;
     default: return null;

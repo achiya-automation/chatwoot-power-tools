@@ -6,8 +6,9 @@
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { setupDb } from './helpers.js';
+import { relaxCompliance, setupDb } from './helpers.js';
 import { getPool, query } from '../src/db.js';
+import { isHumanOutgoing } from '../src/reads.js';
 import {
   startNodeOf, nextNodeId, renderText, validateAnswer, matchOption,
   numberedFallback, keywordMatch, startRun, feedAnswer, handleJourneyHook,
@@ -73,6 +74,9 @@ async function makeJourney(graph = GRAPH, trigger = {}, status = 'active', accou
 beforeEach(async () => {
   await setupDb(pool);
   await query('TRUNCATE drip.journey_runs, drip.journeys CASCADE');
+  // שורת הציות של חשבון 1 משותפת לכל קובצי הטסט, ושעות השקט שבברירת המחדל (21:00–08:00)
+  // מקפיאות כל reconcile בלילה. כל טסט שצריך שקט כאן מגדיר אותו על הפלואו עצמו.
+  await relaxCompliance(pool, [1]);
 });
 
 // ── עזרים טהורים ──
@@ -145,6 +149,7 @@ test('startRun: pending → message with placeholder → question → waiting_an
   const client = fakeClient();
   const run = await startRun(ctxWith(client), j, { accountId: 1, displayId: 101, contactId: 7 });
   assert.ok(run);
+  assert.equal(run.status, 'waiting_answer', 'startRun returns the persisted post-execution state');
 
   const names = client.calls.map((c) => c.name);
   assert.deepEqual(names, ['toggleStatus', 'sendText', 'sendText']);
@@ -201,6 +206,21 @@ test('feedAnswer: duplicate message id is ignored (dedupe)', async () => {
   const callCount = client.calls.length;
   await feedAnswer(ctxWith(client), run, j, { id: 500, content: 'נדל״ן' });
   assert.equal(client.calls.length, callCount); // שום שליחה נוספת
+});
+
+test('feedAnswer: attachment-only message hands off instead of re-prompting', async () => {
+  const j = await makeJourney();
+  const client = fakeClient();
+  await startRun(ctxWith(client), j, { accountId: 1, displayId: 106 });
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 106`);
+  const before = client.calls.length;
+  // PDF/תמונה/הודעה קולית מגיעים מ-Chatwoot עם content ריק
+  await feedAnswer(ctxWith(client), run, j, { id: 700, content: '' });
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 106`);
+  assert.equal(run.status, 'done');
+  assert.equal(run.retry_count, 0);
+  assert.equal(client.calls.slice(before).filter((c) => c.name === 'sendText').length, 0);
+  assert.deepEqual(client.calls.at(-1), { name: 'toggleStatus', args: [106, 'open'] });
 });
 
 test('feedAnswer: opt-out word stops the run', async () => {
@@ -488,6 +508,135 @@ test('template node sends a WhatsApp template with rendered params', async () =>
   assert.equal(run.status, 'done'); // המשיך ל-handoff
 });
 
+test('template waitForReply pauses after the template, saves the Quick Reply, then continues', async () => {
+  const confirmation = 'הפרטים שלך נקלטו בהצלחה אצלנו במשרד 📝';
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'tp', type: 'template', data: {
+        name: 'initial_consultation', language: 'he', category: 'MARKETING',
+        params: [], waitForReply: true, validation: 'text',
+        saveTo: { scope: 'contact', key: 'callback_window' },
+      } },
+      { id: 'ok', type: 'message', data: { text: confirmation } },
+    ],
+    edges: [{ source: 't', target: 'tp' }, { source: 'tp', target: 'ok' }],
+  };
+  const j = await makeJourney(g);
+  const client = fakeClient();
+
+  await startRun(ctxWith(client), j, {
+    accountId: 1,
+    displayId: 470,
+    contactId: 7,
+    initialAnswers: {
+      _intake_source: 'facebook_lead_ads',
+      _intake_external_id: 'fb-470',
+      _intake_airtable_lead_id: 'rec-470',
+    },
+  });
+
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 470`);
+  assert.equal(run.status, 'waiting_answer');
+  assert.equal(run.current_node, 'tp');
+  assert.equal(run.answers._intake_external_id, 'fb-470', 'intake identity survives run creation');
+  assert.equal(run.answers._intake_airtable_lead_id, 'rec-470');
+  assert.equal(client.calls.filter((c) => c.name === 'sendTemplate').length, 1);
+  assert.ok(!client.calls.some((c) => c.name === 'sendText' && c.args[1] === confirmation),
+    'confirmation is not sent before the customer replies');
+
+  await Promise.all([
+    feedAnswer(ctxWith(client), run, j, { id: 9470, content: '12:00-15:00' }),
+    feedAnswer(ctxWith(client), run, j, { id: 9470, content: '12:00-15:00' }),
+  ]);
+
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 470`);
+  assert.equal(run.status, 'done');
+  assert.equal(run.answers.callback_window, '12:00-15:00');
+  assert.equal(run.answers._intake_external_id, 'fb-470');
+  assert.equal(run.answers._intake_airtable_lead_id, 'rec-470');
+  const saves = client.calls.filter((c) => c.name === 'patchContactAttrs');
+  assert.equal(saves.length, 1, 'webhook + reconciliation race claims the reply only once');
+  const [saved] = saves;
+  assert.deepEqual(saved.args, [7, { callback_window: '12:00-15:00' }]);
+  assert.equal(client.calls.filter((c) => c.name === 'sendText' && c.args[1] === confirmation).length, 1);
+});
+
+// הריצה חייבת לצאת מהמתנת-התבנית עם next_action_at, אחרת הטיק לא רואה אותה, ה-give-up
+// לא קורה, והשיחה נשארת pending לנצח — וחוסמת דרך uq_journey_runs_live כל ליד חוזר.
+test('template waitForReply schedules its give-up; tick hands off and frees the conversation', async () => {
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'tp', type: 'template', data: {
+        name: 'initial_consultation', language: 'he', category: 'MARKETING',
+        params: [], waitForReply: true,
+        followUp: { afterMinutes: 1440, onGiveUp: 'handoff' },
+      } },
+      { id: 'h', type: 'handoff', data: {} },
+    ],
+    edges: [{ source: 't', target: 'tp' }, { source: 'tp', target: 'h' }],
+  };
+  const j = await makeJourney(g);
+  const client = fakeClient();
+  await startRun(ctxWith(client), j, { accountId: 1, displayId: 480, contactId: 7 });
+
+  let [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 480`);
+  assert.equal(run.status, 'waiting_answer');
+  assert.ok(run.next_action_at, 'give-up must be scheduled or the tick never reaches this run');
+  const dueInMinutes = (new Date(run.next_action_at) - Date.now()) / 60000;
+  assert.ok(dueInMinutes > 1400 && dueInMinutes <= 1440, `expected ~1440 minutes, got ${dueInMinutes}`);
+
+  await query(`UPDATE drip.journey_runs SET next_action_at = now() - interval '1 minute' WHERE id = $1`, [run.id]);
+  await reconcileJourneys(ctxWith(client), 1);
+
+  [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 480`);
+  assert.equal(run.status, 'done');
+  assert.equal(run.last_error, 'no answer → handoff');
+  assert.ok(client.calls.some((c) => c.name === 'toggleStatus' && c.args[1] === 'open'),
+    'the conversation goes back to the agents');
+  // אין fu.message → אין תזכורת נוספת ללקוח, רק תבנית הפתיחה
+  assert.equal(client.calls.filter((c) => c.name === 'sendText').length, 0);
+  assert.equal(client.calls.filter((c) => c.name === 'sendTemplate').length, 1);
+
+  // הריצה כבר לא חיה — uq_journey_runs_live משוחרר לליד חוזר באותה שיחה
+  const again = await startRun(ctxWith(client), j, { accountId: 1, displayId: 480, contactId: 7 });
+  assert.ok(again, 'a returning lead can start a fresh run once the previous one gave up');
+});
+
+test('webhook non-2xx fails the run and does not send the following confirmation', async () => {
+  const originalFetch = globalThis.fetch;
+  const confirmation = 'נדבר בקרוב 🤍';
+  const g = {
+    nodes: [
+      { id: 't', type: 'trigger', data: {} },
+      { id: 'w', type: 'webhook', data: { url: 'https://8.8.8.8/make-callback' } },
+      { id: 'ok', type: 'message', data: { text: confirmation } },
+    ],
+    edges: [{ source: 't', target: 'w' }, { source: 'w', target: 'ok' }],
+  };
+  const j = await makeJourney(g);
+  const client = fakeClient();
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 503,
+    text: async () => JSON.stringify({ ok: false }),
+  });
+
+  try {
+    const started = await startRun(ctxWith(client), j, { accountId: 1, displayId: 471, contactId: 7 });
+    assert.equal(started.status, 'failed', 'synchronous callers can detect the failed first node');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const [run] = await query(`SELECT * FROM drip.journey_runs WHERE display_id = 471`);
+  assert.equal(run.status, 'failed');
+  assert.match(run.last_error, /webhook returned HTTP 503/);
+  assert.ok(!client.calls.some((c) => c.name === 'sendText' && c.args[1] === confirmation),
+    'the customer must not receive success after Make/Airtable failed');
+});
+
 test('buttons: per-option branch routes via opt:<id>; option without an edge takes the default', async () => {
   const g = {
     nodes: [
@@ -635,6 +784,37 @@ test('message_created does NOT start on_new_conversation when a human agent alre
     account: { id: 1 }, conversation: { display_id: 441 }, inbox: { id: 31 },
   });
   assert.equal((await query(`SELECT count(*)::int AS n FROM drip.journey_runs WHERE display_id = 441`))[0].n, 0);
+});
+
+test('message_created does NOT start on_new_conversation when the business answered from the phone', async () => {
+  await makeJourney(GRAPH, { on_new_conversation: true });
+  const client = fakeClient();
+  const ctx = ctxWith(client);
+  await query(`INSERT INTO public.conversations (id, display_id, account_id, inbox_id) VALUES (442, 442, 1, 31)
+    ON CONFLICT (id) DO NOTHING`);
+  await query(`DELETE FROM public.messages WHERE conversation_id = 442`);
+  // coexistence: הודעה מאפליקציית הנייד חוזרת כ-echo — בלי sender_type, רק הדגל.
+  // content_attributes נשמר כמחרוזת JSON בתוך עמודת json, בדיוק כמו בפרודקשן.
+  await query(`INSERT INTO public.messages (id, conversation_id, account_id, message_type, content, sender_type, content_attributes)
+    VALUES (8420, 442, 1, 1, 'כבר עניתי לך מהנייד', NULL, to_json('{"external_echo":true}'::text)),
+           (8421, 442, 1, 0, 'תודה!', NULL, NULL)`);
+
+  await handleJourneyHook(ctx, {
+    event: 'message_created', message_type: 'incoming', id: 8421, content: 'תודה!',
+    account: { id: 1 }, conversation: { display_id: 442 }, inbox: { id: 31 },
+  });
+  assert.equal((await query(`SELECT count(*)::int AS n FROM drip.journey_runs WHERE display_id = 442`))[0].n, 0);
+});
+
+test('isHumanOutgoing: agent and phone-echo count as human, AgentBot and inbound do not', () => {
+  assert.equal(isHumanOutgoing({ message_type: 1, sender_type: 'User' }), true);
+  // ה-API מחזיר content_attributes כמחרוזת (לפעמים כפולה) או כאובייקט — כל הצורות נתמכות
+  assert.equal(isHumanOutgoing({ message_type: 1, content_attributes: { external_echo: true } }), true);
+  assert.equal(isHumanOutgoing({ message_type: 1, content_attributes: '{"external_echo":true}' }), true);
+  assert.equal(isHumanOutgoing({ message_type: 1, content_attributes: '"{\\"external_echo\\":true}"' }), true);
+  assert.equal(isHumanOutgoing({ message_type: 1, sender_type: 'AgentBot' }), false);
+  assert.equal(isHumanOutgoing({ message_type: 0, content_attributes: { external_echo: true } }), false);
+  assert.equal(isHumanOutgoing({ message_type: 1, content_attributes: 'לא JSON בכלל' }), false);
 });
 
 test('jrn_launch refuses manual=false and a graph without a start node', async () => {

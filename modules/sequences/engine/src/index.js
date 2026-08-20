@@ -1,10 +1,14 @@
 import { loadConfig } from './config.js';
 import { createApp } from './api.js';
 import { getPool, query } from './db.js';
+import { startLoop } from './loop.js';
 import { runMigrations } from './migrate.js';
 import { reconcileAccount } from './reconcile.js';
-import { refreshHealth } from './meta.js';
+import { runDueResends } from './campaignResend.js';
+import { makeAccountClient } from './store.js';
+import { refreshHealth, fetchNumberHealth } from './meta.js';
 import { notifyNewLeads } from './notify.js';
+import { watchNumberQuality } from './qualityWatch.js';
 import { makeClient } from './chatwoot.js';
 import { makeDbReads } from './reads.js';
 import { pollTemplateStatuses } from './templates.js';
@@ -59,7 +63,7 @@ if (!windows.length) { try { windows = await loadWindows(pool); } catch { /* emp
 // Listen on 0.0.0.0 INSIDE the container so the docker port mapping reaches it.
 // Host-side exposure is limited to 127.0.0.1 by the override's port mapping
 // ("127.0.0.1:3100:3100") — so the engine is still loopback-only from the host.
-createApp(config).listen(config.port, '0.0.0.0', () =>
+const server = createApp(config).listen(config.port, '0.0.0.0', () =>
   console.log(`drip-engine listening on :${config.port}`)
 );
 
@@ -81,11 +85,19 @@ async function tick() {
   // (SECURITY DEFINER — the engine holds no write grant on access_tokens) creates its
   // AgentBot, mints the token, and registers it. Idempotent; the token never comes back here.
   // גם חשבון שיש לו רק פלואו (journey) בלי רצף צריך בוט וטוקן — אותה הצטרפות עצמית.
+  //
+  // ⚠️ וגם חשבון שיש לו רק קמפיין וואטסאפ ואף רצף (10.8.26). דוח הקמפיינים הוא קריאה
+  // בלבד ולכן עבד בלי טוקן, אבל "שליחה מחדש לנכשלים" שולחת בפועל — והיא נכשלה שם תמיד
+  // ב-"החשבון עדיין לא מחובר למנוע", בלי שום דרך למשתמש לדעת למה. הטוקן הוא ברמת חשבון
+  // ואינו תלוי ברצף, אז ההצטרפות העצמית חלה על כל מי שהמנוע אמור לשלוח בשמו.
   const unregistered = await query(
     `SELECT account_id FROM (
        SELECT DISTINCT s.account_id FROM drip.sequences s
        UNION
        SELECT DISTINCT j.account_id FROM drip.journeys j
+       UNION
+       SELECT DISTINCT c.account_id FROM public.campaigns c
+         JOIN public.inboxes i ON i.id = c.inbox_id AND i.channel_type = 'Channel::Whatsapp'
      ) x
       WHERE NOT EXISTS (SELECT 1 FROM drip.account_tokens t WHERE t.account_id = x.account_id)`
   );
@@ -237,18 +249,73 @@ async function tick() {
 
   // Template Studio: refresh pending template statuses (read-only; see templates.js)
   try { await pollTemplateStatuses(); } catch (e) { console.error('[tpl] poll error:', e.message); }
+
+  // שליחות מחדש שתוזמנו לשעה שכבר הגיעה (מיגרציה 049). מחוץ ללולאת החשבונות בכוונה:
+  // התור הוא רב-חשבוני, והנכשלים נקבעים בזמן ההרצה. Fail-open — שורה שנופלת נרשמת
+  // בטבלה ולא מפילה את הטיק.
+  try {
+    const { started } = await runDueResends({ query, makeClientFor: makeAccountClient });
+    if (started) console.log(`[drip] ${started} scheduled campaign resend(s) started`);
+  } catch (e) {
+    console.error('[drip] scheduled resend sweep failed:', e.message);
+  }
 }
 
-setInterval(() => tick().catch((e) => console.error('[drip] tick error:', e.message)),
-  config.reconcileIntervalMs);
+// ⚠️ נעילת ריצה כפולה — ראה loop.js. טיק אחד יכול להימשך יותר מהמרווח (חשבון רב, או
+// קריאה שתקועה מול מטא), ובלי הנעילה טיק חדש נערם מעליו: כל אחד תופס חיבורים מבריכה
+// של 5, עד שגם הפאנל מפסיק להגיב.
+const dripLoop = startLoop(config.reconcileIntervalMs, '[drip]', tick);
+
+// ── תצפית על דירוג האיכות של כל המספרים ──────────────────────────────────
+// כל שעה, ומיד בעלייה. סורק גם מספרים שהמנוע לא שולח מהם — שם בדיוק התגלה מספר
+// ב-RED שאיש לא ידע עליו. אין נעילה כי הסבב קצר וההפרש בין ריצות ענק.
+const QUALITY_WATCH_MS = Number(process.env.QUALITY_WATCH_MS || 3600000);
+const runQualityWatch = () =>
+  watchNumberQuality(pool, { fetchNumberHealthFn: fetchNumberHealth, webhookUrl: config.notifyWebhookUrl })
+    .then(({ checked, alerts }) => {
+      if (alerts) console.log(`[quality-watch] ${checked} numbers checked, ${alerts} alert(s) sent`);
+    })
+    .catch((e) => console.error('[quality-watch] sweep failed:', e.message));
+runQualityWatch();
+setInterval(runQualityWatch, QUALITY_WATCH_MS);
+
+// ── כיבוי מסודר ───────────────────────────────────────────────────────────
+// docker stop / פריסה מחדש שולחים SIGTERM, ו-Node יוצא מיד. בלי זה אפשר להיקטע
+// בדיוק בין "ההודעה נשלחה" לבין "השלב התקדם" — הלקוח מקבל, המערכת לא יודעת.
+// ממתינים לטיק שבאוויר, ואם הוא לא מסיים בזמן — יוצאים בכל זאת (דוקר הורג ב-10ש').
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[drip] ${signal} — finishing in-flight work before exit`);
+  const hardExit = setTimeout(() => {
+    console.error('[drip] shutdown timed out — exiting anyway');
+    process.exit(1);
+  }, 8000);
+  hardExit.unref();
+  try {
+    server.close();
+    const deadline = Date.now() + 7000;
+    while (dripLoop.isRunning() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+    await pool.end().catch(() => {});
+  } finally {
+    clearTimeout(hardExit);
+    process.exit(0);
+  }
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // ── Presence loop — "נקרא"/"מקליד" ─────────────────────────────────────────
 // לולאה נפרדת ומהירה מה-reconcile: ✓✓ שמופיע דקה אחרי ההודעה מרגיש מוזר.
-// 5 שניות + ההשהיה האנושית שבהגדרות = חוויה טבעית. ראה presence.js על למה
-// משיכה ולא webhook (SafeFetch חוסם יעדים פנימיים).
-const PRESENCE_INTERVAL_MS = Number(process.env.PRESENCE_INTERVAL_MS || 5000);
-setInterval(
-  () => tickPresence({ query, log: (m) => console.log(m) })
-    .catch((e) => console.error('[presence] tick error:', e.message)),
-  PRESENCE_INTERVAL_MS
-);
+// ההשהיה האנושית שבהגדרות נוספת על זה. ראה presence.js על למה משיכה ולא webhook
+// (SafeFetch חוסם יעדים פנימיים).
+// 06.08.2026: 5000 → 2000. הסריקה מוסיפה 0-5ש' לפני שההשהיות בכלל מתחילות, ולכן
+// ה"מקליד" נדלק עד 14ש' אחרי ההודעה — אחרי שהבוט כבר ענה (נמדד: 3 שניות גלוי).
+// שאילתת id > cursor על מפתח ראשי, אז 2ש' לא עולים כלום.
+// ⚠️ אותה נעילת ריצה כפולה של לולאת השליחה, וכאן היא קריטית פי שלושים: המרווח הוא
+// 2 שניות, וסבב שמחכה ל-connect בבריכה תפוסה חי כ-40 שניות (10ש' לכל שאילתה) —
+// כלומר עד 20 סבבים במקביל שכולם עומדים בתור לאותה בריכה. ראה loop.js.
+const PRESENCE_INTERVAL_MS = Number(process.env.PRESENCE_INTERVAL_MS || 2000);
+startLoop(PRESENCE_INTERVAL_MS, '[presence]',
+  () => tickPresence({ query, log: (m) => console.log(m) }));

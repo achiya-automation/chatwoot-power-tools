@@ -9,6 +9,33 @@
  * which is also faster (no HTTP round-trips). makeDbReads(query) returns the three readers
  * the Chatwoot client injects in production; without them the client falls back to the API.
  */
+/**
+ * מתי הודעה יוצאת נשלחה בידי אדם — הגדרה אחת לכל המנוע.
+ *
+ * שני מקורות, לא אחד. נציג שכותב בתוך Chatwoot מקבל sender_type='User'. אבל כשהמספר
+ * עובד ב-coexistence (אפליקציית WhatsApp Business בנייד + Cloud API על אותו מספר),
+ * הודעה שנשלחה מהטלפון חוזרת כ-echo מ-Meta ונרשמת **בלי sender בכלל** — מסומנת רק
+ * ב-content_attributes.external_echo. בדיקה שסופרת רק 'User' מחמיצה אותה לגמרי, והמנוע
+ * ממשיך לדבר לתוך שיחה שאדם כבר מנהל.
+ *
+ * content_attributes הוא עמודת json שמכילה מחרוזת JSON (double-encoded, 57.5K שורות —
+ * כולן string), ולכן ->>'external_echo' לא עובד עליה. LIKE על ::text הוא הקריאה
+ * היחידה שעובדת בלי לפענח פעמיים, והשדה הזה לעולם לא מכיל טקסט חופשי של משתמש.
+ */
+export const HUMAN_OUTGOING_SQL = `(m.message_type = 1
+  AND (m.sender_type = 'User' OR m.content_attributes::text LIKE '%external_echo%'))`;
+
+/** אותה הגדרה על אובייקט הודעה מה-API של Chatwoot (נתיב ה-fallback, בלי DB). */
+export const isHumanOutgoing = (m) => m?.message_type === 1
+  && (m.sender_type === 'User' || Boolean(parseAttrs(m.content_attributes)?.external_echo));
+
+// content_attributes מגיע מה-API כמחרוזת JSON או כאובייקט, תלוי בגרסה — מקבלים את שניהם.
+function parseAttrs(v) {
+  if (!v) return null;
+  if (typeof v === 'object') return v;
+  try { const p = JSON.parse(v); return typeof p === 'string' ? JSON.parse(p) : p; } catch { return null; }
+}
+
 export function makeDbReads(query) {
   /**
    * איזו תיבת וואטסאפ המנוע עובד מולה.
@@ -46,15 +73,18 @@ export function makeDbReads(query) {
     // Same shape as Chatwoot's API message_templates (name/language/components/status).
     // ⚠️ Scoped to the CHOSEN inbox: templates belong to a WABA, and flattening two numbers'
     // template lists together lets a name from one number resolve against the other.
-    loadTemplates: async (accountId) => {
-      const { inboxId } = await resolveInbox(accountId);
+    // inboxIdOverride: a specific number instead of the chosen one (the campaign report asks
+    // for the templates of the number THAT campaign sent from). Always re-scoped to the
+    // account here — the id arrives from the browser.
+    loadTemplates: async (accountId, inboxIdOverride = null) => {
+      const inboxId = inboxIdOverride || (await resolveInbox(accountId)).inboxId;
       if (!inboxId) return [];
       const rows = await query(
         `SELECT cw.message_templates
            FROM public.inboxes i
            JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
-          WHERE i.id = $1`,
-        [inboxId]
+          WHERE i.id = $1 AND i.account_id = $2`,
+        [inboxId, accountId]
       );
       // production default for this column is '{}'::jsonb (an object, not an array) on a
       // never-synced channel — flatMap((r) => r.message_templates || []) would inject that
@@ -140,17 +170,16 @@ export function makeDbReads(query) {
       return rows.length > 0;
     },
 
-    // True if a HUMAN agent (message_type=1 outgoing, sender_type='User') sent after sinceISO.
-    // Our engine sends as 'AgentBot', so 'User' means a person took over the conversation —
-    // the signal to stand the sequence down instead of talking over them.
+    // True if a HUMAN sent an outgoing message after sinceISO — a Chatwoot agent OR the
+    // business phone itself (see HUMAN_OUTGOING_SQL). Our engine sends as 'AgentBot', so
+    // either one means a person took over: stand the sequence down instead of talking over them.
     outgoingByHumanSince: async (conversationId, sinceISO, accountId) => {
       const rows = await query(
         `SELECT 1
            FROM public.messages m
            JOIN public.conversations c ON c.id = m.conversation_id
           WHERE c.account_id = $1 AND c.display_id = $2
-            AND m.message_type = 1
-            AND m.sender_type = 'User'
+            AND ${HUMAN_OUTGOING_SQL}
             AND m.created_at > ($3::timestamptz AT TIME ZONE 'UTC')
           LIMIT 1`,
         [accountId, conversationId, sinceISO]

@@ -36,6 +36,7 @@ const M = {
     inherited: 'יורשת מברירת המחדל',
     custom: 'הגדרה משלה',
     save: 'שמירה',
+    dirty: 'שינויים שלא נשמרו',
     reset: 'חזרה לירושה',
     saved: 'נשמר',
     resetDone: 'התיבה חזרה לברירת המחדל',
@@ -61,6 +62,7 @@ const M = {
     inherited: 'Inherits account default',
     custom: 'Custom',
     save: 'Save',
+    dirty: 'Unsaved changes',
     reset: 'Reset to inherited',
     saved: 'Saved',
     resetDone: 'Inbox reset to account default',
@@ -74,19 +76,37 @@ const M = {
 /** עורך הגדרות של רשומה אחת (ברירת מחדל או תיבה). מוצג תמיד; שינוי → שמירה. */
 function SettingsEditor({ t, value, onSave, saving }) {
   const [s, setS] = useState(value);
-  useEffect(() => setS(value), [value]);
+  // ⚠️ persist()/doReset() טוענים מחדש את כל עץ הנתונים, וכל כרטיס מקבל `value` חדש —
+  // כך שמירה בכרטיס אחד דרסה בשקט עריכות שלא נשמרו בכרטיס אחר. כרטיס שהמשתמש כבר
+  // ערך אינו מסונכרן מחדש מהשרת עד שהשמירה שלו מצליחה. (אותו דפוס כמו JourneyEditor.)
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { if (!dirty) setS(value); }, [value, dirty]);
+  const edit = (next) => { setS(next); setDirty(true); };
+
+  // רשת ביטחון לסגירת/רענון הלשונית עם עריכות פתוחות (כמו ב-JourneyEditor)
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  // onSave מחזיר true רק כששמירת השרת הצליחה — שמירה שנכשלה משאירה את הכרטיס "מלוכלך"
+  // כדי שהעריכות לא ייעלמו ברענון הבא.
+  const submit = async () => { if (await onSave(s)) setDirty(false); };
+
   const num = (v) => Math.max(0, Number(v) || 0);
   const range = (minKey, maxKey, cap) => (
     <div className="flex items-center gap-1.5 text-sm">
       <input
         type="number" min="0" max={cap} step="0.5" value={s[minKey]}
-        onChange={(e) => setS({ ...s, [minKey]: num(e.target.value) })}
+        onChange={(e) => edit({ ...s, [minKey]: num(e.target.value) })}
         className="w-16 rounded-lg border border-n-weak bg-n-alpha-black1 px-2 py-1 text-n-slate-12"
       />
       <span className="text-n-slate-11">{t('delayTo')}</span>
       <input
         type="number" min="0" max={cap} step="0.5" value={s[maxKey]}
-        onChange={(e) => setS({ ...s, [maxKey]: num(e.target.value) })}
+        onChange={(e) => edit({ ...s, [maxKey]: num(e.target.value) })}
         className="w-16 rounded-lg border border-n-weak bg-n-alpha-black1 px-2 py-1 text-n-slate-12"
       />
     </div>
@@ -96,7 +116,7 @@ function SettingsEditor({ t, value, onSave, saving }) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm text-n-slate-12">{t('readReceipts')}</span>
-        <Switch checked={!!s.read_receipts} onChange={(v) => setS({ ...s, read_receipts: v })} aria-label={t('readReceipts')} />
+        <Switch checked={!!s.read_receipts} onChange={(v) => edit({ ...s, read_receipts: v })} aria-label={t('readReceipts')} />
       </div>
 
       <div className="flex items-center justify-between gap-3">
@@ -104,7 +124,7 @@ function SettingsEditor({ t, value, onSave, saving }) {
         <Dropdown
           ariaLabel={t('typingMode')}
           value={s.typing_mode}
-          onChange={(v) => setS({ ...s, typing_mode: v })}
+          onChange={(v) => edit({ ...s, typing_mode: v })}
           options={[
             { value: 'off', label: t('typingOff') },
             { value: 'agent', label: t('typingAgent') },
@@ -125,10 +145,16 @@ function SettingsEditor({ t, value, onSave, saving }) {
         {range('typing_delay_min', 'typing_delay_max', 20)}
       </div>
 
-      <div>
-        <Button size="sm" icon={Save} disabled={saving} onClick={() => onSave(s)}>
+      <div className="flex items-center gap-2">
+        <Button size="sm" icon={Save} disabled={saving} onClick={submit}>
           {t('save')}
         </Button>
+        {dirty ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-n-amber-11">
+            <span className="h-1.5 w-1.5 rounded-full bg-n-amber-9" aria-hidden="true" />
+            {t('dirty')}
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -151,14 +177,17 @@ export default function PresenceView({ accountId }) {
   }, [accountId, t]);
   useEffect(() => { load(); }, [load]);
 
+  // מחזיר true/false — הכרטיס מנקה את סימון ה"לא נשמר" רק כששמירת השרת הצליחה.
   const persist = async (inboxId, s) => {
     setSaving(true);
     try {
       await savePresence(accountId, { ...s, inbox_id: inboxId });
       toast({ message: t('saved'), variant: 'success' });
       await load();
+      return true;
     } catch (e) {
       toast({ message: e.message || t('errSave'), variant: 'error' });
+      return false;
     } finally {
       setSaving(false);
     }

@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>תצוגה מקדימה — משתנים בקמפיין</title>
+<!--
+  מריץ את campaign-modal.js האמיתי על DOM שמדמה את מודל הקמפיין של Chatwoot 4.16:
+  אותם class-ים, אותם placeholders, אותו מבנה Input.vue, אותם משתני CSS.
+  משמש גם כבדיקה — אם הפרסור, הצ'יפים או ה-overlay נשברים זה נראה כאן מיד.
+
+  ⚠️ הנתיב accounts/1/ אינו מקרי: accountIdFromPath() מחלץ את מזהה החשבון מ-location.pathname.
+
+  פתיחה:  open modules/dashboard-enhancements/preview/accounts/1/index.html
+-->
+<style>
+  /* משתני הצבע של Chatwoot 4.16 — הערכים מה-CSS המקומפל (בלי קידומת n-, ראה ההערה בקובץ המקור) */
+  :root{
+    --slate-10:161 161 170; --slate-11:113 113 122; --slate-12:24 24 27;
+    --blue-3:219 234 254; --blue-5:191 219 254; --blue-6:147 197 253; --blue-11:29 78 216;
+    --teal-3:204 251 241; --teal-7:94 234 212; --teal-11:15 118 110; --ruby-11:190 24 93;
+    --alpha-2:0 0 0 / .045; --alpha-3:0 0 0 / .075;
+    --page:250 250 250; --card:255 255 255; --border:228 228 231;
+  }
+  body.dark{
+    --slate-10:113 113 122; --slate-11:161 161 170; --slate-12:244 244 245;
+    --blue-3:30 58 138; --blue-5:29 78 216; --blue-6:37 99 235; --blue-11:147 197 253;
+    --alpha-2:255 255 255 / .06; --alpha-3:255 255 255 / .1;
+    --page:24 24 27; --card:39 39 42; --border:63 63 70;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px 16px 60px;font-family:-apple-system,"Segoe UI",Rubik,Arial,sans-serif;
+       background:rgb(var(--page));color:rgb(var(--slate-12))}
+  .sheet{max-width:520px;margin:0 auto;background:rgb(var(--card));border:1px solid rgb(var(--border));
+         border-radius:14px;padding:20px}
+  h1{font-size:16px;margin:0 0 4px}
+  .sub{font-size:13px;color:rgb(var(--slate-11));margin:0 0 18px}
+  /* class-ים של Chatwoot שהתוסף נאחז בהם */
+  .bg-n-alpha-black2{background:rgba(var(--alpha-2))}
+  .flex{display:flex}.flex-col{flex-direction:column}.relative{position:relative}
+  .min-w-0{min-width:0}.gap-1{gap:4px}.gap-2{gap:8px}.gap-4{gap:16px}
+  .p-4{padding:16px}.mb-4{margin-bottom:16px}.mb-2\.5{margin-bottom:10px}
+  .rounded-lg{border-radius:8px}.rounded-md{border-radius:6px}
+  .justify-between{justify-content:space-between}.items-center{align-items:center}
+  .text-sm{font-size:14px}.text-xs{font-size:12px}.font-medium{font-weight:500}.font-semibold{font-weight:600}
+  .whitespace-pre-wrap{white-space:pre-wrap}
+  .text-n-slate-12{color:rgb(var(--slate-12))}.text-n-slate-11{color:rgb(var(--slate-11))}
+  h3{margin:0;font-size:14px;font-weight:500}
+  p{margin:0 0 10px}
+  input[type=text]{display:block;width:100%;height:38px;padding:0 10px;font-size:14px;font-family:inherit;
+    border:none;outline:1px solid rgb(var(--border));outline-offset:-1px;border-radius:8px;
+    background:rgba(var(--alpha-2));color:rgb(var(--slate-12))}
+  input[type=text]:focus{outline:2px solid rgb(var(--blue-6));outline-offset:-1px}
+  .bar{max-width:520px;margin:0 auto 14px;display:flex;gap:8px;font-size:13px}
+  .bar button{font:inherit;padding:5px 12px;border-radius:9999px;border:1px solid rgb(var(--border));
+    background:rgb(var(--card));color:rgb(var(--slate-12));cursor:pointer}
+  .note{max-width:520px;margin:18px auto 0;font-size:12.5px;line-height:1.8;color:rgb(var(--slate-11))}
+  .note code{font-size:11.5px;background:rgba(var(--alpha-2));padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <button onclick="document.body.classList.toggle('dark')">מצב כהה / בהיר</button>
+  <button onclick="const a=document.getElementById('app');a.dir=a.dir==='rtl'?'ltr':'rtl';location.reload()">עברית / English</button>
+</div>
+
+<div id="app" dir="rtl">
+  <div class="sheet">
+    <h1>יצירת קמפיין</h1>
+    <p class="sub">אותו מבנה DOM שמודל הקמפיין של Chatwoot מרנדר — התוסף מזריק לתוכו.</p>
+
+    <!-- כרטיס התצוגה המקדימה (WhatsAppTemplateParser.vue) -->
+    <div class="flex flex-col gap-4 p-4 mb-4 rounded-lg bg-n-alpha-black2">
+      <div class="flex justify-between items-center">
+        <h3 class="text-sm font-medium text-n-slate-12">property_owner_opener2</h3>
+        <span class="text-xs text-n-slate-11">שפה: he</span>
+      </div>
+      <div class="flex flex-col gap-2">
+        <div class="rounded-md">
+          <div id="body" class="text-sm whitespace-pre-wrap text-n-slate-12"></div>
+        </div>
+      </div>
+      <div class="text-xs text-n-slate-11">קטגוריה: MARKETING</div>
+    </div>
+
+    <!-- שדות המשתנים (Input.vue עוטף כל input ב-.relative.flex.flex-col) -->
+    <div>
+      <p class="text-sm font-semibold">משתנים</p>
+      <div class="flex items-center mb-2.5">
+        <div class="relative flex flex-col min-w-0 gap-1" style="flex:1">
+          <input class="var" type="text" placeholder="הזן ערך 1">
+        </div>
+      </div>
+      <div class="flex items-center mb-2.5">
+        <div class="relative flex flex-col min-w-0 gap-1" style="flex:1">
+          <input class="var" type="text" placeholder="הזן ערך 2">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="note">
+  <b>מה לנסות:</b> לחצו <b>שם פרטי</b> בשדה הראשון ו<b>כתובת נכס</b> בשני — וראו את גוף ההודעה למעלה.<br>
+  ואז הקליקו בתוך השדה השני וכתבו מלל סביב המשתנה, למשל <code>רחוב </code> לפניו ו-<code> קומה 3</code> אחריו.
+  בזמן עריכה השדה מראה את הביטוי הגולמי; ברגע שיוצאים ממנו הוא חוזר לתצוגה הנקייה.
+</p>
+
+<pre id="selftest" class="note" style="white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace"></pre>
+
+<script>
+// ── סימולציית Vue: מחליף {{1}},{{2}} בערכי השדות ומעדכן את גוף ההודעה, כמו renderedTemplate ──
+const TPL = 'היי מה שלומך {{1}} זה אליה הסוכן נדל״ן ,שאלה ..\nלגבי הנכס ב{{2}} יש לי לקוח שמחפש דווקא שם , חשבתם אולי למכור ?';
+function render() {
+  const vals = [...document.querySelectorAll('input.var')].map(i => i.value);
+  document.getElementById('body').textContent =
+    TPL.replace(/\{\{(\d+)\}\}/g, (m, n) => vals[n - 1] || m);
+}
+document.addEventListener('input', e => { if (e.target.matches('input.var')) render(); });
+render();
+
+// ── stub ל-API של השדות המותאמים אישית (בפרודקשן: /api/v1/accounts/N/custom_attribute_definitions) ──
+const realFetch = window.fetch.bind(window);
+window.fetch = (url, opt) => String(url).includes('custom_attribute_definitions')
+  ? Promise.resolve(new Response(JSON.stringify([
+      { attribute_model: 'contact_attribute', attribute_key: 'כתובת_נכס', attribute_display_name: 'כתובת נכס' },
+      { attribute_model: 'contact_attribute', attribute_key: 'city',      attribute_display_name: 'עיר' },
+    ]), { headers: { 'Content-Type': 'application/json' } }))
+  : realFetch(url, opt);
+</script>
+<!-- cache-buster: python http.server מגיש עם heuristic caching והדפדפן נצמד לגרסה ישנה בפיתוח -->
+<script>document.write('<scr'+'ipt src="../../../parts/campaign-modal.js?v='+Date.now()+'"></scr'+'ipt>')</script>
+
+<script>
+// ── בדיקה עצמית: רצה אוטומטית בכל טעינה ומדווחת בתחתית העמוד. הפונקציות הפנימיות של
+// campaign-modal.js אינן מיוצאות (IIFE), ולכן בודקים דרך ה-DOM — וזה גם מה שבאמת מעניין.
+// נופלת אם הפרסור, הכנסת המשתנה בעמדת הסמן, או ההסרה נשברים. ──
+(function () {
+  const out = [], set = (el, v) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const eq = (name, got, want) => out.push((got === want ? '✅ ' : '🔴 ') + name +
+    (got === want ? '' : '\n     קיבלנו: ' + got + '\n     ציפינו: ' + want));
+
+  setTimeout(async function () {
+    const inps = [...document.querySelectorAll('input.var')];
+    const wrap = inps[1].closest('.drip-token-wrap');
+    const shown = () => [...wrap.querySelector('.drip-token-line').childNodes]
+      .map(n => n.nodeType === 3 ? n.nodeValue : '[' + n.querySelector('.lbl').textContent + ']').join('');
+
+    // 1. מלל חופשי לפני ואחרי המשתנה — נשמר במלואו, כולל הרווחים בקצוות
+    set(inps[1], "רחוב {{contact.custom_attribute['כתובת_נכס']}} קומה 3");
+    eq('מלל חופשי סביב המשתנה', shown(), 'רחוב [כתובת נכס] קומה 3');
+
+    // 2. גוף ההודעה מציג את התווית, לא את הביטוי. ⚠️ המתנה: הכרטיס מתעדכן דרך ה-MutationObserver
+    //    עם debounce של 150ms. הבדיקה היא על ביטויי Liquid — {{1}}/{{2}} של התבנית עצמה
+    //    נשארים לגיטימית כשהשדה ריק.
+    set(inps[0], '{{contact.first_name}}');
+    await new Promise(r => setTimeout(r, 400));
+    eq('גוף ההודעה מציג תוויות ולא Liquid',
+       /\{\{contact/.test(document.querySelector('.drip-msg-body').textContent), false);
+
+    // 3. הוספה בעמדת הסמן — לא דריסה של מה שכבר בשדה
+    set(inps[1], 'לפני אחרי');
+    inps[1].focus(); inps[1].setSelectionRange(5, 5);
+    [...document.querySelectorAll('.drip-var-chips')[1].querySelectorAll('button')]
+      .find(b => b.textContent === 'שם פרטי').click();
+    eq('הצ׳יפ נכנס בעמדת הסמן', inps[1].value, 'לפני {{contact.first_name}}אחרי');
+
+    // 4. ✕ מסיר רק את המשתנה שנלחץ
+    set(inps[1], "{{contact.first_name}} ו{{contact.custom_attribute['city']}}");
+    wrap.querySelectorAll('.drip-token-pill .x')[1].click();
+    eq('✕ מסיר רק את המשתנה שנלחץ', inps[1].value, '{{contact.first_name}} ו');
+
+    // 5. ביטוי Liquid לא מוכר — אין overlay כלל, השדה מציג את הטקסט כמו שהוא.
+    //    לא מסתירים מאחורי pill משהו שלא זיהינו.
+    set(inps[1], 'היי {{contact.unknown_thing}}');
+    eq('ביטוי לא מוכר נשאר גולמי',
+       wrap.classList.contains('has-token') + '/' + !!wrap.querySelector('.drip-token'),
+       'false/false');
+
+    // 6. מלל חופשי בלי משתנה כלל — גם כאן אין overlay ואין הפרעה להקלדה
+    set(inps[1], 'סתם טקסט');
+    eq('טקסט בלי משתנה', wrap.classList.contains('has-token'), false);
+
+    // מסיימים במצב הדוגמה, לא בשדות ריקים — כדי שהעמוד ייפתח ישר על מה שבאנו להראות
+    set(inps[0], '{{contact.first_name}}');
+    set(inps[1], "רחוב {{contact.custom_attribute['כתובת_נכס']}} קומה 3");
+    // startsWith ולא [0] — 🔴 הוא surrogate pair, ו-l[0] מחזיר חצי תו שלעולם לא שווה לו
+    const bad = out.filter(l => l.startsWith('🔴')).length;
+    document.getElementById('selftest').textContent =
+      (bad ? '🔴 ' + bad + ' בדיקות נכשלו\n\n' : '✅ כל הבדיקות עברו\n\n') + out.join('\n');
+  }, 900);   // אחרי שהשדות המותאמים אישית חוזרים מה-stub
+})();
+</script>
+</body>
+</html>

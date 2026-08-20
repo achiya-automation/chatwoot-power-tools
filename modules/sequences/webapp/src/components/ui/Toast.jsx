@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
 import useT, { useLocale } from '../../useT.js';
 import { dirFor } from '../../i18n.js';
 
@@ -81,12 +80,6 @@ export function useToast() {
   return ctx;
 }
 
-const VARIANT = {
-  default: { icon: null, color: '' },
-  success: { icon: CheckCircle2, color: 'text-n-teal-11' },
-  error: { icon: AlertCircle, color: 'text-n-ruby-11' },
-};
-
 function ToastViewport({ toasts, dismiss }) {
   const t = useT(M);
   const locale = useLocale();
@@ -107,16 +100,12 @@ function ToastViewport({ toasts, dismiss }) {
 }
 
 function ToastItem({ t, onDismiss }) {
-  const v = VARIANT[t.variant] || VARIANT.default;
-  const Icon = v.icon;
   return (
     // Snackbar.vue של המקור: גלולה כהה הפוכה (bg-n-slate-12 / דארק slate-7), טקסט לבן,
     // פעולה כקישור text-n-blue-10. אין אייקוני-וריאנט ואין כפתור X במקור — ה-Undo נשאר
-    // (יכולת מכוונת), מעוצב כקישור הפעולה הנייטיבי.
+    // (יכולת מכוונת), מעוצב כקישור הפעולה הנייטיבי. `variant` עדיין מתקבל מהקוראים
+    // (success/error) אבל אינו משנה מראה — למקור אין הבחנה ויזואלית בין סוגי ההודעות.
     <div className="pointer-events-auto inline-flex items-center gap-3 rounded-lg bg-n-slate-12 dark:bg-n-slate-7 shadow-sm px-6 py-3 min-h-[1.875rem] min-w-[15rem] max-w-[25rem] mb-2 animate-[toastIn_.2s_ease-out]">
-      {Icon ? (
-        <Icon size={16} className="shrink-0 text-white" aria-hidden="true" />
-      ) : null}
       <span className="grow text-sm font-medium text-white dark:text-white">{t.message}</span>
       {t.action ? (
         <button

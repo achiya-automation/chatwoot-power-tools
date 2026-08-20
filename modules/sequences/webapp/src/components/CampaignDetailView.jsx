@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ArrowLeft, AlertCircle, ChevronDown, Download, MessageSquare, Coins, Printer, ExternalLink, Filter } from 'lucide-react';
+import { ArrowRight, ArrowLeft, AlertCircle, ChevronDown, Download, MessageSquare, Coins, Printer, ExternalLink, Filter, Radio, RotateCcw, FlaskConical } from 'lucide-react';
 import Badge from './ui/Badge.jsx';
 import Button from './ui/Button.jsx';
+import ResendDialog from './ResendDialog.jsx';
 import Skeleton from './ui/Skeleton.jsx';
+import { useToast } from './ui/Toast.jsx';
 import { Table, THead, TBody, TR, TH, TD } from './ui/Table.jsx';
-import { getCampaignDetail } from '../api/sequencesApi.js';
+import {
+  getCampaignDetail, getCampaignsTier, resendCampaignFailed, getCampaignResendStatus,
+  getCampaignExperiments, scheduleCampaignResend, getPendingResend, cancelCampaignResend,
+} from '../api/sequencesApi.js';
 import { API_BASE } from '../config.js';
 import { estimateCost } from '../lib/campaignCost.js';
-import { buildRows, countRows, filterRows, STATUS_KEYS } from '../lib/campaignRows.js';
+import { buildRows, countRows, filterRows, failureGroups, STATUS_KEYS } from '../lib/campaignRows.js';
 import { deliveryErrorLabel } from '../lib/deliveryError.js';
+import { readCache, writeCache } from '../lib/swr.js';
 import useT, { useLocale } from '../useT.js';
 import { translate } from '../i18n.js';
 
@@ -22,6 +28,7 @@ const M = {
         recipients: 'נמענים', notSent: 'לא נוסו לשליחה', snapshotNote: 'לפי תמונת הקהל שנשמרה בזמן הקמפיין', currentLabelNote: 'לפי החברות בתווית כרגע — לקמפיין הישן אין תמונת קהל שמורה',
         name: 'שם', phone: 'טלפון', status: 'סטטוס', attempts: 'ניסיונות', when: 'זמן', reason: 'סיבה', conversation: 'קישור לשיחה', noAttempt: 'לא נוצר ניסיון שליחה',
         export: 'ייצוא CSV', print: 'הדפסה / PDF', printedAt: 'הופק', openConv: 'פתיחת השיחה ב-Chatwoot',
+        msgMore: 'הצגת ההודעה המלאה', msgLess: 'קיצור ההודעה',
         noReplyText: '(מדיה או הודעה ללא טקסט)', errLoad: 'שגיאה בטעינת הקמפיין', notFound: 'הקמפיין לא נמצא', retry: 'ניסיון חוזר',
         s_sent: 'נשלח — ממתין למסירה', s_delivered: 'נמסר', s_read: 'נקרא', s_failed: 'נכשל', s_pending: 'ממתין', s_notsent: 'לא נוסה לשליחה',
         // ── סינון + עמודות תגובה ──
@@ -30,7 +37,28 @@ const M = {
         reply: 'תגובה', col_replied: 'הגיב', yes: 'כן', no: 'לא', replyText: 'תוכן התגובה', replyWhen: 'זמן התגובה',
         f_read: 'נקראו', f_delivered: 'נמסרו · טרם נקראו', f_sent: 'נשלחו · טרם נמסרו', f_pending: 'ממתינים', f_failed: 'נכשלו', f_notsent: 'לא נוסו',
         f_replied: 'הגיבו', f_noreply: 'לא הגיבו',
-        exactNote: 'הסטטוס בטבלה הוא המצב הסופי של כל נמען, ולכן הקטגוריות אינן חופפות (סכומן = קהל היעד) — בשונה מהמשפך למעלה' },
+        exactNote: 'הסטטוס בטבלה הוא המצב הסופי של כל נמען, ולכן הקטגוריות אינן חופפות (סכומן = קהל היעד) — בשונה מהמשפך למעלה',
+        // ── פירוק כשלים + שליחה מחדש ──
+        breakdownTitle: 'כשלים לפי סיבה', breakdownHint: 'לחיצה על סיבה מסננת את הטבלה',
+        resend: 'שליחה מחדש לנכשלים',
+        resendRunning: 'שולח מחדש…', resendDoneMsg: 'שליחה מחדש הסתיימה: {ok} נשלחו, {bad} נכשלו',
+        resendWaiting: 'ממתין — וואטסאפ עוד מוציא את הקודמות',
+        resendPendingNote: 'שעון ליד הודעה = יצאה מהמערכת וממתינה לאישור מוואטסאפ. זה לא תזמון.',
+        resendStarted: 'השליחה מחדש התחילה', adminOnly: 'שליחה מחדש דורשת הרשאת מנהל בחשבון',
+        // ── סיכום אחרי ריצה + תזמון ──
+        resendDoneTitle: 'השליחה מחדש הסתיימה', resendOk: 'יצאו בהצלחה', resendBad: 'נכשלו שוב',
+        resendAgain: 'ניסיון נוסף לנכשלים', resendDismiss: 'סגירה',
+        resendWhy: 'הסיבות לכישלון החוזר', resendMore: 'ועוד {n}',
+        resendNote: 'הסטטוס הסופי (נמסר/נקרא) ממשיך להתעדכן מהוואטסאפ בדקות הבאות — הטבלה למטה תשקף אותו.',
+        scheduledFor: '⏱️ שליחה מחדש מתוזמנת ל-{when}', scheduledTpl: 'בתבנית {name}',
+        cancelSchedule: 'ביטול התזמון', scheduleSaved: 'התזמון נשמר ל-{when}', scheduleCancelled: 'התזמון בוטל',
+        live: 'קמפיין רץ — הדוח מתעדכן אוטומטית',
+        skippedNote: 'נמענים שלא נוסו (חסר טלפון/תבנית) אינם חלק מהשליחה מחדש — אין לאן לשלוח',
+        // ── תוצאות לפי ניסוי ──
+        expTitle: 'תוצאות לפי ניסוי', expHint: 'כל שליחה מחדש נמדדת בנפרד — אותם נמענים, תבנית אחרת',
+        expOriginal: 'השליחה המקורית', expRound: 'ניסוי {n}', expTemplate: 'תבנית', expWhen: 'מתי',
+        expAttempted: 'יצאו', expDelivered: 'נמסרו', expRead: 'נקראו', expFailed: 'נכשלו', expReplied: 'הגיבו',
+        expNote: 'אותו נמען יכול להופיע ביותר מניסוי אחד, ולכן סכום השורות גדול מקהל היעד. "הגיבו" נזקף לניסוי שאחריו הגיעה התגובה.' },
   en: { back: 'Back', audience: 'Target audience', attempted: 'Attempted', sent: 'Sent successfully', delivered: 'Delivered', read: 'Read', failed: 'Failed',
         funnel: 'Delivery funnel', replied: 'Replied', replyRate: 'Reply rate', costTitle: 'Estimated cost',
         costNote: 'Estimate: Meta IL rate ($/msg), excl. free service window / volume discounts · updated',
@@ -39,6 +67,7 @@ const M = {
         recipients: 'Recipients', notSent: 'Not attempted', snapshotNote: 'from the audience snapshot captured at campaign time', currentLabelNote: 'from current label membership — this legacy campaign has no saved audience snapshot',
         name: 'Name', phone: 'Phone', status: 'Status', attempts: 'Attempts', when: 'Time', reason: 'Reason', conversation: 'Conversation link', noAttempt: 'No send attempt was created',
         export: 'Export CSV', print: 'Print / PDF', printedAt: 'Generated', openConv: 'Open the conversation in Chatwoot',
+        msgMore: 'Show the full message', msgLess: 'Show less',
         noReplyText: '(media or empty message)', errLoad: 'Failed to load campaign', notFound: 'Campaign not found', retry: 'Retry',
         s_sent: 'Sent — awaiting delivery', s_delivered: 'Delivered', s_read: 'Read', s_failed: 'Failed', s_pending: 'Pending', s_notsent: 'Not attempted',
         filter: 'Filter', clearFilter: 'Clear filter', outOf: 'of', noMatch: 'No recipients match the filter',
@@ -46,9 +75,32 @@ const M = {
         reply: 'Reply', col_replied: 'Replied', yes: 'Yes', no: 'No', replyText: 'Reply text', replyWhen: 'Reply time',
         f_read: 'Read', f_delivered: 'Delivered · not read yet', f_sent: 'Sent · not delivered yet', f_pending: 'Pending', f_failed: 'Failed', f_notsent: 'Not attempted',
         f_replied: 'Replied', f_noreply: 'No reply',
-        exactNote: 'The table status is each recipient’s final state, so the categories do not overlap (they sum to the audience) — unlike the funnel above' },
+        exactNote: 'The table status is each recipient’s final state, so the categories do not overlap (they sum to the audience) — unlike the funnel above',
+        breakdownTitle: 'Failures by reason', breakdownHint: 'Click a reason to filter the table',
+        resend: 'Resend to failed',
+        resendRunning: 'Resending…', resendDoneMsg: 'Resend finished: {ok} sent, {bad} failed',
+        resendWaiting: 'Paused — WhatsApp is still working through the previous ones',
+        resendPendingNote: 'A clock next to a message means it left the system and is awaiting WhatsApp confirmation. It is not scheduled.',
+        resendStarted: 'The resend has started', adminOnly: 'Resending requires an administrator role',
+        resendDoneTitle: 'The resend has finished', resendOk: 'went out', resendBad: 'failed again',
+        resendAgain: 'Try the failed ones again', resendDismiss: 'Dismiss',
+        resendWhy: 'Why they failed again', resendMore: 'and {n} more',
+        resendNote: 'Final status (delivered/read) keeps updating from WhatsApp over the next minutes — the table below will reflect it.',
+        scheduledFor: '⏱️ A resend is scheduled for {when}', scheduledTpl: 'using {name}',
+        cancelSchedule: 'Cancel the schedule', scheduleSaved: 'Scheduled for {when}', scheduleCancelled: 'Schedule cancelled',
+        live: 'Campaign running — the report auto-refreshes',
+        skippedNote: 'Recipients that were never attempted (no phone/template) are not part of the resend — there is nowhere to send',
+        expTitle: 'Results per experiment', expHint: 'Every resend is measured on its own — same recipients, different template',
+        expOriginal: 'Original send', expRound: 'Experiment {n}', expTemplate: 'Template', expWhen: 'When',
+        expAttempted: 'Went out', expDelivered: 'Delivered', expRead: 'Read', expFailed: 'Failed', expReplied: 'Replied',
+        expNote: 'The same recipient can appear in more than one experiment, so the rows sum to more than the audience. A reply is credited to the experiment it followed.' },
 };
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0);
+// מועד תזמון לתצוגה בשעון המקומי של הדפדפן (השרת שומר UTC).
+const fmtWhen = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+};
 // גוון הבאדג' לכל מצב סופי בטבלה (ראו lib/campaignRows.js).
 const STATUS_COLOR = { read: 'blue', delivered: 'teal', sent: 'slate', pending: 'slate', failed: 'ruby', notsent: 'amber' };
 
@@ -132,26 +184,128 @@ function FilterChip({ active, onClick, label, count }) {
 export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   const t = useT(M);
   const locale = useLocale();
-  const [d, setD] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
+  const cacheKey = `campaign:${accountId}:${campaignId}`;
+  // stale-while-revalidate: מצטייר מיד מהעותק האחרון, מתרענן ברקע. null = אין עדיין כלום.
+  const [d, setD] = useState(() => readCache(cacheKey));
   const [error, setError] = useState('');
   // סינון הטבלה והייצוא — שני צירים בלתי-תלויים, כל אחד קבוצת מפתחות. ריקה = בלי סינון.
   const [statusSel, setStatusSel] = useState(() => new Set());
   const [replySel, setReplySel] = useState(() => new Set());
+  // שליחה מחדש: tier לאזהרת תקציב, מודאל אישור, ומצב העבודה הרצה (null = אין).
+  const [tier, setTier] = useState(null);
+  const [resendOpen, setResendOpen] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendJob, setResendJob] = useState(null);
+  // תוצאות פר-ניסוי (השליחה המקורית + כל שליחה מחדש). [] = נטען ואין מה להציג.
+  const [experiments, setExperiments] = useState([]);
+  // תזמון ממתין ({ run_at, template_name }) — נטען מהשרת, שורד רענון דף.
+  const [pending, setPending] = useState(null);
+  const [msgOpen, setMsgOpen] = useState(false);   // הודעת הקמפיין פרושה או מקופלת
+  const alive = useRef(true);
+  // איפוס בגוף האפקט ולא רק ב-cleanup — אחרת ה-double-mount של StrictMode משאיר את
+  // הדגל false לתמיד והתשובות של ה-fetch נזרקות (skeleton נצחי בפיתוח).
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const load = useCallback(() => {
     if (accountId == null || campaignId == null) return;
-    setLoading(true); setError('');
+    setError('');
     getCampaignDetail(campaignId, accountId)
-      .then(setD)
-      .catch((e) => setError(e.message || translate(M, 'errLoad')))
-      .finally(() => setLoading(false));
-  }, [campaignId, accountId]);
+      .then((data) => {
+        if (!alive.current) return;
+        // קמפיין שלא נמצא → מסמן במקום להשאיר skeleton נצחי; לא נשמר ב-cache.
+        if (!data) { setD({ missing: true }); return; }
+        setD(data); writeCache(cacheKey, data);
+        // תקציב 24h של המספר שהקמפיין שולח ממנו (לא ניחוש ברמת חשבון) — לאזהרה
+        // שבמודאל. נכשל בשקט: בלי נתון המודאל פשוט לא מזהיר.
+        getCampaignsTier(accountId, data.campaign?.inbox_id)
+          .then((x) => { if (alive.current) setTier(x); }).catch(() => {});
+      })
+      .catch((e) => { if (alive.current) setError(e.message || translate(M, 'errLoad')); });
+    // תוצאות הניסויים; נכשל בשקט — הכרטיס פשוט לא יוצג.
+    getCampaignExperiments(campaignId, accountId)
+      .then((x) => { if (alive.current) setExperiments(x); })
+      .catch(() => {});
+    getPendingResend(campaignId, accountId)
+      .then((x) => { if (alive.current) setPending(x); })
+      .catch(() => {});
+  }, [campaignId, accountId, cacheKey]);
   useEffect(() => { load(); }, [load]);
+
+  // קמפיין בעיבוד → רענון מהיר; יש עוד הודעות "בדרך" (pending) → רענון רגוע. נעצר כשהטאב מוסתר.
+  const pollMs = d?.campaign?.campaign_status === 2 ? 8_000 : (d?.funnel?.pending > 0 ? 30_000 : 0);
+  useEffect(() => {
+    if (!pollMs) return undefined;
+    const timer = setInterval(() => { if (!document.hidden) load(); }, pollMs);
+    return () => clearInterval(timer);
+  }, [pollMs, load]);
+
+  // עבודת שליחה-מחדש שרצה (גם אם התחילה בטאב אחר) — נצמדים אליה ומתשאלים עד סיום.
+  useEffect(() => {
+    if (accountId == null || campaignId == null) return;
+    getCampaignResendStatus(campaignId, accountId)
+      .then((s) => { if (alive.current && s && s.status === 'running') setResendJob(s); })
+      .catch(() => {});
+  }, [campaignId, accountId]);
+  useEffect(() => {
+    if (resendJob?.status !== 'running') return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const s = await getCampaignResendStatus(campaignId, accountId);
+        if (!alive.current) return;
+        if (!s) { setResendJob(null); return; }
+        setResendJob(s);
+        if (s.status === 'done') {
+          toast({
+            message: translate(M, 'resendDoneMsg', { ok: s.sent, bad: s.failed.length }),
+            variant: s.failed.length ? undefined : 'success',
+          });
+          load(); // הדוח משקף מיד את הניסיונות החדשים
+        }
+      } catch { /* מתשאלים שוב בטיק הבא */ }
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [resendJob?.status, campaignId, accountId, load, toast]);
+
+  // template = null → תבנית הקמפיין המקורית; אחרת { name, language, params, mediaUrl }.
+  // runAt = null → שליחה מיידית; אחרת ISO — נכנס לתור בשרת ומורץ שם בשעה שנקבעה.
+  // inboxId = null → המספר של הקמפיין; אחרת מספר אחר של אותו חשבון.
+  const startResend = async (template, runAt, inboxId) => {
+    setResendBusy(true);
+    try {
+      if (runAt) {
+        await scheduleCampaignResend(campaignId, accountId, runAt, locale, template, inboxId);
+        setResendOpen(false);
+        setPending({ run_at: runAt, template_name: template?.name || campaign.template_name });
+        toast({ message: translate(M, 'scheduleSaved', { when: fmtWhen(runAt) }), variant: 'success' });
+        return;
+      }
+      const { total, template_name } = await resendCampaignFailed(campaignId, accountId, locale, template, inboxId);
+      setResendOpen(false);
+      setResendJob({ status: 'running', total, done: 0, sent: 0, failed: [], template_name });
+      toast({ message: translate(M, 'resendStarted'), variant: 'success' });
+    } catch (e) {
+      setResendOpen(false);
+      toast({ message: e.forbidden ? translate(M, 'adminOnly') : e.message, variant: 'error' });
+    } finally {
+      setResendBusy(false);
+    }
+  };
+
+  const unschedule = async () => {
+    try {
+      await cancelCampaignResend(campaignId, accountId);
+      setPending(null);
+      toast({ message: translate(M, 'scheduleCancelled'), variant: 'success' });
+    } catch (e) {
+      toast({ message: e.forbidden ? translate(M, 'adminOnly') : e.message, variant: 'error' });
+    }
+  };
 
   // ── שורות, ספירות וסינון (כל ה-hooks לפני ה-return המוקדמים של טעינה/שגיאה) ──
   const rows = useMemo(() => buildRows(d || {}), [d]);
   const counts = useMemo(() => countRows(rows), [rows]);
+  const failGroups = useMemo(() => failureGroups(rows), [rows]);
   // שני צ'יפים דלוקים בציר התגובה = כמו אף אחד: אין סינון.
   const replyMode = replySel.size === 1 ? (replySel.has('replied') ? 'yes' : 'no') : 'all';
   const visible = useMemo(
@@ -180,14 +334,15 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
     window.open(`/app/accounts/${accountId}/conversations/${displayId}`, '_blank', 'noopener');
   };
 
-  if (loading) return <Skeleton className="h-64 w-full rounded-xl" />;
-  if (error) return (
+  // skeleton רק בכניסה הראשונה אי-פעם; אחרי זה תמיד יש עותק מיידי ורענון שקט ברקע.
+  if (d == null && !error) return <Skeleton className="h-64 w-full rounded-xl" />;
+  if (d == null && error) return (
     <div className="flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
       <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" /><span>{error}</span>
       <Button variant="faded" color="slate" size="sm" className="ms-auto shrink-0" onClick={load}>{t('retry')}</Button>
     </div>
   );
-  if (!d) return <div className="py-16 text-center text-sm text-n-slate-11">{t('notFound')}</div>;
+  if (d.missing) return <div className="py-16 text-center text-sm text-n-slate-11">{t('notFound')}</div>;
 
   const { campaign, funnel, engagement, not_sent, audience_source } = d;
   // Meta charges for delivered template messages; failed/pending attempts must not inflate cost.
@@ -239,12 +394,30 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         <h1 className="text-lg font-semibold text-n-slate-12">{campaign.title}</h1>
         {/* חותמת להדפסה בלבד — דוח שנשלח ללקוח נושא תאריך הפקה */}
         <p className="print-only text-xs text-n-slate-10">{t('printedAt')}: {new Date().toLocaleString(locale === 'he' ? 'he-IL' : 'en-GB')} · {campaign.created_at || ''}</p>
-        <div className="mt-1 flex flex-wrap gap-1.5">
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
           {campaign.template_name ? <Badge color="slate">{campaign.template_name}</Badge> : null}
           {campaign.category ? <Badge color="blue">{campaign.category}</Badge> : null}
+          {campaign.campaign_status === 2 ? (
+            <span className="inline-flex items-center gap-1 text-xs text-n-teal-11" title={t('live')}>
+              <Radio size={13} className="animate-pulse" aria-hidden="true" />{t('live')}
+            </span>
+          ) : null}
         </div>
+        {/* ⚠️ max-height + גלילה חתך שורה באמצע האותיות ונראה כמו תקלה. line-clamp נעצר
+            בסוף שורה שלמה, והלחיצה פורשת את ההודעה המלאה — בלי פס גלילה בתוך פסקה. */}
         {campaign.message ? (
-          <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap rounded-lg bg-n-alpha-1 px-3 py-2 text-sm text-n-slate-11">{campaign.message}</p>
+          <button
+            type="button"
+            onClick={() => setMsgOpen((v) => !v)}
+            aria-expanded={msgOpen}
+            title={msgOpen ? t('msgLess') : t('msgMore')}
+            className="mt-2 block w-full rounded-lg bg-n-alpha-1 px-3 py-2 text-start transition-colors hover:bg-n-alpha-2"
+          >
+            <span className={`block whitespace-pre-wrap text-sm text-n-slate-11 ${msgOpen ? '' : 'line-clamp-4'}`}>
+              {campaign.message}
+            </span>
+            <span className="mt-1 block text-xs text-n-blue-11">{msgOpen ? t('msgLess') : t('msgMore')}</span>
+          </button>
         ) : null}
       </div>
 
@@ -296,12 +469,171 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         </div>
       </div>
 
+      {/* כשלים לפי סיבה + שליחה מחדש — מוצג כשיש מה לתקן, וגם כשאין: סיכום ריצה שהסתיימה
+          ותזמון ממתין חייבים להישאר גלויים גם אחרי ששליחה מחדש ניקתה את כל הכשלים.
+          לחיצה על סיבה מסננת את הטבלה; הכפתור שולח מחדש למי שנשאר במצב סופי "נכשל". */}
+      {failGroups.length > 0 || resendJob || pending ? (
+        <div className="no-print mb-5 rounded-xl border border-n-weak bg-n-surface-1 p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="flex items-center gap-1.5 text-sm font-medium text-n-slate-12">
+              <AlertCircle size={15} className="text-n-ruby-11" aria-hidden="true" />{t('breakdownTitle')}
+              {failGroups.length > 0 ? <span className="text-xs font-normal text-n-slate-10">· {t('breakdownHint')}</span> : null}
+            </h2>
+            {/* בזמן ריצה יש פס התקדמות, ואחרי ריצה הכפתור יושב בתוך הסיכום — כאן רק
+                כשאין ריצה בכלל, אחרת מוצגים שני כפתורים שעושים אותו דבר. */}
+            {counts.failed > 0 && !resendJob ? (
+              <Button variant="solid" color="blue" size="sm" icon={RotateCcw} onClick={() => setResendOpen(true)}>
+                {t('resend')} ({counts.failed})
+              </Button>
+            ) : null}
+          </div>
+
+          {/* תזמון ממתין — שורד רענון דף (הוא יושב בשרת), עם ביטול במקום */}
+          {pending ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-n-blue-3 px-3 py-2 text-xs text-n-blue-11">
+              <span>{translate(M, 'scheduledFor', { when: fmtWhen(pending.run_at) })}</span>
+              {pending.template_name ? <span className="text-n-slate-11">· {translate(M, 'scheduledTpl', { name: pending.template_name })}</span> : null}
+              <button type="button" onClick={unschedule} className="ms-auto rounded-md px-2 py-0.5 text-n-slate-11 hover:bg-n-alpha-2 hover:text-n-ruby-11">
+                {t('cancelSchedule')}
+              </button>
+            </div>
+          ) : null}
+          {/* הסתיימה — סיכום שנשאר על המסך: כמה יצאו, כמה נכשלו שוב ולמה, ומיד
+              אפשרות לנסות שוב (הכפתור מחשב את הנכשלים העדכניים) או לתזמן. */}
+          {resendJob?.status === 'done' ? (
+            <div className="mb-3 rounded-lg border border-n-weak bg-n-alpha-1 px-3 py-2.5" role="status">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-sm font-medium text-n-slate-12">{t('resendDoneTitle')}</span>
+                <span className="text-sm text-n-teal-11"><span className="font-semibold tabular-nums">{resendJob.sent}</span> {t('resendOk')}</span>
+                {resendJob.failed.length ? (
+                  <span className="text-sm text-n-ruby-11"><span className="font-semibold tabular-nums">{resendJob.failed.length}</span> {t('resendBad')}</span>
+                ) : null}
+                <div className="ms-auto flex items-center gap-2">
+                  {counts.failed > 0 ? (
+                    <Button variant="solid" color="blue" size="sm" icon={RotateCcw} onClick={() => setResendOpen(true)}>
+                      {t('resendAgain')} ({counts.failed})
+                    </Button>
+                  ) : null}
+                  <button type="button" onClick={() => setResendJob(null)} className="rounded-md px-2 py-1 text-xs text-n-slate-11 hover:bg-n-alpha-2">
+                    {t('resendDismiss')}
+                  </button>
+                </div>
+              </div>
+              {/* למה נכשלו שוב — מקובץ לפי סיבה, לא רשימת 1,000 שורות */}
+              {resendJob.failed.length ? (
+                <div className="mt-2 flex flex-col gap-0.5">
+                  {Object.entries(resendJob.failed.reduce((acc, f) => {
+                    const k = f.error || '—';
+                    acc[k] = (acc[k] || 0) + 1;
+                    return acc;
+                  }, {})).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([reason, n]) => (
+                    <p key={reason} className="m-0 flex items-baseline gap-2 text-xs text-n-slate-11">
+                      <span className="shrink-0 font-semibold tabular-nums text-n-ruby-11">{n}</span>
+                      <span className="min-w-0 truncate" title={reason}>{reason}</span>
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+              <p className="mb-0 mt-2 text-xs text-n-slate-10">{t('resendNote')}</p>
+            </div>
+          ) : null}
+
+          {/* עבודת שליחה-מחדש רצה — פס התקדמות חי במקום הכפתור */}
+          {resendJob?.status === 'running' ? (
+            <div className="mb-3" role="status">
+              <div className="flex items-center gap-3">
+                <span className="h-2 flex-1 overflow-hidden rounded-full bg-n-alpha-3">
+                  <span className={`block h-full rounded-full transition-all duration-500 ${resendJob.waiting ? 'bg-n-amber-9' : 'bg-n-blue-9'}`} style={{ width: `${resendJob.total ? Math.round((resendJob.done / resendJob.total) * 100) : 0}%` }} />
+                </span>
+                <span className="shrink-0 text-xs tabular-nums text-n-slate-11">
+                  {resendJob.template_name ? <span className="text-n-slate-12">{resendJob.template_name} · </span> : null}
+                  {resendJob.waiting ? <span className="text-n-amber-11">{t('resendWaiting')} · </span> : null}
+                  {t('resendRunning')} {resendJob.done}/{resendJob.total}
+                  {resendJob.failed.length ? <span className="text-n-ruby-11"> · {resendJob.failed.length}</span> : null}
+                </span>
+              </div>
+              {/* השעון בשיחה מבלבל — הוא נראה כמו "מתוזמן" ובעצם אומר "ממתין לאישור" */}
+              <p className="mb-0 mt-1.5 text-xs text-n-slate-10">{t('resendPendingNote')}</p>
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-1.5">
+            {failGroups.map((g) => {
+              const share = Math.round((g.count / Math.max(1, failGroups.reduce((s, x) => s + x.count, 0))) * 100);
+              return (
+                <button
+                  key={`${g.statusKey}|${g.error_title}`}
+                  type="button"
+                  onClick={() => setStatusSel(new Set([g.statusKey]))}
+                  title={g.error_title}
+                  className="flex w-full items-center gap-3 rounded-lg px-2 py-1 text-start hover:bg-n-alpha-2"
+                >
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${g.statusKey === 'notsent' ? 'bg-n-amber-9' : 'bg-n-ruby-9'}`} aria-hidden="true" />
+                  {/* ההסבר של מטא ארוך (ובאנגלית ארוך עוד יותר) — truncate בשורה אחת קטע
+                      אותו באמצע מילה. שתי שורות מכילות את כולו כמעט תמיד. */}
+                  <span className={`min-w-0 flex-1 text-start text-xs line-clamp-2 ${g.statusKey === 'notsent' ? 'text-n-amber-11' : 'text-n-ruby-11'}`}>
+                    {errorLabel(g.error_title) || t(`s_${g.statusKey}`)}
+                  </span>
+                  {/* חלקה של הסיבה מכלל הכשלים — אותו דפוס bar-list של כרטיס ההשוואה */}
+                  <span className="h-2 w-28 shrink-0 rounded-full bg-n-alpha-3 sm:w-40" aria-hidden="true">
+                    <span className={`block h-2 rounded-full ${g.statusKey === 'notsent' ? 'bg-n-amber-9' : 'bg-n-ruby-9'}`} style={{ width: `${share}%` }} />
+                  </span>
+                  <span className="w-8 shrink-0 text-end text-xs font-semibold tabular-nums text-n-slate-12">{g.count}</span>
+                </button>
+              );
+            })}
+          </div>
+          {failGroups.some((g) => g.statusKey === 'notsent') ? (
+            <p className="mb-0 mt-2 text-xs text-n-slate-10">{t('skippedNote')}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* תוצאות לפי ניסוי — מוצג רק אחרי שנעשתה לפחות שליחה מחדש אחת, אחרת אין מה
+          להשוות והשורה היחידה כבר מסוכמת במשפך למעלה. */}
+      {experiments.length > 1 ? (
+        <div className="mb-5 rounded-xl border border-n-weak bg-n-surface-1 p-4">
+          <h2 className="mb-3 flex flex-wrap items-center gap-1.5 text-sm font-medium text-n-slate-12">
+            <FlaskConical size={15} className="text-n-blue-11" aria-hidden="true" />{t('expTitle')}
+            <span className="text-xs font-normal text-n-slate-10">· {t('expHint')}</span>
+          </h2>
+          <Table>
+            <THead>
+              <TR>
+                <TH>{t('expTemplate')}</TH><TH>{t('expAttempted')}</TH><TH>{t('expDelivered')}</TH>
+                <TH>{t('expRead')}</TH><TH>{t('expFailed')}</TH><TH>{t('expReplied')}</TH><TH>{t('expWhen')}</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {experiments.map((e, i) => (
+                <TR key={e.run_id || 'original'}>
+                  <TD>
+                    <span className="block text-xs text-n-slate-10">
+                      {e.run_id ? translate(M, 'expRound', { n: i }) : t('expOriginal')}
+                    </span>
+                    {/* שורות ledger שקדמו לתיעוד התבנית פר-שליחה נופלות לתבנית של הקמפיין */}
+                    <span className="text-n-slate-12">{e.template_name || campaign.template_name || '—'}</span>
+                  </TD>
+                  <TD><span className="tabular-nums text-n-slate-12">{e.attempted}</span></TD>
+                  <TD><span className="tabular-nums text-n-teal-11">{e.delivered}<span className="text-n-slate-10"> · {pct(e.delivered, e.attempted)}%</span></span></TD>
+                  <TD><span className="tabular-nums text-n-blue-11">{e.read}<span className="text-n-slate-10"> · {pct(e.read, e.attempted)}%</span></span></TD>
+                  <TD><span className="tabular-nums text-n-ruby-11">{e.failed}<span className="text-n-slate-10"> · {pct(e.failed, e.attempted)}%</span></span></TD>
+                  <TD><span className="tabular-nums text-n-slate-12">{e.replied}<span className="text-n-slate-10"> · {pct(e.replied, e.attempted)}%</span></span></TD>
+                  <TD><span className="text-xs text-n-slate-11">{e.started_at}</span></TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+          <p className="mb-0 mt-2 text-xs text-n-slate-10">{t('expNote')}</p>
+        </div>
+      ) : null}
+
       {/* נמענים — כותרת + סרגל סינון. הטבלה מאחדת את מי שנוסה עם מי שלא נוסה כלל,
           כדי שסינון אחד יכסה את כל קהל היעד (ולא רק חלק ממנו). */}
       <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h2 className="text-sm font-medium text-n-slate-12">{t('recipients')} ({visible.length}{filtered ? ` ${t('outOf')} ${rows.length}` : ''})</h2>
+        {/* 'recipients' (4.17 native) קפוא בזמן הקמפיין בדיוק כמו snapshot — אותה הערה */}
         {not_sent && not_sent.length > 0 ? (
-          <span className="text-xs text-n-slate-10">· {t(audience_source === 'snapshot' ? 'snapshotNote' : 'currentLabelNote')}</span>
+          <span className="text-xs text-n-slate-10">· {t(audience_source === 'current_label' ? 'currentLabelNote' : 'snapshotNote')}</span>
         ) : null}
       </div>
 
@@ -366,6 +698,19 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         <p className="py-8 text-center text-sm text-n-slate-11">{t('noMatch')}</p>
       ) : null}
       <p className="mt-2 text-xs text-n-slate-10">{t('exactNote')}</p>
+
+      {/* אישור שליחה מחדש — פעולת outbound אמיתית: מספרים בדיוק מה יקרה, מאפשרים
+          לבחור תבנית אחרת לניסוי, ומזהירים כשהתקציב היומי של Meta לא מספיק לכולם. */}
+      <ResendDialog
+        open={resendOpen}
+        onClose={() => setResendOpen(false)}
+        onConfirm={startResend}
+        campaign={campaign}
+        failedCount={counts.failed}
+        tier={tier}
+        loading={resendBusy}
+        accountId={accountId}
+      />
     </>
   );
 }

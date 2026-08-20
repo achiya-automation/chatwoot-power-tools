@@ -378,24 +378,21 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
   //     quality hit). Small enough to be safe, large enough that normal due volume goes out
   //     promptly (when few steps are due, all of them send this tick → timing preserved).
   // Count DISTINCT conversations opened in the last 24h that were NOT blocked — a 131049 never
-  // opened a conversation, so it must not count against the tier (drip-initiated sends only;
-  // ponytail: manual Chatwoot campaigns on the same number aren't counted — add them if that
-  // ever becomes a real mixed-use case). Only needed for a finite tier.
+  // opened a conversation, so it must not count against the tier. Only needed for a finite tier.
   //
   // in_session sends are EXCLUDED. Meta defines the messaging limit as the number of users you
   // deliver to "outside of a customer service window" — a message sent to someone who replied
   // within the last 24h does not consume the limit at all. Counting them (as we did) throttled
   // the account below what Meta actually allows.
+  //
+  // ⭐ 07.08.2026: הספירה עברה ל-drip.used_conversations_24h — פונקציה אחת שגם המסך
+  // קורא לה, כדי שהמספר שהלקוח רואה יהיה בדיוק המספר שנאכף כאן. היא גם סופרת קמפיינים
+  // ידניים של Chatwoot על אותו מספר: הם צורכים מאותה מכסה של מטא, וההתעלמות מהם גרמה
+  // למנוע להאמין שיש לו מקום שאין (וממנו ישר ל-131049). ראה migrations/042.
   let used24h = 0;
   if (Number.isFinite(opts.tierCap)) {
     used24h = Number((await q(
-      `SELECT count(DISTINCT sm.conversation_id)::int AS c
-         FROM drip.sent_messages sm
-         LEFT JOIN public.messages m ON m.id = sm.message_id
-        WHERE sm.account_id = $1
-          AND sm.sent_at > $2::timestamptz - interval '24 hours'
-          AND sm.in_session = false
-          AND (m.status IS NULL OR m.status <> 3)`,
+      'SELECT drip.used_conversations_24h($1, $2::timestamptz) AS c',
       [accountId, now]
     ))[0].c);
   }
@@ -558,7 +555,7 @@ export async function reconcileAccount(pool, client, accountId, now = new Date()
         //
         // ⭐ ...except for the lead's FIRST message, which ignores quiet hours entirely —
         // see gateFor(). It is the reply to a form submitted minutes ago, not a broadcast.
-        const gateArgs = gateFor(seq, e.current_step, now, windows);
+        const gateArgs = gateFor(seq, e.current_step, now, windows, cSettings);
         if (isNoSendNow(gateArgs)) {
           const edge = quietWindowEnd(gateArgs);
           if (edge) {

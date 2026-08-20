@@ -33,12 +33,16 @@ const M = {
     keywordsPh: 'הוסיפו מילה ולחצו Enter',
     keywordsHint: 'הודעה נכנסת שמכילה אחת מהמילים מפעילה את הפלואו.',
     onNewConv: 'הפעלה על כל שיחה חדשה',
+    external: 'הפעלה חיצונית (Make / API)',
     manual: 'הפעלה ידנית ע"י נציג',
     nodeTitle: 'הגדרות הצומת',
     deleteNode: 'מחיקת הצומת',
 
     msgText: 'טקסט ההודעה',
     msgTextPh: 'אפשר לשלב {{שם}}, {{טלפון}} או {{answers.key}}',
+    pmText: 'ההודעה הפרטית',
+    pmTextPh: 'היי {{שם}}, ראיתי שהגבת — הנה הפרטים...',
+    pmHint: 'פייסבוק מתירה הודעה פרטית אחת בלבד לכל תגובה, ורק עד 7 ימים ממנה. מרגע שהאדם עונה, השיחה ממשיכה כרגיל.',
     mediaUrl: 'קישור למדיה (אופציונלי)',
     mediaUrlPh: 'https://…',
 
@@ -126,6 +130,8 @@ const M = {
     tplMedia: 'קישור מדיה לכותרת ({format})',
     tplMediaHint: 'לתבנית עם כותרת מדיה חובה קישור ציבורי — אפשר להעלות קובץ למטה בצומת הודעה ולהעתיק את הקישור.',
     tplPreview: 'תצוגה מקדימה',
+    tplWaitTitle: 'המתנה לתגובה לתבנית',
+    tplWaitHint: 'התבנית כבר כוללת כפתורים; הפלואו ימתין ללחיצה בלי לשלוח הודעה נוספת.',
 
     upload: 'העלאת קובץ',
     uploading: 'מעלה…',
@@ -151,12 +157,16 @@ const M = {
     keywordsPh: 'Type a word and press Enter',
     keywordsHint: 'An incoming message containing one of these words starts the flow.',
     onNewConv: 'Start on every new conversation',
+    external: 'External launch (Make / API)',
     manual: 'Manual launch by an agent',
     nodeTitle: 'Node settings',
     deleteNode: 'Delete node',
 
     msgText: 'Message text',
     msgTextPh: 'You can use {{name}}, {{phone}} or {{answers.key}}',
+    pmText: 'Private message',
+    pmTextPh: 'Hi {{name}}, saw your comment — here are the details...',
+    pmHint: 'Facebook allows only one private message per comment, within 7 days. Once the person replies, the conversation continues normally.',
     mediaUrl: 'Media URL (optional)',
     mediaUrlPh: 'https://…',
 
@@ -244,6 +254,8 @@ const M = {
     tplMedia: 'Header media URL ({format})',
     tplMediaHint: 'A media-header template requires a public URL — upload a file in a message node and copy its link.',
     tplPreview: 'Preview',
+    tplWaitTitle: 'Wait for the template reply',
+    tplWaitHint: 'The template already contains buttons; the flow waits for a click without sending another message.',
 
     upload: 'Upload file',
     uploading: 'Uploading…',
@@ -529,6 +541,18 @@ function TemplateSection({ data, patch, meta, vars }) {
           onChange={(e) => patch({ mediaUrl: e.target.value })}
         />
       ) : null}
+      <Section>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium text-n-slate-12">{t('tplWaitTitle')}</span>
+          <Switch
+            checked={!!data.waitForReply}
+            aria-label={t('tplWaitTitle')}
+            onChange={(waitForReply) => patch({ waitForReply })}
+          />
+        </div>
+        <p className="m-0 text-xs text-n-slate-11">{t('tplWaitHint')}</p>
+      </Section>
+      {data.waitForReply ? <SaveToEditor data={data} patch={patch} /> : null}
     </>
   );
 }
@@ -751,6 +775,14 @@ function TriggerPanel({ name, onName, trigger, onTrigger, inboxes }) {
           />
         </div>
         <div className="flex items-center justify-between">
+          <span className="text-sm text-n-slate-12">{t('external')}</span>
+          <Switch
+            checked={!!trigger.external}
+            aria-label={t('external')}
+            onChange={(v) => onTrigger({ ...trigger, external: v })}
+          />
+        </div>
+        <div className="flex items-center justify-between">
           <span className="text-sm text-n-slate-12">{t('manual')}</span>
           <Switch
             checked={trigger.manual !== false}
@@ -834,6 +866,19 @@ export default function Inspector({
             accountId={accountId}
             onChange={(v) => patch({ mediaUrl: v })}
           />
+        </>
+      ) : null}
+
+      {node.type === 'private_reply' ? (
+        <>
+          <Textarea
+            label={t('pmText')}
+            value={d.text || ''}
+            placeholder={t('pmTextPh')}
+            vars={vars}
+            onChange={(e) => patch({ text: e.target.value })}
+          />
+          <p className="m-0 text-xxs leading-relaxed text-n-slate-10">{t('pmHint')}</p>
         </>
       ) : null}
 

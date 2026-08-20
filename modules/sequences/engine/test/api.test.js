@@ -11,6 +11,7 @@ import http from 'node:http';
 import { handleAction, initStore, resolveDisplayId } from '../src/store.js';
 import { createApp } from '../src/api.js';
 import { getPool, query } from '../src/db.js';
+import { perAccountIntakeToken } from '../src/journeyIntake.js';
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
@@ -225,6 +226,103 @@ test('createApp: /media + /health public, /drip-api requires a Chatwoot session'
   } finally {
     await new Promise((resolve) => server.close(resolve));
     initStore(cfg); // restore global store config for any subsequent test
+  }
+});
+
+test('createApp: journey intake is public only with its account-scoped Basic credential', async () => {
+  const master = 'test-only-intake-master';
+  const app = createApp({
+    databaseUrl: process.env.DATABASE_URL_TEST,
+    chatwootBaseUrl: 'http://chatwoot.invalid',
+    mediaDir: '/tmp',
+    journeyIntakeSecret: master,
+    fetchImpl: async () => ({ status: 401, json: async () => ({}) }),
+  });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const headers = { 'content-type': 'application/json', connection: 'close' };
+  try {
+    const missing = await fetch(`${base}/drip-api/journey-intake/14`, {
+      method: 'POST', headers, body: '{}',
+    });
+    assert.equal(missing.status, 404, 'the public route hides itself without its credential');
+
+    const wrongAccount = Buffer.from(`make:${perAccountIntakeToken(master, 15)}`).toString('base64');
+    const wrong = await fetch(`${base}/drip-api/journey-intake/14`, {
+      method: 'POST', headers: { ...headers, authorization: `Basic ${wrongAccount}` }, body: '{}',
+    });
+    assert.equal(wrong.status, 404, 'a credential derived for another account is rejected');
+
+    const account14 = Buffer.from(`make:${perAccountIntakeToken(master, 14)}`).toString('base64');
+    const authenticated = await fetch(`${base}/drip-api/journey-intake/14`, {
+      method: 'POST', headers: { ...headers, authorization: `Basic ${account14}` }, body: '{}',
+    });
+    assert.equal(authenticated.status, 400, 'valid auth reaches intake payload validation');
+    assert.deepEqual(await authenticated.json(), { ok: false, error: 'invalid_journey_id' });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    initStore(cfg);
+  }
+});
+
+test('createApp: in-flight journey intake returns Make-retryable 503 + Retry-After', async () => {
+  const master = 'test-only-intake-master';
+  const journeyId = '22222222-2222-4222-8222-222222222222';
+  await query('TRUNCATE drip.journey_intakes, drip.journey_runs, drip.journeys CASCADE');
+  await query(`INSERT INTO public.inboxes (id, account_id, name, channel_type)
+               VALUES (40, 14, 'Official WhatsApp', 'Channel::Whatsapp')
+               ON CONFLICT (id) DO UPDATE SET account_id=14, channel_type='Channel::Whatsapp'`);
+  await query(
+    `INSERT INTO drip.journeys (id, account_id, name, status, trigger, graph)
+     VALUES ($1::uuid, 14, 'External intake', 'active',
+             '{"external":true,"inbox_ids":[40]}',
+             '{"nodes":[{"id":"t","type":"trigger","data":{}}],"edges":[]}')`,
+    [journeyId]
+  );
+  await query(
+    `INSERT INTO drip.journey_intakes
+       (account_id, journey_id, source, external_id, status, attempt_id, lease_until)
+     VALUES (14, $1::uuid, 'facebook_lead_ads', 'fb-in-flight', 'processing',
+             '33333333-3333-4333-8333-333333333333'::uuid, now() + interval '2 minutes')`,
+    [journeyId]
+  );
+
+  const app = createApp({
+    databaseUrl: process.env.DATABASE_URL_TEST,
+    chatwootBaseUrl: 'http://chatwoot.invalid',
+    mediaDir: '/tmp',
+    journeyIntakeSecret: master,
+  });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const auth = Buffer.from(`make:${perAccountIntakeToken(master, 14)}`).toString('base64');
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${server.address().port}/drip-api/journey-intake/14`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Basic ${auth}`,
+          connection: 'close',
+        },
+        body: JSON.stringify({
+          journey_id: journeyId,
+          source: 'facebook_lead_ads',
+          external_id: 'fb-in-flight',
+          inbox_id: 40,
+          contact: { phone: '+972501234567' },
+          custom_attributes: { airtable_lead_id: 'rec-in-flight' },
+        }),
+      }
+    );
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('retry-after'), '5');
+    assert.deepEqual(await response.json(), { ok: false, error: 'intake_processing' });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    initStore(cfg);
   }
 });
 

@@ -16,17 +16,33 @@
  * גלובלי שמפרק את הגנת ה-SSRF לכל הלקוחות. ראה 034_presence.sql.
  */
 
+import { HUMAN_OUTGOING_SQL } from './reads.js';
+
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
 // "מקליד" של Meta פג אחרי 25 שניות. מרעננים ב-20 כדי להשאיר מרווח לרשת.
 const TYPING_TTL_MS = 20_000;
+
+// ⭐ 06.08.2026 — למה יש בכלל לולאת רענון: ירייה אחת של "מקליד" מתה 25ש' אחרי
+// שנשלחה, בעוד שהתשובה מגיעה מ-n8n אחרי 10-15ש' (תשובה פשוטה) ועד 5 דקות (שאלת
+// מחיר שמריצה מחקר). נמדד חי בשיחה 297: על "כמה אקבל עליו?" ה"מקליד" כבה 3:46
+// דקות לפני התשובה, ועל תשובות קצרות הוא נדלק 3 שניות לפניה — כלומר בפועל לא נראה.
+// לכן: מרעננים עד שיוצאת הודעה חדשה בשיחה. הרענון ב-26-32ש' ולא ב-20 בכוונה —
+// הפסק הקצר בין מחזורים נקרא כמו אדם שעוצר לחשוב, במקום "מקליד" רצוף של 5 דקות.
+const TYPING_REFRESH_MIN_S = 26;
+const TYPING_REFRESH_MAX_S = 32;
+// תקרה: מעבר לזה משהו תקוע בצד ששולח, ואדם שמקליד רבע שעה הוא לא אדם.
+const TYPING_MAX_WAIT_MS = 6 * 60_000;
 // כמה הודעות לעבד בסבב אחד. תקרה שמונעת מסבב ראשון אחרי downtime לפתוח מאות
 // טיימרים בבת אחת; היתרה נאספת בסבב הבא.
 const BATCH = 200;
 
+// ⛔ שני השדות הראשונים חייבים להישאר כבויים: ב-Cloud API גם payload של "מקליד"
+// נושא status:"read", כך ש-typing_mode פעיל מסמן נקרא גם כש-read_receipts כבוי.
+// הפעלה — רק במפורש, פר-חשבון/תיבה, מהדשבורד (הוחלט 06.08.2026).
 const DEFAULTS = {
-  read_receipts: true,
-  typing_mode: 'agent',
+  read_receipts: false,
+  typing_mode: 'off',
   read_delay_min: 2,
   read_delay_max: 5,
   typing_delay_min: 2,
@@ -40,7 +56,20 @@ const jitter = (min, max) => (Number(min) + Math.random() * (Number(max) - Numbe
  * שולח פעולת presence אחת. `typing` מוסיף את המחוון לאותה קריאה שמסמנת כנקרא —
  * זה מבנה ה-payload של Meta, לא קיצור דרך שלנו.
  */
-async function send({ phoneId, token, wamid, typing }, fetchImpl = fetch) {
+// ⚠️ לולאת הנוכחות רצה כל 2 שניות. קריאה בלי תקציב זמן שנתקעת מול מטא נשארת תלויה
+// לנצח וגוררת איתה את התור — לכן ברירת המחדל היא fetch עם ביטול אוטומטי.
+const PRESENCE_TIMEOUT_MS = 10_000;
+async function timedFetch(url, opts = {}) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), PRESENCE_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...opts, signal: opts.signal || ac.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function send({ phoneId, token, wamid, typing }, fetchImpl = timedFetch) {
   const body = { messaging_product: 'whatsapp', status: 'read', message_id: wamid };
   if (typing) body.typing_indicator = { type: 'text' };
   const res = await fetchImpl(`${GRAPH}/${phoneId}/messages`, {
@@ -72,7 +101,22 @@ export async function settingsFor(query, accountId, inboxId) {
 }
 
 /**
- * מטפל בהודעה נכנסת אחת: המתנה → נקרא → (במצב auto) המתנה → מקליד.
+ * האם כבר יצאה הודעה חדשה יותר בשיחה — תשובת הבוט, נציג, או הודעה נוספת מהלקוח
+ * (שתקבל לולאת "מקליד" משל עצמה). זה סימן העצירה של הרענון.
+ */
+async function hasNewerMessage(query, conversationId, messageId) {
+  if (!conversationId) return true; // בלי מזהה שיחה אין איך לדעת מתי לעצור — לא מרעננים
+  const rows = await query(
+    `SELECT 1 FROM public.messages
+      WHERE conversation_id = $1 AND id > $2 AND private = false
+      LIMIT 1`,
+    [conversationId, messageId]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * מטפל בהודעה נכנסת אחת: המתנה → נקרא → (במצב auto) המתנה → מקליד → רענון עד התשובה.
  * רץ מנותק מהלולאה — סבב המשיכה לא ממתין לאף טיימר.
  */
 async function handleIncoming(deps, msg) {
@@ -100,7 +144,24 @@ async function handleIncoming(deps, msg) {
     log(`[presence] typing inbox=${msg.inbox_id} (auto)`);
   } catch (e) {
     log(`[presence] typing failed inbox=${msg.inbox_id}: ${e.message}`);
+    return;
   }
+
+  // מחזיקים את "מקליד" חי עד שהתשובה באמת יוצאת (ראה TYPING_REFRESH_MIN_S)
+  const deadline = Date.now() + TYPING_MAX_WAIT_MS;
+  let cycles = 0;
+  while (Date.now() < deadline) {
+    await sleep(jitter(TYPING_REFRESH_MIN_S, TYPING_REFRESH_MAX_S));
+    if (await hasNewerMessage(query, msg.conversation_id, msg.id)) return;
+    try {
+      await send({ ...target, typing: true }, deps.fetchImpl);
+      cycles += 1;
+    } catch (e) {
+      log(`[presence] typing refresh failed inbox=${msg.inbox_id}: ${e.message}`);
+      return;
+    }
+  }
+  log(`[presence] typing timeout inbox=${msg.inbox_id} after ${cycles} refreshes`);
 }
 
 /**
@@ -146,6 +207,13 @@ export async function relayAgentTyping(deps, accountId, conversationId) {
  *
  * הסמן מתקדם גם כשההודעות מסוננות החוצה, אחרת תיבה שקטה עם ערוץ אחר תשאיר את
  * הלולאה תקועה על אותו טווח לנצח.
+ *
+ * ⭐ 10.08.2026 — למה NOT EXISTS על HUMAN_OUTGOING_SQL: ההגדרה היא פר-תיבה, אבל
+ * המטרה שלה היא להחיות *בוט*. בלי הסינון הזה כל שיחה בתיבה מסומנת כנקראה, כולל
+ * שיחות שאדם מנהל והבוט לא נוגע בהן — ואז הלקוח רואה ✓✓ כחול בלי שאף אחד ענה.
+ * נמדד בתיבה 38: מתוך 478 הודעות נכנסות ב-14 יום, 454 (95%) היו בשיחות שכבר היה
+ * בהן אדם. משתמשים בקבוע המשותף ולא בבדיקה מקומית — sender_type='User' לבדו מחמיץ
+ * תשובה שנשלחה מהטלפון ב-coexistence (היא מסומנת רק ב-content_attributes).
  */
 export async function tickPresence(deps) {
   const { query } = deps;
@@ -154,20 +222,26 @@ export async function tickPresence(deps) {
   const from = Number(cur[0].last_message_id);
 
   const rows = await query(
-    `SELECT m.id, m.account_id, m.inbox_id, m.source_id,
+    `SELECT msg.id, msg.account_id, msg.inbox_id, msg.source_id, msg.conversation_id,
             cw.provider_config->>'phone_number_id' AS phone_id,
             cw.provider_config->>'api_key'         AS token
-       FROM public.messages m
-       JOIN public.inboxes i           ON i.id = m.inbox_id
+       FROM public.messages msg
+       JOIN public.inboxes i           ON i.id = msg.inbox_id
        JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
-      WHERE m.id > $1
-        AND m.message_type = 0
-        AND m.private = false
-        AND m.source_id LIKE 'wamid.%'
+      WHERE msg.id > $1
+        AND msg.message_type = 0
+        AND msg.private = false
+        AND msg.source_id LIKE 'wamid.%'
         AND i.channel_type = 'Channel::Whatsapp'
         AND cw.provider = 'whatsapp_cloud'
         AND COALESCE(cw.provider_config->>'api_key', '') <> ''
-      ORDER BY m.id
+        AND NOT EXISTS (
+              SELECT 1 FROM public.messages m
+               WHERE m.conversation_id = msg.conversation_id
+                 AND m.id < msg.id
+                 AND ${HUMAN_OUTGOING_SQL}
+            )
+      ORDER BY msg.id
       LIMIT $2`,
     [from, BATCH]
   );
@@ -271,4 +345,7 @@ export async function handlePresenceAction(deps, action, payload = {}, accountId
   throw new Error(`unknown presence action: ${action}`);
 }
 
-export const _internals = { send, jitter, DEFAULTS, TYPING_TTL_MS, lastTyping };
+export const _internals = {
+  send, jitter, DEFAULTS, TYPING_TTL_MS, lastTyping,
+  hasNewerMessage, TYPING_REFRESH_MIN_S, TYPING_REFRESH_MAX_S, TYPING_MAX_WAIT_MS,
+};

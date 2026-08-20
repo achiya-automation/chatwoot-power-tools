@@ -20,7 +20,9 @@
 # delivery-status hook in July while אדמון stayed on a June build, and a later "fix"
 # deployed to אדמון was actually a regression against the main server. Nobody could see it
 # because nothing compared the two. This script refuses to overwrite a file that differs
-# from git unless you say so explicitly.
+# from git unless you say so explicitly — and, since the 5.8.26 downgrade, refuses to touch
+# a file whose server version was deployed from ANOTHER branch: a deploy writes only files
+# that are missing or older-on-this-branch, never siblings it does not own.
 #
 # What gets deployed is what is COMMITTED — the script does not build. Every webapp build
 # stamps fresh timestamped asset names, so building here would ship a dist that exists on
@@ -43,7 +45,8 @@ export COPYFILE_DISABLE=1
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SEQ="$REPO_ROOT/modules/sequences"
-# כל קובצי ה-.rb בתיקייה נפרסים — initializer חדש בריפו מצטרף לפריסה מעצמו.
+# כל קובצי ה-.rb בתיקייה מועמדים לפריסה — initializer חדש בריפו מצטרף מעצמו. נכתבים בפועל
+# רק קבצים שחסרים בשרת או שגרסתם שם ישנה של הברנץ' הזה; גרסה מברנץ' אחר מדולגת (known_in_ref).
 PATCH_DIR="$SEQ/deploy/chatwoot-initializers"
 PATCH_DEST_DIR="/opt/chatwoot/custom-initializers"
 SERVERS=(chatwoot chatwoot_admon)
@@ -51,6 +54,10 @@ SERVERS=(chatwoot chatwoot_admon)
 CHECK_ONLY=0
 FORCE=0
 ONLY_SERVER=""
+# Filled by check_drift per server: newline-separated basenames. deploy_patch writes ONLY
+# DEPLOY_PATCHES; SKIP_PATCHES are other-branch versions it refuses to touch.
+DEPLOY_PATCHES=""
+SKIP_PATCHES=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --check) CHECK_ONLY=1; shift ;;
@@ -100,18 +107,20 @@ require_clean_tree() {
   warn "--force given: deploying an uncommitted tree"
 }
 
-# Is this checksum some commit's version of the file? Distinguishes "the server is simply
-# behind" (fine — that is what deploying is for) from "someone edited it in place" (the
-# thing that actually silently forked the initializer for months). Recent history only:
-# a hand-edit is found immediately or not at all, and scanning further just costs time.
-known_in_history() {
-  local path="$1" checksum="$2" sha
+# Is this checksum some commit's version of the file, under a given ref? known_in_ref HEAD
+# asks "an older state of THIS branch?" — safe to update. known_in_ref --all asks
+# "committed anywhere?". The gap between those answers is the 5.8.26 incident: a file
+# deployed from another branch is known to --all but not to HEAD, and overwriting it from
+# here is a downgrade, not an update. Recent history only: a hand-edit is found
+# immediately or not at all, and scanning further just costs time.
+known_in_ref() {
+  local ref="$1" path="$2" checksum="$3" sha
   while read -r sha; do
     [[ -z "$sha" ]] && continue
     if [[ "$(cd "$REPO_ROOT" && git show "$sha:$path" 2>/dev/null | md5_stdin)" == "$checksum" ]]; then
       return 0
     fi
-  done < <(cd "$REPO_ROOT" && git log --all --format=%H -n 50 -- "$path")
+  done < <(cd "$REPO_ROOT" && git log "$ref" --format=%H -n 50 -- "$path")
   return 1
 }
 md5_stdin() { md5 -q 2>/dev/null || md5sum | awk '{print $1}'; }
@@ -122,54 +131,100 @@ md5_stdin() { md5 -q 2>/dev/null || md5sum | awk '{print $1}'; }
 check_drift() {
   local server="$1" layout="$2" blocking=0 behind=0
   local remote_src; remote_src="$(remote_engine_src "$layout")"
+  local rails_initializer_mounts sidekiq_initializer_mounts
+  rails_initializer_mounts="$(ssh "$server" "docker inspect --format '{{range .Mounts}}{{println .Destination}}{{end}}' chatwoot-rails-1 2>/dev/null" || true)"
+  sidekiq_initializer_mounts="$(ssh "$server" "docker inspect --format '{{range .Mounts}}{{println .Destination}}{{end}}' chatwoot-sidekiq-1 2>/dev/null" || true)"
   local want have patch_ok=1
+  # Rebuilt per server. A file whose server copy already matches git is not listed at
+  # all — deploy_patch leaves it completely untouched (no rewrite, no .bak).
+  DEPLOY_PATCHES=""
+  SKIP_PATCHES=""
   for patch_src in "$PATCH_DIR"/*.rb; do
-    local base rel_patch dest
+    local base rel_patch dest mount_target
     base="$(basename "$patch_src")"
     rel_patch="modules/sequences/deploy/chatwoot-initializers/$base"
     dest="$PATCH_DEST_DIR/$base"
+    mount_target="/app/config/initializers/$base"
     want="$(md5_of "$patch_src")"
     have="$(remote_md5 "$server" "$dest")"
     if [[ -z "$have" ]]; then
       warn "Rails patch $base missing on $server — will be installed"
-      behind=1; patch_ok=0
+      behind=1; patch_ok=0; DEPLOY_PATCHES+="$base"$'\n'
     elif [[ "$want" != "$have" ]]; then
-      if known_in_history "$rel_patch" "$have"; then
-        warn "Rails patch $base on $server is an older committed version — will be updated"
-        behind=1; patch_ok=0
+      if known_in_ref HEAD "$rel_patch" "$have"; then
+        warn "Rails patch $base on $server is an older version of this branch — will be updated"
+        behind=1; patch_ok=0; DEPLOY_PATCHES+="$base"$'\n'
+      elif known_in_ref --all "$rel_patch" "$have"; then
+        # 5.8.26: exactly this case downgraded whatsapp_campaign_conversations.rb in
+        # production — a journey deploy from this branch "updated" the newer
+        # codex/campaign-assignee version backwards. Not ours to overwrite.
+        if [[ $FORCE -eq 1 ]]; then
+          warn "--force: overwriting $base although $server runs another branch's version"
+          behind=1; patch_ok=0; DEPLOY_PATCHES+="$base"$'\n'
+        else
+          warn "Rails patch $base on $server was deployed from ANOTHER branch — skipped (merge it into this branch, or --force)"
+          patch_ok=0; SKIP_PATCHES+="$base"$'\n'
+        fi
       else
         warn "Rails patch $base on $server matches NO commit — edited in place, and this is the only copy"
         warn "  review before overwriting:  ssh $server 'sudo cat $dest' | diff - $patch_src"
         blocking=1; patch_ok=0
       fi
     fi
+    if ! grep -Fqx "$mount_target" <<< "$rails_initializer_mounts"; then
+      warn "Rails patch $base exists on $server but is not mounted into chatwoot-rails-1"
+      warn "  add $dest:$mount_target:ro to the rails volumes before deploying"
+      blocking=1; patch_ok=0
+    fi
+    if ! grep -Fqx "$mount_target" <<< "$sidekiq_initializer_mounts"; then
+      warn "Rails patch $base exists on $server but is not mounted into chatwoot-sidekiq-1"
+      warn "  add $dest:$mount_target:ro to the sidekiq volumes before deploying"
+      blocking=1; patch_ok=0
+    fi
   done
   [[ $patch_ok -eq 1 ]] && ok "Rails patches match git"
 
+  # Engine + webapp ship as one tar — all-or-nothing — so an other-branch version here
+  # blocks the whole server instead of skipping a single file.
   for f in campaigns.js campaignCsv.js; do
     want="$(md5_of "$SEQ/engine/src/$f")"
     have="$(remote_md5 "$server" "$remote_src/$f")"
     [[ "$want" == "$have" ]] && continue
-    if [[ -n "$have" ]] && ! known_in_history "modules/sequences/engine/src/$f" "$have"; then
+    if [[ -z "$have" ]] || known_in_ref HEAD "modules/sequences/engine/src/$f" "$have"; then
+      behind=1
+    elif known_in_ref --all "modules/sequences/engine/src/$f" "$have"; then
+      warn "engine/src/$f on $server was deployed from ANOTHER branch — merge it into this branch first (or --force)"
+      blocking=1
+    else
       warn "engine/src/$f on $server matches no commit — edited in place"
+      blocking=1
+    fi
+  done
+
+  # dist is a build artifact with timestamped asset names, so it rarely matches across
+  # builds — being behind is the normal pre-deploy state. But dist IS committed, so a
+  # server dist matching ANOTHER branch's build means the panel was deployed from
+  # elsewhere; replacing it from here would swap the feature set. Block, like engine.
+  local container; container="$(engine_container "$layout")"
+  want="$(md5_of "$SEQ/webapp/dist/index.html")"
+  have="$(ssh "$server" "docker exec $container md5sum /app/webapp-dist/index.html 2>/dev/null" | awk '{print $1}')"
+  if [[ -n "$have" && "$want" != "$have" ]]; then
+    if ! known_in_ref HEAD "modules/sequences/webapp/dist/index.html" "$have" \
+       && known_in_ref --all "modules/sequences/webapp/dist/index.html" "$have"; then
+      warn "webapp dist on $server was deployed from ANOTHER branch — merge it into this branch first (or --force)"
       blocking=1
     else
       behind=1
     fi
-  done
-
-  # dist is a build artifact with timestamped asset names, so it never matches across
-  # builds. Report it, never block on it — being behind is the normal pre-deploy state.
-  local container; container="$(engine_container "$layout")"
-  want="$(md5_of "$SEQ/webapp/dist/index.html")"
-  have="$(ssh "$server" "docker exec $container md5sum /app/webapp-dist/index.html 2>/dev/null" | awk '{print $1}')"
-  [[ -n "$have" && "$want" != "$have" ]] && behind=1
+  fi
 
   if [[ $blocking -eq 1 ]]; then
     return 2
   elif [[ $behind -eq 1 ]]; then
     echo "  server is behind git — will be updated"
     return 1
+  elif [[ -n "$SKIP_PATCHES" ]]; then
+    return 3
   fi
   ok "engine + webapp match git"
   return 0
@@ -196,18 +251,23 @@ deploy_engine() {
 
 deploy_patch() {
   local server="$1"
-  local base dest
-  for patch_src in "$PATCH_DIR"/*.rb; do
-    base="$(basename "$patch_src")"
+  local base dest patch_src
+  if [[ -z "$DEPLOY_PATCHES" ]]; then
+    ok "Rails initializers already match — nothing written"
+    return 0
+  fi
+  while IFS= read -r base; do
+    [[ -z "$base" ]] && continue
+    patch_src="$PATCH_DIR/$base"
     dest="$PATCH_DEST_DIR/$base"
     scp -q "$patch_src" "$server:/tmp/cwpt-patch.rb"
     # Syntax-check inside the real Rails image before it can break boot.
-    ssh "$server" "docker cp /tmp/cwpt-patch.rb chatwoot-rails-1:/tmp/c.rb >/dev/null && docker exec chatwoot-rails-1 ruby -c /tmp/c.rb >/dev/null" \
+    ssh -n "$server" "docker cp /tmp/cwpt-patch.rb chatwoot-rails-1:/tmp/c.rb >/dev/null && docker exec chatwoot-rails-1 ruby -c /tmp/c.rb >/dev/null" \
       || die "Ruby syntax check failed on $server ($base) — nothing installed"
-    ssh "$server" "sudo cp -n $dest ${dest}.bak-\$(date +%Y%m%d%H%M) 2>/dev/null; \
+    ssh -n "$server" "sudo cp -n $dest ${dest}.bak-\$(date +%Y%m%d%H%M) 2>/dev/null; \
       sudo install -o root -g root -m 644 /tmp/cwpt-patch.rb $dest && rm -f /tmp/cwpt-patch.rb"
-  done
-  ok "Rails initializers installed"
+  done <<< "$DEPLOY_PATCHES"
+  ok "Rails initializers installed: $(printf '%s' "$DEPLOY_PATCHES" | tr '\n' ' ')"
 }
 
 rebuild_engine() {
@@ -245,18 +305,33 @@ wait_healthy() {
 verify() {
   local server="$1" layout="$2"
   local container; container="$(engine_container "$layout")"
-  local want have
+  local want have patch_src base initializer_container
   want="$(md5_of "$SEQ/engine/src/campaigns.js")"
   have="$(ssh "$server" "docker exec $container md5sum /app/src/campaigns.js" 2>/dev/null | awk '{print $1}')"
   [[ "$want" == "$have" ]] || die "$server runs different engine code than git ($have vs $want)"
   ok "running engine matches git"
 
+  for patch_src in "$PATCH_DIR"/*.rb; do
+    base="$(basename "$patch_src")"
+    want="$(md5_of "$patch_src")"
+    for initializer_container in chatwoot-rails-1 chatwoot-sidekiq-1; do
+      have="$(ssh "$server" "docker exec $initializer_container md5sum /app/config/initializers/$base 2>/dev/null" | awk '{print $1}')"
+      [[ "$want" == "$have" ]] || die "$server: $base is not mounted from git in $initializer_container"
+    done
+  done
+  ok "all repository initializers mounted in Rails + Sidekiq"
+
+  # 4.17 enterprise-graft (native-first, 20.8.26): the prepend itself is the proof; the
+  # signature check catches the next upstream reshape before it silently disables us again.
   ssh "$server" "docker exec chatwoot-sidekiq-1 bundle exec rails runner \"
     svc = Whatsapp::OneoffCampaignService
-    raise 'patch not applied' unless svc.instance_method(:send_whatsapp_template_message).parameters.map(&:last) == [:to, :template_params, :error_sink]
-    raise 'status hook missing' unless Whatsapp::IncomingMessageBaseService.ancestors.include?(WhatsappCampaignIncomingStatusPatch)
+    raise 'patch not applied' unless svc.ancestors.include?(WhatsappCampaignGraft417)
+    raise 'signature drift' unless svc.instance_method(:send_whatsapp_template_message).parameters.map(&:last) == [:recipient, :to, :template_params]
+    analytics_controller = Api::V1::Accounts::Campaigns::AnalyticsController
+    raise 'legacy analytics adapter not loaded' unless defined?(LegacyCampaignAnalytics417)
+    raise 'legacy analytics controller patch not active' unless analytics_controller.ancestors.include?(LegacyCampaignAnalyticsController417)
   \"" >/dev/null 2>&1 || die "$server: campaign patch is not active"
-  ok "campaign patch active"
+  ok "campaign patch + legacy analytics adapter active"
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────
@@ -271,6 +346,7 @@ for server in "${SERVERS[@]}"; do
 
   set +e; check_drift "$server" "$layout"; drift_state=$?; set -e
   # 0 = in sync · 1 = behind git (normal, deploy fixes it) · 2 = edited on the server
+  # 3 = only other-branch files differ — nothing this branch may deploy
   if [[ $drift_state -eq 2 ]]; then
     FAILED=1
     if [[ $FORCE -eq 0 ]]; then
@@ -278,6 +354,12 @@ for server in "${SERVERS[@]}"; do
       continue
     fi
     warn "--force given: overwriting a server-only edit"
+  fi
+  if [[ $drift_state -eq 3 ]]; then
+    FAILED=1
+    [[ $CHECK_ONLY -eq 1 ]] && continue
+    warn "skipping $server — only other-branch files differ; merge that branch here first (or --force)"
+    continue
   fi
   if [[ $CHECK_ONLY -eq 1 ]]; then
     [[ $drift_state -eq 1 ]] && FAILED=1

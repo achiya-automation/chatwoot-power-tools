@@ -39,7 +39,9 @@ const Select = React.forwardRef(function Select(
             // select/Select.vue הנייטיבי: outline בלבד על bg-n-surface-1
             'w-full appearance-none bg-n-surface-1 border-none rounded-lg',
             'outline outline-1 -outline-offset-1 outline-n-weak hover:outline-n-slate-6 focus:outline-n-blue-9',
-            'ps-3 pe-9 h-10 text-sm text-n-slate-12',
+            // ⚠️ ריווח פיזי (px-3 pr-10) ולא לוגי: ב-Select.vue הנייטיבי החץ נשאר בצד ימין
+            // גם בעברית, וכל שאר התפריטים של Chatwoot ליד הפאנל נראים כך.
+            'px-3 pr-10 h-10 text-sm text-n-slate-12',
             'transition-all duration-200',
             'disabled:bg-n-slate-2 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer',
             className,
@@ -58,7 +60,7 @@ const Select = React.forwardRef(function Select(
         <ChevronDown
           size={16}
           aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 -translate-y-1/2 end-3 text-n-slate-11"
+          className="pointer-events-none absolute top-1/2 -translate-y-1/2 right-3 text-n-slate-11"
         />
       </div>
     </div>

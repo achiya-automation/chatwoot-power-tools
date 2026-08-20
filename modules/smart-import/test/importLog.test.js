@@ -34,3 +34,26 @@ test('topError is null when nothing failed', () => {
   log.add(1, 'א', 'created', 10, '');
   assert.equal(log.topError(), null);
 });
+
+// ── הזרקת נוסחאות ל-CSV (07.08.2026) ────────────────────────────────────────────
+// שם איש קשר מגיע מהקובץ שהלקוח העלה. ערך שמתחיל ב-‎= + - @ מתפרש כנוסחה כשפותחים
+// את הדוח באקסל/Sheets — גם בקובץ שיורד וגם בצרופה שנשלחת במייל.
+test('ערך שמתחיל בסימן נוסחה מנוטרל בגרש', () => {
+  const log = new ImportLog();
+  log.add({}, '=HYPERLINK("http://evil","x")', 'created', '');
+  log.add({}, '+1234', 'created', '');
+  log.add({}, '-5', 'created', '');
+  log.add({}, '@SUM(A1)', 'created', '');
+  const csv = log.toCsv();
+  assert.ok(csv.includes(`"'=HYPERLINK`), 'נוסחת = מנוטרלת');
+  assert.ok(csv.includes("'+1234"), 'נוסחת + מנוטרלת');
+  assert.ok(csv.includes("'-5"), 'נוסחת - מנוטרלת');
+  assert.ok(csv.includes("'@SUM(A1)"), 'נוסחת @ מנוטרלת');
+});
+
+test('שם רגיל לא משתנה', () => {
+  const log = new ImportLog();
+  log.add({}, 'ישראל ישראלי', 'created', '');
+  assert.ok(log.toCsv().includes('ישראל ישראלי'));
+  assert.ok(!log.toCsv().includes("'ישראל"));
+});

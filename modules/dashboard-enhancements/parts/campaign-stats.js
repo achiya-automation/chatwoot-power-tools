@@ -5,10 +5,11 @@
 //      in the card's own `slot="after"` area, styled with Chatwoot's own Tailwind n-tokens
 //      (text-n-teal-11, border-n-weak, …) so it matches the surrounding UI pixel-for-pixel and is
 //      theme-aware (light/dark) for free.
-//   2. "Full report" per card → drills into that campaign's detail (funnel / recipients / cost),
-//      and a "Statistics" button in the page header → the campaigns overview (KPIs / trend /
-//      comparison). Both fill the content area (like the sequences panel does) via the drip webapp
-//      iframe — not a floating modal.
+//   2. A "Statistics" button in the page header → the cross-campaign overview (KPIs / trend /
+//      comparison / daily tier budget), filling the content area via the drip webapp iframe.
+//      The old per-card "Full report" button was removed in the 4.17 upgrade (native-first):
+//      Chatwoot's own per-campaign analytics now covers the drill-down; cost estimation still
+//      lives in the overview's detail views for those who need it.
 //
 // Card stats come from ONE bulk call to /drip-api {action:'campaigns'} (every WhatsApp campaign
 // with its aggregated counts) — NOT one call per card. Cards carry no campaign id in the DOM, and
@@ -24,12 +25,14 @@
   // ── i18n: Hebrew for RTL (he) users, English for everyone else — same #app[dir]=rtl signal the
   // sibling injectors use (Chatwoot doesn't expose the locale on the DOM otherwise). ──
   function locale() {
-    var a = document.querySelector('#app[dir]');
-    return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
+    // כל אלמנט rtl בדף מספיק. #app[dir] לבדו היה שביר: הוא נולד רק אחרי טעינת החשבון,
+    // ושינוי במבנה של Chatwoot היה מפיל את הזיהוי לאנגלית בלי שאיש ישים לב.
+    if (document.querySelector('#app[dir="rtl"], [dir="rtl"]')) return 'he';
+    return document.documentElement.getAttribute('dir') === 'rtl' ? 'he' : 'en';
   }
   var I18N = {
-    he: { sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו', report: 'דוח מלא', overview: 'סטטיסטיקה', close: 'סגירה', total: 'קמפיינים', left: 'נותרו להיום', leftTitle: 'תקציב שליחה יומי מול תקרת ה-tier של Meta (משוער)', unlimited: 'ללא הגבלה' },
-    en: { sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed', report: 'Full report', overview: 'Statistics', close: 'Close', total: 'Campaigns', left: 'Left today', leftTitle: "Daily send budget vs Meta's tier cap (estimate)", unlimited: 'Unlimited' },
+    he: { sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו', overview: 'סטטיסטיקה', close: 'סגירה', total: 'קמפיינים', left: 'נותרו להיום', leftTitle: 'תקציב שליחה יומי מול תקרת ה-tier של Meta (משוער)', unlimited: 'ללא הגבלה' },
+    en: { sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed', overview: 'Statistics', close: 'Close', total: 'Campaigns', left: 'Left today', leftTitle: "Daily send budget vs Meta's tier cap (estimate)", unlimited: 'Unlimited' },
   };
   function t(k) { return (I18N[locale()] || I18N.en)[k] || I18N.en[k] || k; }
 
@@ -160,10 +163,10 @@
       var sig = c.id + ':' + c.sent + '/' + c.delivered + '/' + c.read + '/' + c.failed + '|' + locale();
       if (bar.__sig === sig) continue;
       bar.__sig = sig;
-      bar.innerHTML = statsHtml(c) +
-        '<button type="button" data-cwpt-report="' + c.id + '" ' +
-        'class="ms-auto inline-flex items-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline outline-transparent p-0 text-sm font-medium underline-offset-2 text-n-slate-11 hover:enabled:text-n-slate-12 hover:enabled:underline focus-visible:text-n-slate-12" ' +
-        'style="cursor:pointer;background:none">' + REPORT_ICON + '<span>' + t('report') + '</span></button>';
+      // ponytail: since Chatwoot 4.17 the card carries a native analytics button (chart icon)
+      // that opens the built-in per-campaign analytics — our "Full report" button was removed
+      // (native-first). The stats row stays: the native card still shows no numbers at rest.
+      bar.innerHTML = statsHtml(c);
     }
   }
 
@@ -290,7 +293,14 @@
     spinner.innerHTML =
       '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
     holder.appendChild(spinner);
-    frame.addEventListener('load', function () { spinner.style.display = 'none'; });
+    frame.addEventListener('load', function () {
+      spinner.style.display = 'none';
+      // הודעת locale שנשלחת בזמן שה-iframe עוד נטען נמסרת לריק (המאזין טרם נרשם) בלי שום
+      // שגיאה — ו-sentLocale כבר ננעל, אז אף טיק לא ישלח שוב. אחרי כל load מאפסים ושולחים
+      // מחדש; סקריפטי ה-module של ה-iframe רצים לפני אירוע load, כך שהמאזין כבר רשום.
+      sentLocale = null;
+      syncFrameLocale();
+    });
     // close control (×) — returns to the native campaigns list. z above the iframe.
     var close = document.createElement('button');
     close.type = 'button';
@@ -312,6 +322,21 @@
     holder.style.width = r.width + 'px';
     holder.style.height = (window.innerHeight - top) + 'px';
   }
+  // ⚠️ ה-iframe נולד עם ?locale=<מה שהיה באותו רגע>, ו-Chatwoot קובע rtl רק אחרי שהחשבון
+  // נטען. גרוע מזה: הוא לא *משנה* את ה-dir אלא מרנדר את #app מאפס עם ה-dir כבר עליו
+  // (v-if="!authUIFlags.isFetching" ב-App.vue), ולכן ה-MutationObserver על attributeFilter
+  // ['dir'] לא נורה לעולם — דוח שנפתח מוקדם נשאר אנגלי לנצח בממשק עברי. כאן מסתנכרנים
+  // מתוך ה-tick התקופתי, ורק כשהשפה באמת השתנתה מזו שנשלחה קודם.
+  var sentLocale = null;
+  function syncFrameLocale() {
+    var loc = locale();
+    if (!shown || !frame || !frame.contentWindow || loc === sentLocale) return;
+    try {
+      frame.contentWindow.postMessage({ type: 'drip-locale', locale: loc }, window.location.origin);
+      sentLocale = loc;
+    } catch (e) { /* ה-iframe עדיין לא מוכן — הטיק הבא ינסה שוב */ }
+  }
+
   function reportSrc(cid) {
     // cid → deep-link straight to that campaign's detail, solo=1 so its Back button closes the
     // overlay (drip-close); no cid → the campaigns overview list.
@@ -376,6 +401,7 @@
   function hideReport() {
     if (!shown) return;
     shown = false;
+    sentLocale = null;   // ה-iframe ייטען מחדש בפתיחה הבאה — שולחים לו את השפה שוב
     if (holder) holder.style.display = 'none';
     if (crepFromUrl()) {
       try {
@@ -413,13 +439,6 @@
   document.addEventListener('mouseup', endResizeDrag, true);
   window.addEventListener('blur', endResizeDrag);
 
-  // open report on click (event delegation — immune to Vue re-renders)
-  document.addEventListener('click', function (e) {
-    if (!e.target.closest) return;
-    var btn = e.target.closest('[data-cwpt-report]');
-    if (btn) { e.preventDefault(); e.stopPropagation(); showReport(btn.getAttribute('data-cwpt-report')); }
-  }, true);
-
   // close when a solo detail view's Back button posts drip-close;
   // navigate into a Chatwoot conversation when the report asks (recipient/reply click)
   window.addEventListener('message', function (e) {
@@ -456,9 +475,7 @@
   // קובע rtl רק אחרי טעינת החשבון, אז תוויות שנוצרו לפני כן חייבות להתעדכן.
   new MutationObserver(function () {
     tick();
-    if (shown && frame && frame.contentWindow) {
-      try { frame.contentWindow.postMessage({ type: 'drip-locale', locale: locale() }, window.location.origin); } catch (e) {}
-    }
+    syncFrameLocale();
   }).observe(document.documentElement, { attributes: true, attributeFilter: ['dir'], subtree: true });
 
   // bootstrap: fetch on entering the page (or account change), render cards + header button as Vue
@@ -473,6 +490,7 @@
       renderCards();
       renderHeader();
       renderKpiBar();
+      syncFrameLocale();
       // restore the report from ?crep= after a refresh (once — afterwards popstate owns it)
       if (!crepRestored) {
         crepRestored = true;

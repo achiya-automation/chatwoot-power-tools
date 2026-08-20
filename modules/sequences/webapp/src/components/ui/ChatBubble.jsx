@@ -1,9 +1,12 @@
 import { Check, CheckCheck, Clock, AlertCircle, Image, Video, FileText } from 'lucide-react';
+import HeaderMedia from './HeaderMedia.jsx';
 import useT from '../../useT.js';
 
 /*
- * ChatBubble — בועת הודעת WhatsApp יוצאת, תואמת 1:1 למראה של Chatwoot.
- * מציגה את ההודעה *המלאה* כפי שהלקוח יקבל אותה: כותרת-מדיה, כותרת טקסט,
+ * ChatBubble — בועת הודעת WhatsApp יוצאת. ⚠️ הבועה הירוקה היא *מוקאפ מכוון של וואטסאפ*
+ * ולא העתק של כרטיס התצוגה הנייטרלי של Chatwoot: המטרה כאן היא שהנציג יראה את ההודעה
+ * כפי שהלקוח יקבל אותה בטלפון (זו ההחלטה של בעל המערכת), ולכן דווקא כאן לא מיישרים למקור.
+ * מציגה את ההודעה *המלאה*: כותרת-מדיה, כותרת טקסט,
  * גוף (עם שבירת שורות אמיתית), footer וכפתורים — ולמטה meta של זמן + טיקים.
  *
  * שימוש כפול:
@@ -13,7 +16,7 @@ import useT from '../../useT.js';
  * props:
  *   text      — גוף ההודעה (כבר מורכב, עם השם של הלקוח)
  *   template  — אובייקט התבנית (header_format/header_text/footer_text/buttons)
- *   mediaUrl  — קישור מדיה לכותרת (IMAGE מוצג כתמונה)
+ *   mediaUrl  — קישור מדיה לכותרת (מוצג כתמונה/וידאו אמיתיים דרך HeaderMedia)
  *   meta      — { time, status } — status: delivered|failed|pending|scheduled
  */
 
@@ -74,21 +77,19 @@ export default function ChatBubble({ text = '', template = null, mediaUrl = '', 
     <div
       className={`relative w-fit max-w-[min(20rem,100%)] rounded-2xl rounded-ss-md border border-n-teal-5/50 bg-n-teal-3 px-3.5 py-2.5 text-n-slate-12 shadow-sm ${className}`}
     >
-      {/* כותרת מדיה — תמונה אמיתית אם יש URL, אחרת חיווי סוג המדיה */}
+      {/* כותרת מדיה — המדיה עצמה כפי שהלקוח יראה אותה; רק אם אין קישור (או שהטעינה
+          נכשלה) יורדים לחיווי סוג המדיה */}
       {fmt ? (
-        fmt === 'IMAGE' && mediaUrl ? (
-          <img
-            src={mediaUrl}
-            alt=""
-            className="mb-2 max-h-44 w-full rounded-lg object-cover"
-            onError={(e) => { e.currentTarget.style.display = 'none'; }}
-          />
-        ) : (
-          <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-n-alpha-2 px-2.5 py-3 text-xs text-n-slate-11">
-            {MEDIA_ICON[fmt] ? (() => { const MediaIcon = MEDIA_ICON[fmt]; return <MediaIcon size={14} aria-hidden="true" className="shrink-0" />; })() : null}
-            {t(MEDIA_HDR[fmt])} {t('inHeader')}{mediaUrl ? '' : ` ${t('linkWillBeSet')}`}
-          </div>
-        )
+        <HeaderMedia
+          format={fmt}
+          sources={[mediaUrl]}
+          fallback={
+            <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-n-alpha-2 px-2.5 py-3 text-xs text-n-slate-11">
+              {MEDIA_ICON[fmt] ? (() => { const MediaIcon = MEDIA_ICON[fmt]; return <MediaIcon size={14} aria-hidden="true" className="shrink-0" />; })() : null}
+              {t(MEDIA_HDR[fmt])} {t('inHeader')}{mediaUrl ? '' : ` ${t('linkWillBeSet')}`}
+            </div>
+          }
+        />
       ) : null}
 
       {template?.header_text ? (

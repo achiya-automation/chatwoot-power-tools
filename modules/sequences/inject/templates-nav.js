@@ -1,13 +1,14 @@
 // templates-nav — injected as part of DASHBOARD_SCRIPTS (see sequences-nav.js for the full
-// mechanism). Adds a single top-level "WhatsApp Templates" sidebar item, right after the
-// "WhatsApp Sequences" group (#drip-nav-item), visible ONLY to administrators of the current
-// account and to users an administrator granted access to (see mayUseTemplates below —
-// same two doors the engine enforces). Clicking it opens the same inline panel
-// sequences-nav.js already builds, on
-// tab=templates (window.__dripShowPanel, exported by sequences-nav.js). This file is its own
-// <script> block (own IIFE scope) — it shares window/document with sequences-nav.js but not
-// its local variables, so small helpers (dripLocale, accountId) are duplicated on purpose,
-// same as campaign-modal.js already does.
+// mechanism). Native-first since the 4.17 upgrade (20.8.26, Achiya's standing rule):
+//   * Administrators use Chatwoot's native Templates screen (settings/templates), where
+//     creation/editing/deletion is now a real components-next panel COMPILED INTO the
+//     dashboard bundle (settings/templates/studio/, built from chatwoot-campaign-assignee-core)
+//     — this script no longer injects anything into that screen (it only removes the button
+//     an older DASHBOARD_SCRIPTS may have left there).
+//   * Non-admin users an administrator granted access to (drip.template_access) cannot reach
+//     the admin-only native screen at all, so ONLY they still get the sidebar item.
+// Own <script> block (own IIFE scope) — shares window/document with sequences-nav.js but not
+// its local variables, so small helpers (dripLocale, accountId) are duplicated on purpose.
 (function () {
   if (window.__tplNav) return;
   window.__tplNav = true;
@@ -97,18 +98,33 @@
       .then(function (j) { return !!(j && j.data && j.data.allowed); });
   }
 
-  function mayUseTemplates(accId, cb) {
+  // resolves { admin, granted } — admin comes from the Chatwoot profile, granted from the
+  // engine (drip.template_access). Admins skip the engine round-trip entirely.
+  function templateAccess(accId, cb) {
     if (Object.prototype.hasOwnProperty.call(ACCESS_CACHE, accId)) { cb(ACCESS_CACHE[accId]); return; }
     if (ACCESS_PENDING[accId]) return; // already in flight — the tick that started it will cache the result
     ACCESS_PENDING[accId] = true;
     profileIsAdmin(accId)
-      .then(function (admin) { return admin || grantedByAdmin(accId); })
-      .catch(function () { return false; })
-      .then(function (ok) {
-        ACCESS_CACHE[accId] = !!ok;
+      .then(function (admin) {
+        if (admin) return { admin: true, granted: true };
+        return grantedByAdmin(accId).then(function (g) { return { admin: false, granted: !!g }; });
+      })
+      .catch(function () { return { admin: false, granted: false }; })
+      .then(function (acc) {
+        ACCESS_CACHE[accId] = acc;
         ACCESS_PENDING[accId] = false;
-        cb(!!ok);
+        cb(acc);
       });
+  }
+
+  // Native-first, round 2 (20.8.26): creation/editing now lives INSIDE the dashboard bundle
+  // (settings/templates/studio/TemplateStudioPanel.vue, built from chatwoot-campaign-assignee-core)
+  // — a real components-next panel, not an iframe. The button this function used to clone in
+  // became a duplicate the moment that build shipped, so all that remains is cleanup of any
+  // button an older DASHBOARD_SCRIPTS left behind. Granted non-admins keep the sidebar item.
+  function renderNativeButton() {
+    var existing = document.getElementById('cwpt-tpl-new');
+    if (existing) existing.remove();
   }
 
   function removeItem() {
@@ -247,10 +263,13 @@
   function tick() {
     var accId = accountId();
     if (!accId) return;
-    mayUseTemplates(accId, function (ok) {
+    templateAccess(accId, function (access) {
       if (accountId() !== accId) return; // account switched again while the fetch was in flight
-      if (ok) { inject(); relabel(); markActive(); }
+      // Native-first: admins use Chatwoot's own Templates screen and compiled editor; the
+      // sidebar item survives only for granted non-admins, who cannot open that screen.
+      if (access.granted && !access.admin) { inject(); relabel(); markActive(); }
       else removeItem();
+      renderNativeButton(access);
     });
   }
 
