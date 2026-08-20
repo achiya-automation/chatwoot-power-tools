@@ -1,13 +1,14 @@
 // templates-nav — injected as part of DASHBOARD_SCRIPTS (see sequences-nav.js for the full
-// mechanism). Adds a single top-level "WhatsApp Templates" sidebar item, right after the
-// "WhatsApp Sequences" group (#drip-nav-item), visible ONLY to administrators of the current
-// account and to users an administrator granted access to (see mayUseTemplates below —
-// same two doors the engine enforces). Clicking it opens the same inline panel
-// sequences-nav.js already builds, on
-// tab=templates (window.__dripShowPanel, exported by sequences-nav.js). This file is its own
-// <script> block (own IIFE scope) — it shares window/document with sequences-nav.js but not
-// its local variables, so small helpers (dripLocale, accountId) are duplicated on purpose,
-// same as campaign-modal.js already does.
+// mechanism). Native-first since the 4.17 upgrade (20.8.26, Achiya's standing rule):
+//   * Administrators no longer get our separate "WhatsApp Templates" sidebar item — Chatwoot
+//     4.17 ships a native read-only Templates screen (settings/templates). Instead, a
+//     "New template" button is planted INSIDE that native screen (cloned from the native
+//     "Sync templates" button for pixel parity), opening our Template Studio panel — the
+//     creation/editing/submission capability Chatwoot still doesn't have.
+//   * Non-admin users an administrator granted access to (drip.template_access) cannot reach
+//     the admin-only native screen at all, so ONLY they still get the sidebar item.
+// Own <script> block (own IIFE scope) — shares window/document with sequences-nav.js but not
+// its local variables, so small helpers (dripLocale, accountId) are duplicated on purpose.
 (function () {
   if (window.__tplNav) return;
   window.__tplNav = true;
@@ -17,9 +18,10 @@
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
   }
   var I18N = {
-    he: { label: 'תבניות WhatsApp' },
-    en: { label: 'WhatsApp Templates' },
+    he: { label: 'תבניות WhatsApp', newTpl: 'תבנית חדשה' },
+    en: { label: 'WhatsApp Templates', newTpl: 'New template' },
   };
+  function newTplLabel() { return (I18N[dripLocale()] || I18N.en).newTpl; }
   function tplLabel() { return (I18N[dripLocale()] || I18N.en).label; }
 
   // This item is TOP-LEVEL (sibling of the #drip-nav-item group), so it must look like a
@@ -97,18 +99,64 @@
       .then(function (j) { return !!(j && j.data && j.data.allowed); });
   }
 
-  function mayUseTemplates(accId, cb) {
+  // resolves { admin, granted } — admin comes from the Chatwoot profile, granted from the
+  // engine (drip.template_access). Admins skip the engine round-trip entirely.
+  function templateAccess(accId, cb) {
     if (Object.prototype.hasOwnProperty.call(ACCESS_CACHE, accId)) { cb(ACCESS_CACHE[accId]); return; }
     if (ACCESS_PENDING[accId]) return; // already in flight — the tick that started it will cache the result
     ACCESS_PENDING[accId] = true;
     profileIsAdmin(accId)
-      .then(function (admin) { return admin || grantedByAdmin(accId); })
-      .catch(function () { return false; })
-      .then(function (ok) {
-        ACCESS_CACHE[accId] = !!ok;
+      .then(function (admin) {
+        if (admin) return { admin: true, granted: true };
+        return grantedByAdmin(accId).then(function (g) { return { admin: false, granted: !!g }; });
+      })
+      .catch(function () { return { admin: false, granted: false }; })
+      .then(function (acc) {
+        ACCESS_CACHE[accId] = acc;
         ACCESS_PENDING[accId] = false;
-        cb(!!ok);
+        cb(acc);
       });
+  }
+
+  function onNativeTemplatesPage() {
+    return /\/accounts\/\d+\/settings\/templates\b/.test(location.pathname);
+  }
+
+  // Plant a "New template" button inside the native settings/templates header, right before
+  // the native "Sync templates" button — CLONED from it, so styling tracks Chatwoot's own
+  // Button.vue classes forever (native parity with zero hardcoded class strings). Idempotent.
+  function renderNativeButton(access) {
+    var existing = document.getElementById('cwpt-tpl-new');
+    if (!onNativeTemplatesPage() || !access.granted) { if (existing) existing.remove(); return; }
+    // the sync button is the only i-lucide-refresh-cw button on this screen
+    var syncIcon = document.querySelector('span[class*="i-lucide-refresh-cw"]');
+    var syncBtn = syncIcon && syncIcon.closest('button');
+    if (!syncBtn || !syncBtn.parentElement) return;
+    var want = newTplLabel();
+    if (existing) {
+      var lb = existing.querySelector('.cwpt-tpl-new-label');
+      if (lb && lb.textContent !== want) lb.textContent = want;
+      return;
+    }
+    var btn = syncBtn.cloneNode(true);
+    btn.id = 'cwpt-tpl-new';
+    btn.disabled = false;
+    btn.removeAttribute('disabled');
+    var icon = btn.querySelector('span[class*="i-lucide-refresh-cw"]');
+    if (icon) icon.className = icon.className.replace('i-lucide-refresh-cw', 'i-lucide-plus');
+    // the cloned label span is the first non-icon child; normalize to a single labeled span
+    var labelSpan = null;
+    for (var i = 0; i < btn.children.length; i++) {
+      if (btn.children[i] !== icon && btn.children[i].tagName === 'SPAN') { labelSpan = btn.children[i]; break; }
+    }
+    if (!labelSpan) { labelSpan = document.createElement('span'); btn.appendChild(labelSpan); }
+    labelSpan.className = (labelSpan.className || '') + ' cwpt-tpl-new-label';
+    labelSpan.textContent = want;
+    btn.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (window.__dripShowPanel) window.__dripShowPanel('templates');
+    });
+    syncBtn.parentElement.insertBefore(btn, syncBtn);
   }
 
   function removeItem() {
@@ -247,10 +295,13 @@
   function tick() {
     var accId = accountId();
     if (!accId) return;
-    mayUseTemplates(accId, function (ok) {
+    templateAccess(accId, function (access) {
       if (accountId() !== accId) return; // account switched again while the fetch was in flight
-      if (ok) { inject(); relabel(); markActive(); }
+      // native-first: admins use Chatwoot's own Templates screen (plus our button inside it);
+      // the sidebar item survives only for granted non-admins, who can't open that screen.
+      if (access.granted && !access.admin) { inject(); relabel(); markActive(); }
       else removeItem();
+      renderNativeButton(access);
     });
   }
 
