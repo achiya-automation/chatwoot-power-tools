@@ -109,7 +109,7 @@ class WahaContactSync
       group_id = [chat_id, jid].compact.find { |value| value.end_with?('@g.us') }
       desired_name = group_map ? group_map[group_id] : load_one_group_name(session, key, group_id)
       stats[:missing_source_name] += 1 if desired_name.nil?
-      if desired_name.nil? && technical_name?(contact.name)
+      if desired_name.nil? && technical_group_name?(contact.name)
         desired_name = unavailable_name('קבוצת WhatsApp', group_id)
         stats[:fallback_names] += 1
       end
@@ -302,6 +302,10 @@ class WahaContactSync
 
   def technical_name?(name)
     name.to_s.strip.match?(TECHNICAL_NAME)
+  end
+
+  def technical_group_name?(name)
+    name.to_s.include?('@g.us')
   end
 
   def unavailable_name(label, technical_id)
