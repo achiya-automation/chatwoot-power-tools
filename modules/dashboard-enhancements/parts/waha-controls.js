@@ -2,7 +2,7 @@
 //
 // WAHA exposes operational commands by listening to outgoing messages in a special Chatwoot
 // conversation. The command protocol stays untouched; this enhancement presents the common
-// commands as an inline bot-style message and keeps the composer for advanced/manual commands.
+// commands as the bot's latest quick-reply message and keeps the composer for free-form chat.
 (function () {
   if (window.__cwptWahaControls) return;
   window.__cwptWahaControls = true;
@@ -322,6 +322,15 @@
     return document.querySelector('ul.conversation-panel') || document.querySelector('.conversation-panel');
   }
 
+  function keepChoicesAfterLatestMessage(list, panel) {
+    if (!list || !panel || panel.parentElement !== list || list.lastElementChild === panel) return;
+    var shouldFollowBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 160;
+    list.appendChild(panel);
+    if (shouldFollowBottom) {
+      setTimeout(function () { list.scrollTop = list.scrollHeight; }, 0);
+    }
+  }
+
   async function isControlConversation(info) {
     var now = Date.now();
     if (detectionCache.key === info.key && now - detectionCache.checkedAt < 15000) {
@@ -353,9 +362,12 @@
     }
     if (activeRouteKey && activeRouteKey !== info.key && existing) existing.remove();
     activeRouteKey = info.key;
-    if (document.getElementById(PANEL_ID)) return;
     var list = messageList();
     if (!list) return;
+    if (existing) {
+      keepChoicesAfterLatestMessage(list, existing);
+      return;
+    }
     var matches = await isControlConversation(info);
     var currentRoute = routeInfo();
     if (generation !== requestGeneration || !matches || !currentRoute || currentRoute.key !== info.key) return;
