@@ -39,10 +39,13 @@ _cwpt_module_parts() {
         "modules/sequences/inject/journey-launch.js"
       ;;
     enhancements)
+      # video-compressor removed 20.8.26 — it was hard-disabled in code (vue-upload-component
+      # ignores synthetic file injection) yet still shipped to every page load. native-i18n-he
+      # added with the 4.17 upgrade: Hebrew overlay for the new native screens on stock builds.
       printf '%s\n' \
         "modules/dashboard-enhancements/parts/campaign-modal.js" \
         "modules/dashboard-enhancements/parts/campaign-stats.js" \
-        "modules/dashboard-enhancements/parts/video-compressor.js"
+        "modules/dashboard-enhancements/parts/native-i18n-he.js"
       ;;
     *)
       return 1

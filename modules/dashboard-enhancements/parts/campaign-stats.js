@@ -5,10 +5,11 @@
 //      in the card's own `slot="after"` area, styled with Chatwoot's own Tailwind n-tokens
 //      (text-n-teal-11, border-n-weak, …) so it matches the surrounding UI pixel-for-pixel and is
 //      theme-aware (light/dark) for free.
-//   2. "Full report" per card → drills into that campaign's detail (funnel / recipients / cost),
-//      and a "Statistics" button in the page header → the campaigns overview (KPIs / trend /
-//      comparison). Both fill the content area (like the sequences panel does) via the drip webapp
-//      iframe — not a floating modal.
+//   2. A "Statistics" button in the page header → the cross-campaign overview (KPIs / trend /
+//      comparison / daily tier budget), filling the content area via the drip webapp iframe.
+//      The old per-card "Full report" button was removed in the 4.17 upgrade (native-first):
+//      Chatwoot's own per-campaign analytics now covers the drill-down; cost estimation still
+//      lives in the overview's detail views for those who need it.
 //
 // Card stats come from ONE bulk call to /drip-api {action:'campaigns'} (every WhatsApp campaign
 // with its aggregated counts) — NOT one call per card. Cards carry no campaign id in the DOM, and
@@ -30,8 +31,8 @@
     return document.documentElement.getAttribute('dir') === 'rtl' ? 'he' : 'en';
   }
   var I18N = {
-    he: { sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו', report: 'דוח מלא', overview: 'סטטיסטיקה', close: 'סגירה', total: 'קמפיינים', left: 'נותרו להיום', leftTitle: 'תקציב שליחה יומי מול תקרת ה-tier של Meta (משוער)', unlimited: 'ללא הגבלה' },
-    en: { sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed', report: 'Full report', overview: 'Statistics', close: 'Close', total: 'Campaigns', left: 'Left today', leftTitle: "Daily send budget vs Meta's tier cap (estimate)", unlimited: 'Unlimited' },
+    he: { sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו', overview: 'סטטיסטיקה', close: 'סגירה', total: 'קמפיינים', left: 'נותרו להיום', leftTitle: 'תקציב שליחה יומי מול תקרת ה-tier של Meta (משוער)', unlimited: 'ללא הגבלה' },
+    en: { sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed', overview: 'Statistics', close: 'Close', total: 'Campaigns', left: 'Left today', leftTitle: "Daily send budget vs Meta's tier cap (estimate)", unlimited: 'Unlimited' },
   };
   function t(k) { return (I18N[locale()] || I18N.en)[k] || I18N.en[k] || k; }
 
@@ -162,10 +163,10 @@
       var sig = c.id + ':' + c.sent + '/' + c.delivered + '/' + c.read + '/' + c.failed + '|' + locale();
       if (bar.__sig === sig) continue;
       bar.__sig = sig;
-      bar.innerHTML = statsHtml(c) +
-        '<button type="button" data-cwpt-report="' + c.id + '" ' +
-        'class="ms-auto inline-flex items-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline outline-transparent p-0 text-sm font-medium underline-offset-2 text-n-slate-11 hover:enabled:text-n-slate-12 hover:enabled:underline focus-visible:text-n-slate-12" ' +
-        'style="cursor:pointer;background:none">' + REPORT_ICON + '<span>' + t('report') + '</span></button>';
+      // ponytail: since Chatwoot 4.17 the card carries a native analytics button (chart icon)
+      // that opens the built-in per-campaign analytics — our "Full report" button was removed
+      // (native-first). The stats row stays: the native card still shows no numbers at rest.
+      bar.innerHTML = statsHtml(c);
     }
   }
 
@@ -437,13 +438,6 @@
   }, true);
   document.addEventListener('mouseup', endResizeDrag, true);
   window.addEventListener('blur', endResizeDrag);
-
-  // open report on click (event delegation — immune to Vue re-renders)
-  document.addEventListener('click', function (e) {
-    if (!e.target.closest) return;
-    var btn = e.target.closest('[data-cwpt-report]');
-    if (btn) { e.preventDefault(); e.stopPropagation(); showReport(btn.getAttribute('data-cwpt-report')); }
-  }, true);
 
   // close when a solo detail view's Back button posts drip-close;
   // navigate into a Chatwoot conversation when the report asks (recipient/reply click)
