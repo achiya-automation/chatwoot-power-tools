@@ -26,6 +26,7 @@ end
 module Rails
   class DisabledPrepareHook
     def to_prepare; end
+    def after_initialize; end
   end
 
   class FakeApplication
@@ -47,7 +48,7 @@ module Rails
   end
 end
 
-load File.expand_path('../legacy_campaign_analytics.rb', __dir__)
+load File.expand_path('../whatsapp_campaign_conversations.rb', __dir__)
 
 class LegacyCampaignAnalyticsHarness < LegacyCampaignAnalytics417
   def initialize(rows)
