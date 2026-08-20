@@ -5,17 +5,50 @@
  * (no top-level message_type/content_type — the brief had those but n8n omits them)
  */
 import { readFile } from 'node:fs/promises';
+import { isHumanOutgoing } from './reads.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
-export function makeClient({ baseUrl, token, accountId, reads, query }) {
+// templatesInboxId — קרא את התבניות מהמספר הזה במקום מהמספר "הנבחר" של החשבון.
+// ⚠️ קריטי לשליחות שאינן של מנוע הרצפים (קמפיין / שליחה מחדש): תבניות שייכות ל-WABA,
+// ולחשבון עם כמה מספרים ובלי מספר נבחר `loadTemplates` מחזיר רשימה ריקה. אז sendTemplate
+// לא מוצא את התבנית, ואז — בשקט — ה-content יוצא ריק ("אין תוכן להצגה" בשיחה) והכותרת
+// לא מזוהה כמדיה, כך שהתמונה לא נשלחת כלל ומטא דוחה את הכול ב-132012
+// ("Parameter format does not match format in the created template"). 451 הודעות מתו כך
+// ב-11.8.26, כולן עם אותה שגיאה, בלי רמז אחד לסיבה.
+export function makeClient({ baseUrl, token, accountId, reads, query, templatesInboxId = null }) {
   const base = `${baseUrl}/api/v1/accounts/${accountId}`;
   const h = { 'Content-Type': 'application/json', api_access_token: token };
+  const REQUEST_TIMEOUT_MS = 15_000;
+
+  // fetch עם תקציב זמן, למסלולים שלא עוברים דרך req() (העלאות multipart, MM Lite).
+  // בלי זה קריאה שנתקעת לא חוזרת לעולם, והטיק כולו נעצר איתה.
+  // ⚠️ העלאת מדיה איטית מטבעה — תקציב נפרד וארוך יותר, אחרת סרטון תקין ייקטע.
+  const UPLOAD_TIMEOUT_MS = 60_000;
+  const timedFetch = async (url, opts = {}, timeoutMs = REQUEST_TIMEOUT_MS) => {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...opts, signal: opts.signal || ac.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
   const req = async (path, opts = {}) => {
-    const r = await fetch(`${base}${path}`, { headers: h, ...opts });
-    if (!r.ok) throw new Error(`Chatwoot ${opts.method || 'GET'} ${path} → ${r.status}`);
-    return r.json();
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const r = await fetch(`${base}${path}`, {
+        headers: h,
+        ...opts,
+        signal: opts.signal || ac.signal,
+      });
+      if (!r.ok) throw new Error(`Chatwoot ${opts.method || 'GET'} ${path} → ${r.status}`);
+      return r.json();
+    } finally {
+      clearTimeout(timer);
+    }
   };
 
   // Raw WhatsApp templates, cached for this client's lifetime. When DB reads are injected
@@ -25,7 +58,7 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
   const loadRawTemplates = async () => {
     if (_rawTemplates) return _rawTemplates;
     if (reads?.loadTemplates) {
-      _rawTemplates = await reads.loadTemplates(accountId);
+      _rawTemplates = await reads.loadTemplates(accountId, templatesInboxId);
     } else {
       const inboxes = await req(`/inboxes`);
       _rawTemplates = (inboxes.payload || []).flatMap((i) => i.message_templates || []);
@@ -100,6 +133,45 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
         }),
       });
       return { id: m.display_id ?? m.id };
+    },
+
+    /** External journey intake: create a contact and its WhatsApp contact_inbox in one
+     *  Chatwoot transaction. The narrowly-scoped Rails initializer permits this endpoint
+     *  only for the automatically provisioned Drip AgentBot. */
+    createContact: async ({ name, email, phone, inboxId, sourceId, customAttributes = {} }) => {
+      const body = {
+        name: name || phone,
+        phone_number: phone,
+        inbox_id: inboxId,
+        source_id: String(sourceId),
+        custom_attributes: customAttributes,
+      };
+      if (email) body.email = email;
+      const response = await req(`/contacts`, { method: 'POST', body: JSON.stringify(body) });
+      const contact = response?.payload?.contact || response?.contact || response;
+      if (!contact?.id) throw new Error('Chatwoot contact create response is missing id');
+      return { id: contact.id };
+    },
+
+    /** External journey intake: merge lead identifiers without erasing unrelated contact
+     *  attributes already maintained by agents or other integrations. */
+    updateContact: async (contactId, { name, email, phone, customAttributes = {} }) => {
+      let current;
+      if (reads?.getContactAttrs) {
+        current = await reads.getContactAttrs(contactId, accountId);
+      } else {
+        const response = await req(`/contacts/${contactId}`);
+        const contact = response?.payload?.contact || response?.payload || response?.contact || response;
+        current = contact?.custom_attributes || {};
+      }
+      const body = {
+        phone_number: phone,
+        custom_attributes: { ...current, ...customAttributes },
+      };
+      if (name) body.name = name;
+      if (email) body.email = email;
+      await req(`/contacts/${contactId}`, { method: 'PUT', body: JSON.stringify(body) });
+      return { id: contactId };
     },
 
     /**
@@ -225,14 +297,46 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       fd.append('content', content);
       fd.append('attachments[]', new Blob([buf]), file);
       // No Content-Type header on purpose — fetch must set the multipart boundary itself.
-      const r = await fetch(`${base}/conversations/${cid}/messages`, {
+      const r = await timedFetch(`${base}/conversations/${cid}/messages`, {
         method: 'POST',
         headers: { api_access_token: token },
         body: fd,
-      });
+      }, UPLOAD_TIMEOUT_MS);
       if (!r.ok) throw new Error(`Chatwoot POST freeform /conversations/${cid}/messages → ${r.status}`);
       const m = await r.json();
       return { id: m.id, content };
+    },
+
+    /** journeys: Private Reply — הודעה פרטית למי שהגיב על פוסט בפייסבוק/אינסטגרם.
+     *  לא עובר דרך ה-API של Chatwoot אלא דרך תוסף social_comments, כי שם שמור
+     *  ה-Page Token ושם נאכפות שתי המגבלות של Meta: הודעה אחת לכל תגובה, וחלון 7 ימים.
+     *  מחזיר { ok, error } — הקורא מחליט אם להמשיך בפלואו. */
+    sendPrivateReply: async (cid, { accountId, text }) => {
+      const base = (process.env.CHATWOOT_BASE_URL || '').replace(/\/+$/, '');
+      if (!base) return { ok: false, error: 'CHATWOOT_BASE_URL not set' };
+      // ⚠️ הנקודה הזו מפעילה שליחה החוצה ולכן אינה פתוחה: התוסף בצד Chatwoot דורש את
+      // הסוד המשותף ונכשל סגור בלעדיו. אם הוא חסר כאן, נכשלים מקומית עם סיבה ברורה
+      // במקום לירות בקשה שממילא תיענה ב-401 ותיראה בלוג כמו תקלת רשת.
+      const internalToken = process.env.SOCIAL_COMMENTS_TOKEN || '';
+      if (!internalToken) return { ok: false, error: 'SOCIAL_COMMENTS_TOKEN not set' };
+
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 8000);
+      try {
+        const r = await fetch(`${base}/social-comments/private-reply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Internal-Token': internalToken },
+          body: JSON.stringify({ conversation: { display_id: cid }, account_id: accountId, text }),
+          signal: ac.signal,
+          redirect: 'error',
+        });
+        const body = await r.json().catch(() => ({}));
+        return r.ok ? { ok: true, mid: body.mid } : { ok: false, error: body.error || `HTTP ${r.status}` };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      } finally {
+        clearTimeout(timer);
+      }
     },
 
     /** journeys: plain text message (already-rendered content, no template involved). */
@@ -240,6 +344,15 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       const m = await req(`/conversations/${cid}/messages`, {
         method: 'POST',
         body: JSON.stringify({ content }),
+      });
+      return { id: m.id, content };
+    },
+
+    /** הערה פנימית לנציגים — לא נשלחת ללקוח. */
+    sendPrivateNote: async (cid, content) => {
+      const m = await req(`/conversations/${cid}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content, private: true, message_type: 'outgoing' }),
       });
       return { id: m.id, content };
     },
@@ -278,11 +391,11 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       const fd = new FormData();
       if (content) fd.append('content', content);
       fd.append('attachments[]', new Blob([buf]), file);
-      const r = await fetch(`${base}/conversations/${cid}/messages`, {
+      const r = await timedFetch(`${base}/conversations/${cid}/messages`, {
         method: 'POST',
         headers: { api_access_token: token },
         body: fd,
-      });
+      }, UPLOAD_TIMEOUT_MS);
       if (!r.ok) throw new Error(`Chatwoot POST media /conversations/${cid}/messages → ${r.status}`);
       const m = await r.json();
       return { id: m.id, content };
@@ -397,7 +510,7 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
         });
       }
 
-      const r = await fetch(`${GRAPH}/${creds.phoneId}/marketing_messages`, {
+      const r = await timedFetch(`${GRAPH}/${creds.phoneId}/marketing_messages`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${creds.token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -458,14 +571,15 @@ export function makeClient({ baseUrl, token, accountId, reads, query }) {
       );
     },
 
-    /** Returns true if a human agent (outgoing, sender 'User' — not our AgentBot) messaged
-     *  after sinceISO. Signals a human took over, so the sequence should stand down. */
+    /** Returns true if a human messaged after sinceISO — a Chatwoot agent, or the business
+     *  phone itself under coexistence (see isHumanOutgoing). Not our AgentBot. Signals a
+     *  human took over, so the sequence should stand down. */
     outgoingByHumanSince: async (cid, sinceISO) => {
       if (reads?.outgoingByHumanSince) return reads.outgoingByHumanSince(cid, sinceISO, accountId);
       const r = await req(`/conversations/${cid}/messages`);
       const since = new Date(sinceISO);
       return (r.payload || []).some(
-        (m) => m.message_type === 1 && m.sender_type === 'User' && new Date(m.created_at * 1000) > since
+        (m) => isHumanOutgoing(m) && new Date(m.created_at * 1000) > since
       );
     },
 

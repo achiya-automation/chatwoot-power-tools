@@ -1,0 +1,13 @@
+[Unit]
+Description=Synchronize WAHA profile names and phones into Chatwoot (%i)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/chatwoot/waha-contact-sync/run.sh %i
+TimeoutStartSec=30min
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

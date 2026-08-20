@@ -130,6 +130,12 @@ export default function Button({
 
   // בזמן טעינה: ספינר מחליף את האייקון המוביל, הכפתור מושבת (aria-busy לנגישות)
   const LeadingIcon = loading ? Loader2 : Icon;
+  // ספינר זהה למקור: Spinner.vue הוא בדיוק אייקון loader-circle של lucide (אותו path),
+  // ו-Button.vue:255 מקבע אותו על ‎!w-5 !h-5‎ (20px) בלי קשר לגודל הכפתור.
+  // ⚠️ strokeWidth="8" שכתוב שם ב-camelCase אינו תקף כשם תכונת SVG (היחיד כזה בכל
+  // המקור — כל שאר הקבצים כותבים stroke-width), ולכן הדפדפן מצייר את ברירת המחדל 1.
+  const leadingSize = loading ? 20 : iconSize;
+  const leadingStroke = loading ? 1 : 2;
 
   // href → מרונדר כעוגן במקום כפתור. הורדת קובץ חייבת עוגן אמיתי שהמשתמש לוחץ עליו:
   // a.click() סינתטי מתוך onClick נחסם בשקט בחלק מהדפדפנים (Safari), ולחיצה ישירה על
@@ -147,8 +153,8 @@ export default function Button({
     >
       {LeadingIcon ? (
         <LeadingIcon
-          size={iconSize}
-          strokeWidth={2}
+          size={leadingSize}
+          strokeWidth={leadingStroke}
           aria-hidden="true"
           className={
             ['flex-shrink-0', loading ? 'animate-spin' : '']

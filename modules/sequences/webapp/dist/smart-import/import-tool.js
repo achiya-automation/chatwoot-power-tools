@@ -92,15 +92,22 @@ var __cwImport = (() => {
   }
 
   // lib/phoneNormalizer.js
+  function stripIsraeliTrunk(rest) {
+    return /^0\d{8,9}$/.test(rest) ? rest.slice(1) : rest;
+  }
+  function israeli(rest) {
+    const r = stripIsraeliTrunk(rest);
+    return r.length >= 8 ? "+972" + r : null;
+  }
   function normalizePhone(raw) {
     if (raw == null) return null;
     let d = String(raw).trim().replace(/[^\d+]/g, "");
+    if (d.startsWith("+972")) return israeli(d.slice(4));
     if (d.startsWith("+")) return d.length >= 11 ? d : null;
-    if (d.startsWith("00")) {
-      d = d.slice(2);
-      return d.length >= 9 ? "+" + d : null;
-    }
-    if (d.startsWith("972")) return d.length >= 11 ? "+" + d : null;
+    const hadIntlPrefix = d.startsWith("00");
+    if (hadIntlPrefix) d = d.slice(2);
+    if (d.startsWith("972")) return israeli(d.slice(3));
+    if (hadIntlPrefix) return d.length >= 9 ? "+" + d : null;
     if (d.startsWith("0")) {
       d = d.slice(1);
       return d.length === 9 || d.length === 8 ? "+972" + d : null;
@@ -362,7 +369,8 @@ var __cwImport = (() => {
   // lib/importLog.js
   var STATUSES = ["created", "updated", "skipped", "failed"];
   function csvCell(v) {
-    const s = v == null ? "" : String(v);
+    let s = v == null ? "" : String(v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
   var ImportLog = class {
@@ -621,8 +629,112 @@ var __cwImport = (() => {
       // params.require(:label).permit(:title, ...).
       createLabel: (title) => req("POST", "/labels", { label: { title } }),
       listCustomAttributes: () => req("GET", "/custom_attribute_definitions?attribute_model=contact_attribute"),
-      createCustomAttribute: (def) => req("POST", "/custom_attribute_definitions", { custom_attribute_definition: def })
+      createCustomAttribute: (def) => req("POST", "/custom_attribute_definitions", { custom_attribute_definition: def }),
+      // Server-side import (custom smart_import_server.rb initializer). A 404 from any of
+      // these means the initializer is not live on this server — callers fall back to the
+      // legacy in-browser runner.
+      smartImportPreview: (contacts) => req("POST", "/smart_import/preview", { contacts }),
+      smartImportStart: (body) => req("POST", "/smart_import", body),
+      smartImportStatus: (jobId) => req("GET", `/smart_import/${jobId}`),
+      smartImportCancel: (jobId) => req("DELETE", `/smart_import/${jobId}`)
     };
+  }
+
+  // lib/serverImport.js
+  var defaultSleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
+  function wireRow(c) {
+    const { __row, __match, __dupTail, __phoneRaw, ...rest } = c;
+    const out = { ...rest, row_num: __row };
+    if (__phoneRaw) out.phone_raw = __phoneRaw;
+    return out;
+  }
+  function createServerJob({
+    api,
+    jobId,
+    total,
+    email,
+    labelTitle,
+    pollMs = 2500,
+    maxErrors = 10,
+    sleep = defaultSleep2
+  }) {
+    const listeners = /* @__PURE__ */ new Set();
+    const progress = {
+      done: 0,
+      total,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      state: "running"
+      // running → cancelling → done | cancelled | error
+    };
+    const emit = () => listeners.forEach((cb) => {
+      try {
+        cb(progress);
+      } catch {
+      }
+    });
+    const job = {
+      progress,
+      log: null,
+      error: null,
+      labelTitle: labelTitle || "",
+      serverMode: true,
+      emailTo: email || null,
+      cancel() {
+        if (progress.state !== "running") return;
+        progress.state = "cancelling";
+        emit();
+        api.smartImportCancel(jobId).catch(() => {
+        });
+      },
+      onUpdate(cb) {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      }
+    };
+    job.promise = (async () => {
+      let errors = 0;
+      for (; ; ) {
+        await sleep(pollMs);
+        let s;
+        try {
+          s = await api.smartImportStatus(jobId);
+          errors = 0;
+        } catch (e) {
+          if (e?.status === 404 || ++errors >= maxErrors) {
+            job.error = e;
+            progress.state = "error";
+            emit();
+            return job.log;
+          }
+          continue;
+        }
+        progress.done = s.done || 0;
+        progress.total = s.total ?? total;
+        progress.created = s.created || 0;
+        progress.updated = s.updated || 0;
+        progress.skipped = s.skipped || 0;
+        progress.failed = s.failed || 0;
+        if (s.email) job.emailTo = s.email;
+        if (s.state === "done" || s.state === "cancelled" || s.state === "error") {
+          job.log = toImportLog(s.log);
+          if (s.state === "error") job.error = new Error(s.error || "import failed");
+          progress.state = s.state;
+          emit();
+          return job.log;
+        }
+        if (progress.state !== "cancelling") progress.state = "running";
+        emit();
+      }
+    })();
+    return job;
+  }
+  function toImportLog(rows) {
+    const log = new ImportLog();
+    (rows || []).forEach((r) => log.add(r.row, r.name, r.status, r.contact_id, r.reason));
+    return log;
   }
 
   // lib/basepath.js
@@ -640,7 +752,13 @@ var __cwImport = (() => {
   // ui/styles.js
   var STYLES = `
 dialog.cwi-dlg{padding:0;border:0;background:transparent;width:100%;max-width:42rem;max-height:90vh;overflow:visible;color:inherit}
-dialog.cwi-dlg::backdrop{background:rgba(0,0,0,.5);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+/* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D0\u05D7\u05D5\u05E8\u05D9 \u05D4\u05D7\u05DC\u05D5\u05DF \u2014 \u05D6\u05D4\u05D4 \u05DC-Dialog.vue \u05E9\u05DC Chatwoot (bg-n-alpha-black1 + blur 4px).
+   \u200E--black-alpha-1 \u05D4\u05D5\u05D0 12% \u05D1\u05DE\u05E6\u05D1 \u05D1\u05D4\u05D9\u05E8 \u05D5-30% \u05D1\u05DB\u05D4\u05D4; \u05E7\u05D5\u05D3\u05DD \u05D4\u05D9\u05D4 \u05DB\u05D0\u05DF 50% \u05E7\u05D1\u05D5\u05E2, \u05DB\u05DC\u05D5\u05DE\u05E8 \u05DB\u05D4\u05D4
+   \u05E4\u05D9 \u05D0\u05E8\u05D1\u05E2\u05D4 \u05DE\u05D4\u05DE\u05E7\u05D5\u05E8 \u05D5\u05DC\u05DC\u05D0 \u05D4\u05EA\u05D0\u05DE\u05D4 \u05DC\u05E2\u05E8\u05DB\u05EA \u05D4\u05E0\u05D5\u05E9\u05D0. */
+dialog.cwi-dlg::backdrop{background:rgba(0,0,0,.12);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+/* wizard.js \u05DE\u05D5\u05E1\u05D9\u05E3 \u05D0\u05EA \u05D4\u05DE\u05D7\u05DC\u05E7\u05D4 dark \u05E2\u05DC \u05D4-dialog \u05E2\u05E6\u05DE\u05D5 (\u05E8\u05D0\u05D4 \u05E9\u05DD: \u05D4\u05D5\u05D0 \u05D1-top layer \u05D5\u05DC\u05D0
+   \u05D9\u05D5\u05E8\u05E9 \u05DE\u05D4\u05D3\u05E3), \u05D5\u05DC\u05DB\u05DF \u05D4\u05E1\u05DC\u05E7\u05D8\u05D5\u05E8 \u05D7\u05D9\u05D9\u05D1 \u05DC\u05D4\u05D9\u05D5\u05EA \u05E2\u05DC \u05D0\u05D5\u05EA\u05D5 \u05D0\u05DC\u05DE\u05E0\u05D8 \u05D5\u05DC\u05D0 \u05E2\u05DC \u05D0\u05D1. */
+dialog.cwi-dlg.dark::backdrop{background:rgba(0,0,0,.3)}
 dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 @keyframes cwiBackdrop{from{opacity:0}to{opacity:1}}
 /* Animate the inner card, NOT the <dialog>: a transform on the dialog would make it
@@ -652,7 +770,10 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 /* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D2\u05D9\u05E2 \u05DE\u05DE\u05D7\u05DC\u05E7\u05EA bg-n-brand \u05E9\u05DC Chatwoot (\u05D4\u05DB\u05D7\u05D5\u05DC \u05D4\u05E8\u05E9\u05DE\u05D9) \u2014 \u05DC\u05D0 \u05DE\u05DE\u05E9\u05EA\u05E0\u05D4:
    --color-n-brand \u05DC\u05D0 \u05E7\u05D9\u05D9\u05DD \u05D1-CSS \u05D4\u05DE\u05E7\u05D5\u05DE\u05E4\u05DC \u05D5\u05D4-fallback \u05E6\u05D1\u05E2 \u05D0\u05EA \u05D4\u05E4\u05E1 \u05D1\u05D0\u05D9\u05E0\u05D3\u05D9\u05D2\u05D5 \u05D6\u05E8. */
 .cwi-prog-fill{height:100%;transition:width .2s}
-.cwi-tbl-cell{border-bottom:1px solid}
+/* \u26A0\uFE0F border-bottom \u05D1\u05DC\u05D9 \u05E6\u05D1\u05E2 = currentColor \u05DC\u05E4\u05D9 \u05DE\u05E4\u05E8\u05D8 CSS, \u05D5\u05DB\u05D9\u05D5\u05D5\u05DF \u05E9\u05D4\u05D2\u05D9\u05DC\u05D9\u05D5\u05DF \u05D4\u05D6\u05D4 \u05DE\u05D5\u05D6\u05E8\u05E7
+   \u05DC-head \u05D1\u05D6\u05DE\u05DF \u05E8\u05D9\u05E6\u05D4 \u05D4\u05D5\u05D0 \u05D1\u05D0 *\u05D0\u05D7\u05E8\u05D9* \u05D4\u05D2\u05D9\u05DC\u05D9\u05D5\u05DF \u05E9\u05DC Chatwoot \u05D5\u05DE\u05E0\u05E6\u05D7 \u05D0\u05EA border-n-weak \u05E9\u05E2\u05DC \u05D4\u05EA\u05D0.
+   \u05D4\u05EA\u05D5\u05E6\u05D0\u05D4 \u05D4\u05D9\u05D9\u05EA\u05D4 \u05E7\u05D5\u05D5\u05D9 \u05D8\u05D1\u05DC\u05D4 \u05D1\u05E6\u05D1\u05E2 \u05D4\u05D8\u05E7\u05E1\u05D8 \u2014 \u05DB\u05D4\u05D9\u05DD \u05D1\u05D4\u05E8\u05D1\u05D4 \u05DE\u05DB\u05DC \u05D8\u05D1\u05DC\u05D4 \u05D0\u05D7\u05E8\u05EA \u05D1\u05D3\u05E9\u05D1\u05D5\u05E8\u05D3. */
+.cwi-tbl-cell{border-bottom:1px solid rgb(var(--border-weak))}
 .cwi-cs-panel{transition:opacity .2s ease-out}
 /* Background-import pill \u2014 fixed to the bottom start corner (dir-aware via
    inset-inline-start; the pill carries its own dir attribute). Below the browser
@@ -743,6 +864,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       bgError: "\u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05E0\u05E2\u05E6\u05E8 \u05E2\u05E7\u05D1 \u05E9\u05D2\u05D9\u05D0\u05D4",
       stopImport: "\u05E2\u05E6\u05D9\u05E8\u05EA \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0",
       bgHint: "\u05D0\u05E4\u05E9\u05E8 \u05DC\u05D4\u05DE\u05E9\u05D9\u05DA \u05DC\u05E2\u05D1\u05D5\u05D3 \u05D1\u05D9\u05E0\u05EA\u05D9\u05D9\u05DD \u2014 \u05E8\u05E7 \u05D0\u05DC \u05EA\u05E1\u05D2\u05E8\u05D5 \u05D0\u05EA \u05D4\u05D8\u05D0\u05D1 \u05E2\u05D3 \u05DC\u05E1\u05D9\u05D5\u05DD",
+      bgHintServer: (m) => m ? `\u05D0\u05E4\u05E9\u05E8 \u05DC\u05E1\u05D2\u05D5\u05E8 \u05D0\u05EA \u05D4\u05D8\u05D0\u05D1 \u2014 \u05E1\u05D9\u05DB\u05D5\u05DD \u05D9\u05D9\u05E9\u05DC\u05D7 \u05DC\u05BE${m}` : "\u05D0\u05E4\u05E9\u05E8 \u05DC\u05E1\u05D2\u05D5\u05E8 \u05D0\u05EA \u05D4\u05D8\u05D0\u05D1 \u2014 \u05E1\u05D9\u05DB\u05D5\u05DD \u05D9\u05D9\u05E9\u05DC\u05D7 \u05DC\u05DE\u05D9\u05D9\u05DC \u05D1\u05E1\u05D9\u05D5\u05DD",
       dupInFile: "\u05DB\u05E4\u05D5\u05DC\u05D9\u05DD \u05D1\u05E7\u05D5\u05D1\u05E5 (\u05D9\u05DE\u05D5\u05D6\u05D2\u05D5)",
       headerEchoSkipped: (rows) => `\u05E9\u05D5\u05E8\u05D5\u05EA \u05DB\u05D5\u05EA\u05E8\u05EA \u05D1\u05EA\u05D5\u05DA \u05D4\u05E7\u05D5\u05D1\u05E5 \u05D6\u05D5\u05D4\u05D5 \u05D5\u05D3\u05D5\u05DC\u05D2\u05D5 (\u05E9\u05D5\u05E8\u05D5\u05EA: ${rows}) \u2014 \u05E0\u05E8\u05D0\u05D4 \u05E9\u05D4\u05E7\u05D5\u05D1\u05E5 \u05DE\u05D5\u05E8\u05DB\u05D1 \u05DE\u05DB\u05DE\u05D4 \u05E8\u05E9\u05D9\u05DE\u05D5\u05EA \u05E9\u05D4\u05D5\u05D3\u05D1\u05E7\u05D5 \u05D9\u05D7\u05D3. \u05D4\u05DF \u05DC\u05D0 \u05D9\u05D9\u05D5\u05D1\u05D0\u05D5 \u05DB\u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8.`,
       // mapping sanity blocker — {header} column mapped to {field} but values don't fit
@@ -827,6 +949,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       bgError: "Import stopped due to an error",
       stopImport: "Stop import",
       bgHint: "You can keep working \u2014 just don't close this tab until it finishes",
+      bgHintServer: (m) => m ? `You can close this tab \u2014 a summary will be emailed to ${m}` : "You can close this tab \u2014 a summary will be emailed when it finishes",
       dupInFile: "duplicates in file (will be merged)",
       headerEchoSkipped: (rows) => `Header rows inside the file were detected and skipped (rows: ${rows}) \u2014 the file looks like several lists pasted together. They will not be imported as contacts.`,
       badMapping: (header2, fieldLabel, bad, total) => `The "${header2}" column is mapped to "${fieldLabel}", but ${bad} of ${total} of its values don't fit that field. Go back to the mapping step and pick another field (or "Ignore").`,
@@ -874,7 +997,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
   function openWizard({ accountId, authHeaders, assetBase }) {
     injectStyles();
     const api = createApiClient(accountId, authHeaders);
-    const state = { table: null, mapping: [], customMap: [], labelTitle: "", labelNeedsCreation: false, waInboxId: null };
+    const state = { table: null, mapping: [], customMap: [], labelTitle: "", labelNeedsCreation: false, waInboxId: null, serverMode: false };
     api.listInboxes().then((r) => {
       const list = r?.payload || r || [];
       const wa = list.find((i) => /whatsapp/i.test(i?.channel_type || ""));
@@ -1001,7 +1124,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         thead.appendChild(th);
       });
       tbl.appendChild(thead);
-      state.customMap = [];
+      const colCount = state.table.headers.length;
+      state.customMap = state.customMap.filter((c) => c.index < colCount);
       state.table.headers.forEach((colHeader, i) => {
         const sample = (state.table.rows.find((r) => (r[i] || "").trim()) || [])[i] || "";
         const options = [];
@@ -1015,7 +1139,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           });
         }
         options.push({ value: "__new__", label: t("createNewField"), icon: "plus" });
-        const initial = state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field) ? state.mapping[i].field : "";
+        const custom = state.customMap.find((c) => c.index === i);
+        const initial = custom ? custom.create ? "__new__" : "custom:" + custom.attribute_key : state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field) ? state.mapping[i].field : "";
         const row = el("tr");
         const tdHeader = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
         tdHeader.textContent = colHeader;
@@ -1033,6 +1158,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           }
         });
         tdSel.appendChild(cs.el);
+        if (custom?.create) showCommittedNewField(i, custom.create.display, tdSel, cs);
         const tdSample = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
         tdSample.textContent = sample;
         row.append(tdHeader, tdSel, tdSample);
@@ -1099,6 +1225,25 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       wrap.append(inp, confirmBtn, cancelBtn);
       tdSel.replaceChildren(wrap);
       inp.focus();
+    }
+    function showCommittedNewField(i, name, tdSel, origCs) {
+      const done = el("div", "flex items-center gap-1");
+      const lbl = el("span", "text-sm text-n-slate-12 flex-1 truncate");
+      lbl.textContent = name;
+      const changeBtn = el(
+        "button",
+        BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer"
+      );
+      changeBtn.appendChild(icon("x", "size-4"));
+      changeBtn.title = t("change");
+      changeBtn.addEventListener("click", () => {
+        state.mapping[i] = { index: i, field: null };
+        state.customMap = state.customMap.filter((c) => c.index !== i);
+        origCs.setValue("");
+        tdSel.replaceChildren(origCs.el);
+      });
+      done.append(lbl, changeBtn);
+      tdSel.replaceChildren(done);
     }
     function updateMapping(i, value) {
       state.mapping[i] = { index: i, field: null };
@@ -1364,15 +1509,18 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         labels = await api.listLabels().then((r) => r.payload || r);
       } catch {
       }
-      let selValue = "";
       const options = [{ value: "", label: t("noLabel") }];
       (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
       const existingLabelTitles = new Set((labels || []).map((l) => String(l.title).toLowerCase()));
+      const prior = state.labelTitle || "";
+      const priorIsExisting = prior && existingLabelTitles.has(prior.toLowerCase());
+      let selValue = priorIsExisting ? prior : "";
       const newInput = el(
         "input",
         "h-8 w-full px-3 py-2 text-sm rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand border-0 outline-offset-[-1px]"
       );
       newInput.placeholder = t("newLabelPlaceholder");
+      if (prior && !priorIsExisting) newInput.value = prior;
       const labelError = el("div", "min-h-5 text-sm text-n-ruby-11");
       newInput.addEventListener("input", () => {
         labelError.textContent = "";
@@ -1383,7 +1531,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       });
       const cs = customSelect({
         options,
-        value: "",
+        value: selValue,
         placeholder: t("noLabel"),
         size: "field",
         // roomier single-select field for the label step
@@ -1452,19 +1600,28 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       state.contacts = contacts;
       const N = contacts.length;
       let dedupOk = true;
+      state.serverMode = false;
+      let serverCounts = null;
       try {
-        await batchDedup(contacts, api, (d, tot) => {
-          status.textContent = `${t("checkingDupes")} ${d}/${tot}`;
-        });
+        serverCounts = await api.smartImportPreview(contacts.map(wireRow));
+        state.serverMode = true;
       } catch {
-        dedupOk = false;
-        contacts.forEach((c) => {
-          delete c.__match;
-          delete c.__dupTail;
-        });
       }
-      const dupes = contacts.filter((c) => c.__dupTail).length;
-      const existing = contacts.filter((c) => c.__match).length;
+      if (!state.serverMode) {
+        try {
+          await batchDedup(contacts, api, (d, tot) => {
+            status.textContent = `${t("checkingDupes")} ${d}/${tot}`;
+          });
+        } catch {
+          dedupOk = false;
+          contacts.forEach((c) => {
+            delete c.__match;
+            delete c.__dupTail;
+          });
+        }
+      }
+      const dupes = state.serverMode ? serverCounts.dup_in_file || 0 : contacts.filter((c) => c.__dupTail).length;
+      const existing = state.serverMode ? serverCounts.existing : contacts.filter((c) => c.__match).length;
       const created = N - existing - dupes;
       status.textContent = dedupOk ? `${t("readyToImport")} ${N} \xB7 ${created} ${t("newWord")} \xB7 ${existing} ${t("existingWillUpdate")}` + (dupes ? ` \xB7 ${dupes} ${t("dupInFile")}` : "") : t("dedupFailed");
       modal.append(headerEchoNotice(headerEchoRows));
@@ -1524,15 +1681,52 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       state.labelTitle = created?.title || state.labelTitle;
       state.labelNeedsCreation = false;
     }
-    function stepRun() {
+    let startingImport = false;
+    async function stepRun() {
+      if (startingImport) return;
       if (window.__cwImportJob && ["running", "cancelling"].includes(window.__cwImportJob.progress.state)) {
         showError(t("alreadyRunning"));
         return;
       }
-      const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
-      window.__cwImportJob = job;
-      mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
-      close();
+      startingImport = true;
+      try {
+        if (state.serverMode) {
+          try {
+            const res = await api.smartImportStart({
+              contacts: state.contacts.map(wireRow),
+              label_title: state.labelTitle,
+              wa_inbox_id: state.waInboxId,
+              locale: DRIP_LOCALE
+            });
+            const job2 = createServerJob({
+              api,
+              jobId: res.job_id,
+              total: state.contacts.length,
+              email: res.email,
+              labelTitle: state.labelTitle
+            });
+            window.__cwImportJob = job2;
+            mountPill(job2, { dark: pageIsDark, rtl: pageIsRTL });
+            close();
+            return;
+          } catch {
+          }
+          try {
+            await batchDedup(state.contacts, api);
+          } catch {
+            state.contacts.forEach((c) => {
+              delete c.__match;
+              delete c.__dupTail;
+            });
+          }
+        }
+        const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
+        window.__cwImportJob = job;
+        mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
+        close();
+      } finally {
+        startingImport = false;
+      }
     }
     function showError(msg) {
       const e = el("div", "text-sm text-n-ruby-11");
@@ -1616,7 +1810,11 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     fill.style.width = "0%";
     track.appendChild(fill);
     const detail = el("div", "text-xs text-n-slate-11");
-    const hint = elWithText("div", "text-xs text-n-slate-11", t("bgHint"));
+    const hint = elWithText(
+      "div",
+      "text-xs text-n-slate-11",
+      job.serverMode ? t("bgHintServer")(job.emailTo) : t("bgHint")
+    );
     const actions = el("div", "flex items-center gap-2");
     actions.style.display = "none";
     pill.append(head, track, detail, hint, actions);
@@ -1625,7 +1823,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       e.preventDefault();
       e.returnValue = "";
     }
-    window.addEventListener("beforeunload", warnUnload);
+    if (!job.serverMode) window.addEventListener("beforeunload", warnUnload);
     function dismiss() {
       off();
       window.removeEventListener("beforeunload", warnUnload);
@@ -1644,6 +1842,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         title.textContent = p.state === "running" ? t("bgImporting") : t("bgCancelling");
         xBtn.title = t("stopImport");
         detail.textContent = `${p.done}/${p.total} \xB7 ${counts}`;
+        if (job.serverMode) hint.textContent = t("bgHintServer")(job.emailTo);
         return;
       }
       window.removeEventListener("beforeunload", warnUnload);

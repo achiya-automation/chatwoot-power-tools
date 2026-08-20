@@ -136,8 +136,10 @@ export async function deleteSequence(key, accountId) {
   return { key };
 }
 
-export async function listTemplates(accountId) {
-  const data = await call('templates', {}, accountId);
+// inboxId — התבניות של מספר מסוים במקום המספר שנבחר לחשבון (תבניות שייכות ל-WABA,
+// ולקמפיין ישן יכול להיות מספר אחר מזה שמוגדר כברירת מחדל היום).
+export async function listTemplates(accountId, inboxId = null) {
+  const data = await call('templates', inboxId ? { inbox_id: inboxId } : {}, accountId);
   return data || [];
 }
 
@@ -264,9 +266,62 @@ export async function getCampaignsTrend(accountId) {
   return data || [];
 }
 
-// campaigns_tier — תקציב 24h מול תקרת ה-tier של Meta: { cap, unlimited, used_24h, remaining } | null.
-export async function getCampaignsTier(accountId) {
-  return call('campaigns_tier', {}, accountId);
+// campaigns_tier — תקציב 24h מול תקרת ה-tier של Meta:
+// { cap, unlimited, unknown, used_24h, remaining } | null. unknown=true → אין נתון על
+// המכסה (המנוע עוד לא קרא אותה ממטא), ואז לא מציגים מספר ולא מזהירים.
+// inboxId — המספר שהקמפיין נשלח ממנו; מדויק יותר מניחוש ברמת החשבון.
+export async function getCampaignsTier(accountId, inboxId = null) {
+  return call('campaigns_tier', inboxId ? { inbox_id: inboxId } : {}, accountId);
+}
+
+// campaign_resend — התנעת שליחה מחדש לכל הנכשלים בקמפיין (עבודת רקע בשרת)
+// → { total, run_id, template_name }. אדמינים בלבד (403 לכל השאר).
+// template (אופציונלי) — { name, language, params:{"1":…}, mediaUrl } לשליחה בתבנית אחרת;
+// בהשמטה נשלחת תבנית הקמפיין המקורית. השרת מאמת שהתבנית מאושרת במספר של הקמפיין.
+// inboxId — לשלוח ממספר אחר מזה של הקמפיין (למשל כשהדירוג של המקורי ירד).
+export async function resendCampaignFailed(campaignId, accountId, locale, template = null, inboxId = null) {
+  const payload = { campaign_id: campaignId, locale };
+  if (template) payload.template = template;
+  if (inboxId) payload.inbox_id = inboxId;
+  return call('campaign_resend', payload, accountId);
+}
+
+// campaign_inboxes — מספרי הוואטסאפ של החשבון לבחירה "ממי לשלוח":
+// [{ id, name, phone, quality, tier }]. quality = GREEN|YELLOW|RED|UNKNOWN|null.
+export async function listCampaignInboxes(accountId) {
+  const data = await call('campaign_inboxes', {}, accountId);
+  return data || [];
+}
+
+// campaign_resend_status — { status:'running'|'done', total, done, sent, failed:[{phone,name,error}],
+// template_name, run_id } | null.
+export async function getCampaignResendStatus(campaignId, accountId) {
+  return call('campaign_resend_status', { campaign_id: campaignId }, accountId);
+}
+
+// campaign_experiments — שורה לכל "ניסוי": השליחה המקורית (run_id=null) וכל שליחה מחדש,
+// [{ run_id, template_name, started_at, attempted, sent, delivered, read, failed, replied }].
+export async function getCampaignExperiments(campaignId, accountId) {
+  const data = await call('campaign_experiments', { campaign_id: campaignId }, accountId);
+  return data || [];
+}
+
+// campaign_resend_schedule — "תריץ שליחה מחדש בשעה הזו" (ISO). מחליף תזמון קיים.
+// רשימת הנכשלים נקבעת בזמן ההרצה, לא עכשיו. אדמינים בלבד.
+export async function scheduleCampaignResend(campaignId, accountId, runAt, locale, template = null, inboxId = null) {
+  const payload = { campaign_id: campaignId, run_at: runAt, locale };
+  if (template) payload.template = template;
+  if (inboxId) payload.inbox_id = inboxId;
+  return call('campaign_resend_schedule', payload, accountId);
+}
+
+// campaign_resend_pending — { id, run_at, template_name } | null.
+export async function getPendingResend(campaignId, accountId) {
+  return call('campaign_resend_pending', { campaign_id: campaignId }, accountId);
+}
+
+export async function cancelCampaignResend(campaignId, accountId) {
+  return call('campaign_resend_unschedule', { campaign_id: campaignId }, accountId);
 }
 
 // ── ציות (מטא) ──

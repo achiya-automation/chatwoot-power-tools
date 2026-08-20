@@ -15,7 +15,7 @@
  */
 
 export const NODE_TYPES = [
-  'trigger', 'message', 'template', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
+  'trigger', 'message', 'private_reply', 'template', 'question', 'buttons', 'condition', 'delay', 'action', 'webhook', 'handoff',
 ];
 
 // Types the palette can add (exactly one trigger exists, created by emptyGraph).
@@ -31,9 +31,23 @@ export function defaultDataFor(type) {
   switch (type) {
     case 'message':
       return { text: '', mediaUrl: '' };
+    // Private Reply — הודעה פרטית למי שהגיב על פוסט. אין mediaUrl: Meta מתירה
+    // הודעה אחת בלבד לכל תגובה, ומדיה מצריכה קריאה שנייה.
+    case 'private_reply':
+      return { text: '' };
     case 'template':
       // WhatsApp template message — the only first message allowed outside the 24h window.
-      return { name: '', language: '', category: '', params: [], mediaUrl: '' };
+      return {
+        name: '',
+        language: '',
+        category: '',
+        params: [],
+        mediaUrl: '',
+        waitForReply: false,
+        saveTo: { scope: 'contact', key: '' },
+        validation: 'text',
+        retryMessage: '',
+      };
     case 'question':
       return {
         text: '',
@@ -129,6 +143,8 @@ export function normalizeData(type, d = {}) {
   switch (type) {
     case 'message':
       return { text: String(d.text || ''), mediaUrl: String(d.mediaUrl || '').trim() };
+    case 'private_reply':
+      return { text: String(d.text || '') };
     case 'template':
       return {
         name: String(d.name || '').trim(),
@@ -136,6 +152,10 @@ export function normalizeData(type, d = {}) {
         category: String(d.category || '').trim(),
         params: (Array.isArray(d.params) ? d.params : []).map((p) => String(p ?? '')),
         mediaUrl: String(d.mediaUrl || '').trim(),
+        waitForReply: !!d.waitForReply,
+        saveTo: normSaveTo(d.saveTo),
+        validation: VALIDATIONS.includes(d.validation) ? d.validation : 'text',
+        retryMessage: String(d.retryMessage || ''),
       };
     case 'question':
       return {
@@ -282,6 +302,7 @@ export function startNodeOf(graph) {
  *   cond_branch — condition node missing a 'yes' AND/OR 'no' outgoing edge
  *   wh_url      — webhook node with an empty/invalid URL
  *   tpl_name    — template node without a chosen template
+ *   tpl_key     — reply-waiting template node without saveTo.key
  */
 export function validateGraph(graph) {
   const errors = [];
@@ -316,6 +337,9 @@ export function validateGraph(graph) {
     // A template node without a chosen template fails on every send.
     if (n.type === 'template') {
       if (!String(d.name || '').trim()) errors.push({ code: 'tpl_name', nodeId: n.id });
+      if (d.waitForReply && !String(d.saveTo?.key || '').trim()) {
+        errors.push({ code: 'tpl_key', nodeId: n.id });
+      }
     }
   }
   return errors;
@@ -329,7 +353,10 @@ export function collectAttributeKeys(graph) {
   const seen = new Set();
   const out = [];
   for (const n of graph?.nodes || []) {
-    if (n.type !== 'question' && n.type !== 'buttons') continue;
+    const savesAnswer = n.type === 'question'
+      || n.type === 'buttons'
+      || (n.type === 'template' && !!n.data?.waitForReply);
+    if (!savesAnswer) continue;
     const key = String(n.data?.saveTo?.key || '').trim();
     if (!key) continue;
     const scope = n.data?.saveTo?.scope === 'conversation' ? 'conversation' : 'contact';

@@ -82,3 +82,21 @@ export function filterRows(rows, { statuses, reply = 'all' } = {}) {
   });
 }
 
+/**
+ * פירוק הכשלים לפי סיבה — לכרטיס "למה נכשל" בדוח הקמפיין. שורות failed (Meta דחתה)
+ * ו-notsent (נעצר אצלנו לפני שליחה) מקובצות לפי מחרוזת השגיאה הגולמית; התרגום לתווית
+ * קריאה נעשה בשכבת התצוגה (deliveryError.js), כמו בטבלה עצמה.
+ * מוחזר ממוין מהגדול לקטן: [{ statusKey, error_title, count }].
+ */
+export function failureGroups(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    if (row.statusKey !== 'failed' && row.statusKey !== 'notsent') continue;
+    const key = `${row.statusKey}|${row.error_title || ''}`;
+    const group = map.get(key) || { statusKey: row.statusKey, error_title: row.error_title || '', count: 0 };
+    group.count += 1;
+    map.set(key, group);
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count);
+}
+

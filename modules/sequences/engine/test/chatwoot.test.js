@@ -51,6 +51,106 @@ test('setSequence with falsy key REMOVES the sequence attribute (opt-out)', asyn
   assert.equal(attrs.seq_step, 2, 'other attrs preserved');
 });
 
+test('createContact sends the atomic contact + WhatsApp inbox body and unwraps Chatwoot response', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url, opts });
+    return { ok: true, json: async () => ({ payload: { contact: { id: 321 } } }) };
+  };
+  const c = makeClient({ baseUrl: 'http://r:3000', token: 'T', accountId: 14 });
+
+  const created = await c.createContact({
+    name: 'דנה לוי',
+    email: 'dana@example.com',
+    phone: '+972501234567',
+    inboxId: 40,
+    sourceId: '972501234567',
+    customAttributes: { airtable_lead_id: 'rec123', facebook_lead_id: 'fb456' },
+  });
+
+  assert.deepEqual(created, { id: 321 });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/api\/v1\/accounts\/14\/contacts$/);
+  assert.equal(calls[0].opts.method, 'POST');
+  assert.ok(calls[0].opts.signal instanceof AbortSignal, 'Chatwoot writes carry a bounded timeout');
+  assert.equal(calls[0].opts.headers.api_access_token, 'T');
+  assert.deepEqual(JSON.parse(calls[0].opts.body), {
+    name: 'דנה לוי',
+    phone_number: '+972501234567',
+    inbox_id: 40,
+    source_id: '972501234567',
+    email: 'dana@example.com',
+    custom_attributes: { airtable_lead_id: 'rec123', facebook_lead_id: 'fb456' },
+  });
+});
+
+test('createContact refuses a successful-looking Chatwoot response without a contact id', async () => {
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ payload: {} }) });
+  const c = makeClient({ baseUrl: 'http://r:3000', token: 'T', accountId: 14 });
+  await assert.rejects(
+    () => c.createContact({ phone: '+972501234567', inboxId: 40, sourceId: '972501234567' }),
+    /missing id/
+  );
+});
+
+test('updateContact merges intake identifiers with existing custom attributes', async () => {
+  const calls = [];
+  const reads = {
+    getContactAttrs: async (contactId, accountId) => {
+      assert.equal(contactId, 77);
+      assert.equal(accountId, 14);
+      return { retained_by_agent: 'כן', airtable_lead_id: 'old' };
+    },
+  };
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url, opts });
+    return { ok: true, json: async () => ({ payload: { id: 77 } }) };
+  };
+  const c = makeClient({ baseUrl: 'http://r:3000', token: 'T', accountId: 14, reads });
+
+  const updated = await c.updateContact(77, {
+    name: 'דנה מעודכנת',
+    email: 'new@example.com',
+    phone: '+972501234567',
+    customAttributes: { airtable_lead_id: 'rec-new', facebook_lead_id: 'fb-new' },
+  });
+
+  assert.deepEqual(updated, { id: 77 });
+  assert.equal(calls.length, 1, 'DB reader supplies current attrs, so no Chatwoot GET is needed');
+  assert.match(calls[0].url, /\/api\/v1\/accounts\/14\/contacts\/77$/);
+  assert.equal(calls[0].opts.method, 'PUT');
+  assert.deepEqual(JSON.parse(calls[0].opts.body), {
+    name: 'דנה מעודכנת',
+    email: 'new@example.com',
+    phone_number: '+972501234567',
+    custom_attributes: {
+      retained_by_agent: 'כן',
+      airtable_lead_id: 'rec-new',
+      facebook_lead_id: 'fb-new',
+    },
+  });
+});
+
+test('createConversation uses the contact inbox source id and returns display_id', async () => {
+  let captured;
+  globalThis.fetch = async (url, opts) => {
+    captured = { url, opts };
+    return { ok: true, json: async () => ({ id: 9000, display_id: 412 }) };
+  };
+  const c = makeClient({ baseUrl: 'http://r:3000', token: 'T', accountId: 14 });
+
+  const opened = await c.createConversation({
+    sourceId: '972501234567', inboxId: 40, contactId: 77,
+  });
+
+  assert.deepEqual(opened, { id: 412 });
+  assert.match(captured.url, /\/api\/v1\/accounts\/14\/conversations$/);
+  assert.equal(captured.opts.method, 'POST');
+  assert.deepEqual(JSON.parse(captured.opts.body), {
+    source_id: '972501234567', inbox_id: 40, contact_id: 77,
+  });
+});
+
 test('sendTemplate sends correct body shape (n8n-authoritative)', async () => {
   let captured;
   globalThis.fetch = async (url, opts) => {

@@ -109,17 +109,39 @@ export function atJerusalemHour(ref, hour) {
  * ⛔ SHABBAT IS NEVER BYPASSED — not even for the first message. A marketing message on
  * shabbat is not a delivery statistic, it is an insult, and this audience keeps shabbat.
  *
+ * ⭐ ירושה מהחשבון (07.08.2026). לרצף בלי שעות שקט משלו אין הגנה — וזו הייתה ברירת
+ * המחדל של כל רצף שנוצר. עכשיו הוא יורש את החלון שהוגדר פעם אחת ברמת החשבון
+ * (drip.compliance.quiet_start_hour/quiet_end_hour), כך שהגדרה אחת באמת מכסה הכול.
+ * רצף שכן הגדיר לעצמו — גובר, כי חריגה מפורשת חייבת לנצח ברירת מחדל.
+ *
  * @param {{skip_shabbat:boolean, quiet_start:string, quiet_end:string}} seq
  * @param {number} currentStep - the step about to be sent (1 = the lead's first message)
+ * @param {{quiet_start_hour:number, quiet_end_hour:number}} [accountDefaults]
  */
-export const gateFor = (seq, currentStep, now, windows) => ({
-  now,
-  windows,
-  skipShabbat: seq.skip_shabbat,
-  ...(Number(currentStep) === 1
-    ? {}
-    : { quietStart: seq.quiet_start, quietEnd: seq.quiet_end }),
-});
+export const gateFor = (seq, currentStep, now, windows, accountDefaults = null) => {
+  const inherited = accountQuietWindow(accountDefaults);
+  const quietStart = seq.quiet_start || inherited?.start;
+  const quietEnd = seq.quiet_end || inherited?.end;
+  return {
+    now,
+    windows,
+    skipShabbat: seq.skip_shabbat,
+    ...(Number(currentStep) === 1 ? {} : { quietStart, quietEnd }),
+  };
+};
+
+/**
+ * שעות השקט של החשבון כ-HH:MM, או null כשאין.
+ * ‎drip.compliance שומר שעות שלמות; start === end פירושו "כבוי" (ראה DEFAULTS).
+ */
+export function accountQuietWindow(settings) {
+  if (!settings) return null;
+  const qs = Number(settings.quiet_start_hour);
+  const qe = Number(settings.quiet_end_hour);
+  if (!Number.isFinite(qs) || !Number.isFinite(qe) || qs === qe) return null;
+  const hh = (h) => String(h).padStart(2, '0') + ':00';
+  return { start: hh(qs), end: hh(qe) };
+}
 
 export function quietWindowEnd({ now, windows, skipShabbat = false, quietStart, quietEnd } = {}) {
   const ends = [];

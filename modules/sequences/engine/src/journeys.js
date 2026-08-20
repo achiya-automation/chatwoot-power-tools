@@ -16,7 +16,8 @@ import { createHmac } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { isOptOut } from './compliance.js';
-import { isNoSendNow } from './schedule.js';
+import { isNoSendNow, accountQuietWindow } from './schedule.js';
+import { HUMAN_OUTGOING_SQL } from './reads.js';
 
 const LIVE = ['active', 'waiting_answer', 'waiting_delay'];
 
@@ -162,6 +163,13 @@ async function activeJourneys(query, accountId) {
   return rows;
 }
 
+// מתי הטיק יבדוק שוב צומת שממתין לתשובה. בלי זה השורה נשמרת עם next_action_at = NULL,
+// והטיק — שסורק רק next_action_at <= now() — לא יגיע אליה לעולם: הריצה ממתינה לנצח,
+// והאינדקס uq_journey_runs_live חוסם כל פלואו חדש באותה שיחה. חובה בכל צומת ממתין.
+export function followUpDueAt(d) {
+  return d.followUp?.afterMinutes ? new Date(Date.now() + d.followUp.afterMinutes * 60000) : null;
+}
+
 // ── ביצוע הגרף: מתקדם עד צומת ממתין (שאלה/השהיה) או עד הסוף ──
 export async function executeFrom(ctx, run, journey, nodeId) {
   const { query, reads, log = console } = ctx;
@@ -196,6 +204,18 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           currentId = nextNodeId(graph, currentId);
           break;
         }
+        case 'private_reply': {
+          // Meta מתירה הודעה פרטית אחת בלבד לכל תגובה, עד 7 ימים ממנה.
+          // האכיפה עצמה ב-social_comments (שם ה-Page Token); כאן רק מדווחים ומתקדמים —
+          // כישלון לא עוצר את הפלואו, כדי שצמתים כמו תיוג או תשובה פומבית עדיין ירוצו.
+          const pm = await client.sendPrivateReply(run.display_id, {
+            accountId: run.account_id,
+            text: renderText(d.text, rctx),
+          });
+          if (!pm.ok) console.warn(`[journeys] private_reply failed on conv ${run.display_id}: ${pm.error}`);
+          currentId = nextNodeId(graph, currentId);
+          break;
+        }
         case 'template': {
           // הודעת תבנית WhatsApp — הדרך היחידה לפתוח שיחה מחוץ לחלון ה-24ש.
           // הפרמטרים עוברים דרך renderText, כך ש-{{שם}} וכו' עובדים גם בתבניות.
@@ -207,6 +227,15 @@ export async function executeFrom(ctx, run, journey, nodeId) {
             params,
             ...(d.mediaUrl ? { mediaUrl: d.mediaUrl } : {}),
           });
+          // A WhatsApp template may already contain Quick Reply buttons. Waiting on the
+          // template itself avoids sending a second, duplicate buttons/question message.
+          if (d.waitForReply) {
+            await updateRun(query, run.id, {
+              status: 'waiting_answer', current_node: currentId, answers,
+              retry_count: 0, waiting_since: new Date(), next_action_at: followUpDueAt(d),
+            });
+            return;
+          }
           currentId = nextNodeId(graph, currentId);
           break;
         }
@@ -214,8 +243,7 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           await client.sendText(run.display_id, renderText(d.text, rctx));
           await updateRun(query, run.id, {
             status: 'waiting_answer', current_node: currentId, answers,
-            retry_count: 0, waiting_since: new Date(),
-            next_action_at: d.followUp?.afterMinutes ? new Date(Date.now() + d.followUp.afterMinutes * 60000) : null,
+            retry_count: 0, waiting_since: new Date(), next_action_at: followUpDueAt(d),
           });
           return;
         }
@@ -234,8 +262,7 @@ export async function executeFrom(ctx, run, journey, nodeId) {
           }
           await updateRun(query, run.id, {
             status: 'waiting_answer', current_node: currentId, answers,
-            retry_count: 0, waiting_since: new Date(),
-            next_action_at: d.followUp?.afterMinutes ? new Date(Date.now() + d.followUp.afterMinutes * 60000) : null,
+            retry_count: 0, waiting_since: new Date(), next_action_at: followUpDueAt(d),
           });
           return;
         }
@@ -355,6 +382,9 @@ async function postWebhook(url, payload) {
     });
     // קיצוץ: התשובה נשמרת ב-answers (jsonb) — שירות שמחזיר מגה-בייטים לא ינפח את שורת הריצה.
     const text = (await r.text()).slice(0, 8192);
+    // The next graph node must run only after the remote system accepted the update. In
+    // particular, Daniel's confirmation message must not be sent after a failed Airtable write.
+    if (!r.ok) throw new Error(`webhook returned HTTP ${r.status}`);
     try { return JSON.parse(text); } catch { return text || null; }
   } finally {
     clearTimeout(t);
@@ -367,7 +397,9 @@ async function postWebhook(url, payload) {
 // ("היי" ואז "אני צריך X") — שמזהה שלה גבוה יותר — עדיין תיקלט כתשובה לשאלה הראשונה.
 // בלי sinceMessageId (הפעלה ידנית) לוקחים את מקסימום ההודעות הקיימות: כל ההיסטוריה
 // שקדמה להפעלה אינה תשובה.
-export async function startRun(ctx, journey, { accountId, displayId, contactId, sinceMessageId }) {
+export async function startRun(ctx, journey, {
+  accountId, displayId, contactId, sinceMessageId, initialAnswers = {},
+}) {
   const { query } = ctx;
   const client = ctx.client || await ctx.makeClientFor(accountId);
   const first = startNodeOf(journey.graph);
@@ -396,9 +428,12 @@ export async function startRun(ctx, journey, { accountId, displayId, contactId, 
   let run;
   try {
     const rows = await query(
-      `INSERT INTO drip.journey_runs (journey_id, account_id, display_id, contact_id, status, current_node, last_inbound_message_id)
-       VALUES ($1, $2, $3, $4, 'active', $5, $6) RETURNING *`,
-      [journey.id, accountId, displayId, contactId || null, first, initialWatermark]
+      `INSERT INTO drip.journey_runs
+         (journey_id, account_id, display_id, contact_id, status, current_node,
+          last_inbound_message_id, answers)
+       VALUES ($1, $2, $3, $4, 'active', $5, $6, $7::jsonb) RETURNING *`,
+      [journey.id, accountId, displayId, contactId || null, first, initialWatermark,
+        JSON.stringify(initialAnswers || {})]
     );
     run = rows[0];
   } catch (e) {
@@ -408,7 +443,11 @@ export async function startRun(ctx, journey, { accountId, displayId, contactId, 
   // הבוט לוקח בעלות: השיחה עוברת ל-pending (הנציגים רואים שהבוט מטפל).
   try { await client.toggleStatus(displayId, 'pending'); } catch { /* ערוץ בלי סטטוס — ממשיכים */ }
   await executeFrom({ ...ctx, client }, run, journey, first);
-  return run;
+  // executeFrom records node failures on the run instead of throwing because normal webhook
+  // processing must stay isolated. Return the persisted state so synchronous external intake
+  // can distinguish a successfully waiting flow from a failed initial template send.
+  const refreshed = await query('SELECT * FROM drip.journey_runs WHERE id = $1 LIMIT 1', [run.id]);
+  return toRun(refreshed[0] || run);
 }
 
 // ── קליטת הודעה נכנסת לריצה ממתינה ──
@@ -425,11 +464,38 @@ export async function feedAnswer(ctx, run, journey, message) {
   const node = nodeById(graph, run.current_node);
   if (!node) return;
   const d = node.data || {};
+  // The real-time webhook and the 60s reconciliation scan can observe the same inbound row.
+  // Claim the waiting run before any contact write, Make webhook, or confirmation send. Only
+  // one caller can move waiting_answer → active for this message; every concurrent copy exits.
+  const claimed = (await query(
+    `UPDATE drip.journey_runs
+        SET status = 'active',
+            last_inbound_message_id = CASE WHEN $2 > 0 THEN $2 ELSE last_inbound_message_id END,
+            updated_at = now()
+      WHERE id = $1::uuid AND status = 'waiting_answer'
+        AND ($2 = 0 OR last_inbound_message_id < $2)
+      RETURNING *`,
+    [run.id, messageId]
+  ))[0];
+  if (!claimed) return;
+  run = toRun(claimed);
   let answers = run.answers || {};
 
   // מילת עצירה (הסר וכו') — הפלואו נעצר; ההסרה החשבונית מטופלת ב-compliance הרגיל.
   if (isOptOut(text)) {
     await updateRun(query, run.id, { status: 'stopped', last_inbound_message_id: messageId, answers });
+    return;
+  }
+
+  // הודעה נכנסת בלי טקסט = קובץ, תמונה, הודעה קולית, סטיקר או מיקום: Chatwoot מוסר אותה
+  // עם content ריק. זו לעולם לא תשובה תקפה לשאלה או לכפתור, אבל היא כן אדם חי שמנסה לדבר —
+  // ולכן מוסרים לנציג בשקט במקום להשיב "לא הצלחתי להבין" לתוך שיחה אנושית שכבר רצה.
+  if (!text) {
+    try { await client.toggleStatus(run.display_id, 'open'); } catch { /* ערוץ בלי סטטוס */ }
+    await updateRun(query, run.id, {
+      status: 'done', answers, next_action_at: null, waiting_since: null,
+      last_inbound_message_id: messageId, last_error: 'media answer → handoff',
+    });
     return;
   }
 
@@ -444,14 +510,19 @@ export async function feedAnswer(ctx, run, journey, message) {
         return;
       }
       const contact = await reads.getContact(run.display_id, run.account_id).catch(() => ({}));
-      await client.sendText(run.display_id,
-        d.retryMessage || numberedFallback(renderText(d.text, { contact, answers }), d.options || []));
-      await updateRun(query, run.id, { retry_count: retries, last_inbound_message_id: messageId });
+      try {
+        await client.sendText(run.display_id,
+          d.retryMessage || numberedFallback(renderText(d.text, { contact, answers }), d.options || []));
+      } finally {
+        await updateRun(query, run.id, {
+          status: 'waiting_answer', retry_count: retries, last_inbound_message_id: messageId,
+        });
+      }
       return;
     }
     value = String(opt.value ?? opt.title);
     matchedOption = opt;
-  } else { // question
+  } else { // question, or a template configured to wait for its Quick Reply
     const kind = d.validation || 'text';
     if (!validateAnswer(kind, text)) {
       const retries = (run.retry_count || 0) + 1;
@@ -459,8 +530,13 @@ export async function feedAnswer(ctx, run, journey, message) {
         await updateRun(query, run.id, { status: 'stopped', last_error: 'too many invalid answers', last_inbound_message_id: messageId });
         return;
       }
-      await client.sendText(run.display_id, d.retryMessage || defaultRetryMessage(kind));
-      await updateRun(query, run.id, { retry_count: retries, last_inbound_message_id: messageId });
+      try {
+        await client.sendText(run.display_id, d.retryMessage || defaultRetryMessage(kind));
+      } finally {
+        await updateRun(query, run.id, {
+          status: 'waiting_answer', retry_count: retries, last_inbound_message_id: messageId,
+        });
+      }
       return;
     }
     value = text;
@@ -548,7 +624,7 @@ export async function handleJourneyHook(ctx, event) {
   const convState = async () => {
     const r = await query(
       `SELECT count(*) FILTER (WHERE m.message_type = 0 AND m.private IS NOT TRUE) AS inbound,
-              count(*) FILTER (WHERE m.message_type = 1 AND m.sender_type = 'User') AS human_out,
+              count(*) FILTER (WHERE ${HUMAN_OUTGOING_SQL}) AS human_out,
               COALESCE(min(m.id) FILTER (WHERE m.message_type = 0 AND m.private IS NOT TRUE), 0) AS first_inbound_id
          FROM public.messages m JOIN public.conversations c ON c.id = m.conversation_id
         WHERE c.account_id = $1 AND c.display_id = $2`,
@@ -651,14 +727,19 @@ export async function handleJourneyHook(ctx, event) {
 // שעות פעילות לפעולות שהבוט יוזם (השהיות/פולואפים): שבת כברירת מחדל (fail-safe,
 // כמו הרצפים), שעות שקט אם הוגדרו בפלואו. תשובות ללקוח שכתב עכשיו לא נחסמות —
 // זה מענה, לא דיוור; רק ה-tick היוזם ממתין.
-function journeyQuietNow(journey, windows, now = new Date()) {
+// ⭐ ירושה מהחשבון (07.08.2026): פלואו בלי שעות שקט משלו יורש את החלון שהוגדר פעם
+// אחת ברמת החשבון, בדיוק כמו רצף (schedule.gateFor). קודם היה כאן מושג זהה בשם
+// אחר ("שעות פעילות") ובלי ברירת מחדל — כלומר כל פלואו שלא הוגדר בו במפורש יכול
+// היה לשלוח בלילה, וההגדרה שבמסך הציות לא נגעה בו.
+function journeyQuietNow(journey, windows, now = new Date(), accountDefaults = null) {
   const q = journey.trigger?.quiet || {};
+  const inherited = accountQuietWindow(accountDefaults);
   return isNoSendNow({
     now,
     windows: windows || [],
     skipShabbat: q.skip_shabbat !== false,
-    quietStart: q.quiet_start || undefined,
-    quietEnd: q.quiet_end || undefined,
+    quietStart: q.quiet_start || inherited?.start || undefined,
+    quietEnd: q.quiet_end || inherited?.end || undefined,
   });
 }
 
@@ -668,6 +749,12 @@ export async function reconcileJourneys(ctx, accountId) {
   const journeys = await activeJourneys(query, accountId);
   if (!journeys.length) return;
   const byId = Object.fromEntries(journeys.map((j) => [j.id, j]));
+
+  // שעות השקט של החשבון — ברירת המחדל שכל פלואו יורש כשלא הוגדר לו חלון משלו.
+  // שאילתה אחת לטיק; אם אין שורת ציות, אין ירושה וההתנהגות כשהייתה.
+  const accountQuiet = (await query(
+    'SELECT quiet_start_hour, quiet_end_hour FROM drip.compliance WHERE account_id = $1', [accountId]
+  ).catch(() => []))[0] || null;
 
   // רישום ה-webhook (אידמפוטנטי; הנתיב נושא סוד ספציפי-לחשבון, לא סוד גלובלי)
   if (config.journeyHookBase && config.journeyHookSecret) {
@@ -689,7 +776,7 @@ export async function reconcileJourneys(ctx, accountId) {
     if (!journey) continue;
     // בשעות שקט/שבת הריצה נשארת due — תעובד בטיק הראשון אחרי סוף החלון.
     // ponytail: אין פיזור-jitter ביציאה מהחלון; בנפחים שיחתיים זה זניח.
-    if (journeyQuietNow(journey, windows)) continue;
+    if (journeyQuietNow(journey, windows, new Date(), accountQuiet)) continue;
     const client = await makeClientFor(accountId);
     const ctx2 = { ...ctx, client };
 

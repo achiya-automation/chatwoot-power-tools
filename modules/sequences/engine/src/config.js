@@ -69,5 +69,10 @@ export function loadConfig(env = process.env) {
     // תאימות-לאחור: אם ניתנה רק JOURNEY_HOOK_URL הישנה (שכללה נתיב+סוד), נגזור ממנה את המקור.
     journeyHookBase: String(env.JOURNEY_HOOK_BASE
       || (env.JOURNEY_HOOK_URL ? String(env.JOURNEY_HOOK_URL).replace(/\/drip-api\/journey-hook\/.*$/, '') : '')),
+    // Make/Facebook Lead Ads starts a journey through a separate, synchronous intake door.
+    // Authentication is HTTP Basic with HMAC(this master, "intake:<account_id>") as the
+    // password, so no credential appears in the URL or reverse-proxy access logs. It is
+    // intentionally independent of JOURNEY_HOOK_SECRET; rotating either cannot open the other.
+    journeyIntakeSecret: String(env.JOURNEY_INTAKE_SECRET || ''),
   };
 }

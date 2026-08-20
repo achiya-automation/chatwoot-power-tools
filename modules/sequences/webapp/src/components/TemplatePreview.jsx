@@ -11,6 +11,7 @@ import {
   ShoppingBag,
   Timer,
 } from 'lucide-react';
+import HeaderMedia from './ui/HeaderMedia.jsx';
 import useT from '../useT.js';
 
 /*
@@ -18,6 +19,8 @@ import useT from '../useT.js';
  * (the exact templateRules.emptyTemplate() shape — NOT the graph/API shape). Mirrors the
  * bubble tokens already used by SequencePreview.jsx (via MessageBubble/ChatBubble): teal
  * bubble, rounded-2xl, n-tokens only. Pure render — no dispatch, no editing here.
+ * ⚠️ The green bubble is a deliberate WhatsApp mockup, not a copy of Chatwoot's own
+ * neutral preview card: the point is seeing what the customer receives on their phone.
  */
 
 // Co-located dictionary (he/en) — chrome only; template content itself is never translated.
@@ -130,12 +133,21 @@ function HeaderBlock({ header, t }) {
   }
   const Icon = MEDIA_ICON[h.format];
   if (!Icon) return null;
+  // המדיה עצמה כפי שהלקוח יראה אותה. previewUrl = ה-File שנבחר עכשיו בדפדפן (ה-handle
+  // שמטא מחזירה אטום ואי אפשר להציג אותו); mediaHandle = כתובת אמיתית כשעורכים תבנית
+  // מאושרת. אין מה להציג / הקישור פג → החיווי הישן.
   return (
-    <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-n-alpha-2 px-2.5 py-3 text-xs text-n-slate-11">
-      <Icon size={16} aria-hidden="true" />
-      {t(MEDIA_LABEL_KEY[h.format])}
-      {h.mediaHandle ? ` · ${t('mediaAttached')}` : ''}
-    </div>
+    <HeaderMedia
+      format={h.format}
+      sources={[h.previewUrl, h.mediaHandle]}
+      fallback={
+        <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-n-alpha-2 px-2.5 py-3 text-xs text-n-slate-11">
+          <Icon size={16} aria-hidden="true" />
+          {t(MEDIA_LABEL_KEY[h.format])}
+          {h.mediaHandle ? ` · ${t('mediaAttached')}` : ''}
+        </div>
+      }
+    />
   );
 }
 
@@ -210,7 +222,7 @@ function CarouselRow({ carousel, t }) {
     <div className="mt-1.5 flex gap-2 overflow-x-auto pb-1">
       {cards.map((card, i) => (
         <div key={i} className={CARD_SHELL}>
-          <HeaderBlock header={{ format: card.headerFormat, mediaHandle: card.mediaHandle }} t={t} />
+          <HeaderBlock header={{ format: card.headerFormat, mediaHandle: card.mediaHandle, previewUrl: card.previewUrl }} t={t} />
           <BodyText text={card.body} examples={card.examples} />
           <ButtonsList buttons={card.buttons} t={t} />
         </div>

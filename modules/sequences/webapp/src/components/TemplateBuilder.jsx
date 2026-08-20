@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Megaphone,
   Wrench,
@@ -232,14 +232,19 @@ function CategoryCard({ cat, selected, onSelect, t }) {
 
 // Shared header/example-media dropzone — used for the top-level header and for each
 // carousel card. Uploads through templatesApi.uploadExample and hands the resulting
-// opaque `handle` back to the caller (which stores it on header.mediaHandle / card.mediaHandle).
-function MediaDropzone({ format, mediaHandle, accountId, inboxId, onUploaded }) {
+// opaque `handle` back to the caller (which stores it on header.mediaHandle / card.mediaHandle),
+// together with a local object URL — the only way the live preview can show the real file.
+function MediaDropzone({ format, mediaHandle, accountId, inboxId, onUploaded, trackObjectUrl }) {
   const t = useT(M);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState('');
   const [fileName, setFileName] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef(null);
+  // ⛔ כתובת blob חיה עד שמשחררים אותה. את הקודמת משחררים כאן מיד בהחלפת קובץ; את
+  //    האחרונה משחרר העורך ביציאה (trackObjectUrl) — ולא הרכיב הזה בפירוק, כי מעבר בין
+  //    כרטיסי קרוסלה מפרק את אזור ההעלאה, ושחרור כאן היה מוחק את המדיה מהתצוגה המקדימה.
+  const objectUrl = useRef('');
 
   const handleFile = async (file) => {
     if (!file) return;
@@ -247,8 +252,13 @@ function MediaDropzone({ format, mediaHandle, accountId, inboxId, onUploaded }) 
     setUploading(true);
     try {
       const res = await uploadExample(accountId, inboxId, file);
+      // ה-handle של מטא אטום ואינו ניתן להצגה; רק ה-File שכרגע בדפדפן מאפשר להראות
+      // בתצוגה המקדימה את המדיה האמיתית.
+      if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+      objectUrl.current = URL.createObjectURL(file);
+      trackObjectUrl?.(objectUrl.current);
       setFileName(file.name);
-      onUploaded(res.handle);
+      onUploaded(res.handle, objectUrl.current);
     } catch (e) {
       setErr(e.message || t('uploadFailed'));
     } finally {
@@ -273,17 +283,25 @@ function MediaDropzone({ format, mediaHandle, accountId, inboxId, onUploaded }) 
           </button>
         </div>
       ) : (
+        /* ⛔ גרירת קובץ שני באמצע העלאה מריצה handleFile מקבילה, ומי שמסתיים אחרון מנצח —
+            כך ה-handle של הקובץ הלא-נכון נשמר בתבנית. הגרירה נעולה כמו הלחיצה, והאזור
+            נראה מושבת כדי שהתעלמות מגרירה תהיה גלויה ולא שקטה. */
         <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragOver={(e) => { e.preventDefault(); if (!uploading) setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer?.files?.[0]); }}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!uploading) handleFile(e.dataTransfer?.files?.[0]); }}
           onClick={() => !uploading && inputRef.current?.click()}
           onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !uploading) inputRef.current?.click(); }}
           role="button"
           tabIndex={0}
+          aria-disabled={uploading || undefined}
           aria-label={t('uploadAria')}
-          className={`flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-3 py-5 text-center outline-none transition-colors focus-visible:border-n-brand ${
-            dragOver ? 'border-n-brand bg-n-brand/5' : 'border-n-weak bg-n-alpha-1 hover:bg-n-alpha-2'
+          className={`flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-3 py-5 text-center outline-none transition-colors focus-visible:border-n-brand ${
+            uploading
+              ? 'cursor-not-allowed border-n-weak bg-n-alpha-1 opacity-60'
+              : dragOver
+                ? 'cursor-pointer border-n-brand bg-n-brand/5'
+                : 'cursor-pointer border-n-weak bg-n-alpha-1 hover:bg-n-alpha-2'
           }`}
         >
           {uploading ? (
@@ -311,7 +329,7 @@ function MediaDropzone({ format, mediaHandle, accountId, inboxId, onUploaded }) 
   );
 }
 
-function HeaderSection({ tpl, dispatch, accountId, inboxId, wabaCtx, locale, t }) {
+function HeaderSection({ tpl, dispatch, accountId, inboxId, wabaCtx, locale, trackObjectUrl, t }) {
   const mediaUploadOk = wabaCtx?.capabilities?.mediaUpload !== false;
   const reason = locale === 'he' ? wabaCtx?.capabilities?.reason_he : wabaCtx?.capabilities?.reason_en;
   const isMedia = ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(tpl.header.format);
@@ -357,7 +375,11 @@ function HeaderSection({ tpl, dispatch, accountId, inboxId, wabaCtx, locale, t }
               mediaHandle={tpl.header.mediaHandle}
               accountId={accountId}
               inboxId={inboxId}
-              onUploaded={(handle) => dispatch({ type: 'set_header', field: 'mediaHandle', value: handle })}
+              trackObjectUrl={trackObjectUrl}
+              onUploaded={(handle, previewUrl) => {
+                dispatch({ type: 'set_header', field: 'mediaHandle', value: handle });
+                dispatch({ type: 'set_header', field: 'previewUrl', value: previewUrl });
+              }}
             />
           ) : (
             <p className="rounded-lg border border-n-amber-7 bg-n-amber-3 px-3 py-2 text-xs text-n-amber-12">
@@ -591,7 +613,7 @@ function ButtonsSection({ tpl, dispatch, flows, flowsReason, t }) {
   );
 }
 
-function CarouselCardEditor({ index, card, dispatch, accountId, inboxId, wabaCtx, canRemove, onRemove, onDuplicate, t }) {
+function CarouselCardEditor({ index, card, dispatch, accountId, inboxId, wabaCtx, canRemove, onRemove, onDuplicate, trackObjectUrl, t }) {
   const vars = bodyVars(card.body);
   const mediaUploadOk = wabaCtx?.capabilities?.mediaUpload !== false;
   const patchCard = (p) => dispatch({ type: 'carousel_update_card', index, patch: p });
@@ -611,7 +633,8 @@ function CarouselCardEditor({ index, card, dispatch, accountId, inboxId, wabaCtx
             mediaHandle={card.mediaHandle}
             accountId={accountId}
             inboxId={inboxId}
-            onUploaded={(handle) => patchCard({ mediaHandle: handle })}
+            trackObjectUrl={trackObjectUrl}
+            onUploaded={(handle, previewUrl) => patchCard({ mediaHandle: handle, previewUrl })}
           />
         ) : (
           <p className="rounded-lg border border-n-amber-7 bg-n-amber-3 px-3 py-2 text-xs text-n-amber-12">
@@ -697,7 +720,7 @@ function CarouselCardEditor({ index, card, dispatch, accountId, inboxId, wabaCtx
   );
 }
 
-function CarouselSection({ tpl, dispatch, accountId, inboxId, wabaCtx, t }) {
+function CarouselSection({ tpl, dispatch, accountId, inboxId, wabaCtx, trackObjectUrl, t }) {
   const isOn = !!tpl.carousel;
   const cards = tpl.carousel?.cards || [];
   const [activeCard, setActiveCard] = useState(0);
@@ -708,9 +731,13 @@ function CarouselSection({ tpl, dispatch, accountId, inboxId, wabaCtx, t }) {
     // Re-clicking the already-active format must be a no-op — otherwise it re-dispatches
     // mediaHandle: '' for every card and silently wipes already-uploaded card media.
     if (fmt === sharedFormat) return;
-    cards.forEach((_, i) => dispatch({ type: 'carousel_update_card', index: i, patch: { headerFormat: fmt, mediaHandle: '' } }));
+    // previewUrl נמחק יחד עם ה-handle — אחרת התצוגה המקדימה תמשיך להראות את המדיה
+    // של הפורמט הקודם למרות שהתבנית כבר לא מחזיקה אותה.
+    cards.forEach((_, i) => dispatch({ type: 'carousel_update_card', index: i, patch: { headerFormat: fmt, mediaHandle: '', previewUrl: '' } }));
   };
 
+  // previewUrl לא משוכפל בכוונה: הכתובת המקומית שייכת לכרטיס המקור (ומשוחררת עם החלפת
+  // הקובץ שלו). הכרטיס החדש שומר את ה-handle התקין למטא ומציג חיווי עד שיועלה לו קובץ.
   const duplicateCard = (i) => {
     const src = cards[i];
     const newIndex = cards.length;
@@ -783,6 +810,7 @@ function CarouselSection({ tpl, dispatch, accountId, inboxId, wabaCtx, t }) {
                 canRemove={cards.length > LIMITS.carouselCardsMin}
                 onRemove={() => { dispatch({ type: 'carousel_remove_card', index: active }); setActiveCard(0); }}
                 onDuplicate={() => duplicateCard(active)}
+                trackObjectUrl={trackObjectUrl}
                 t={t}
               />
             ) : null}
@@ -934,6 +962,15 @@ export default function TemplateBuilder({
 
   const inboxId = wabaCtx?.inboxes?.[0]?.inboxId;
 
+  // כתובות ה-blob שנוצרו כדי להציג את המדיה שהועלתה בתצוגה המקדימה. הן חייבות לשרוד
+  // מעבר בין כרטיסי קרוסלה (שמפרק את אזור ההעלאה), ולכן העורך משחרר אותן ביציאה.
+  const objectUrls = useRef([]);
+  useEffect(() => () => {
+    objectUrls.current.forEach((u) => URL.revokeObjectURL(u));
+    objectUrls.current = [];
+  }, []);
+  const trackObjectUrl = useCallback((url) => { if (url) objectUrls.current.push(url); }, []);
+
   useEffect(() => {
     if (accountId == null || inboxId == null) { setFlows([]); return undefined; }
     let cancelled = false;
@@ -1023,7 +1060,7 @@ export default function TemplateBuilder({
           ) : (
             <>
               {!isCarousel ? (
-                <HeaderSection tpl={tpl} dispatch={dispatch} accountId={accountId} inboxId={inboxId} wabaCtx={wabaCtx} locale={locale} t={t} />
+                <HeaderSection tpl={tpl} dispatch={dispatch} accountId={accountId} inboxId={inboxId} wabaCtx={wabaCtx} locale={locale} trackObjectUrl={trackObjectUrl} t={t} />
               ) : null}
               <BodySection tpl={tpl} dispatch={dispatch} t={t} />
               {!isCarousel ? (
@@ -1032,7 +1069,7 @@ export default function TemplateBuilder({
                   <ButtonsSection tpl={tpl} dispatch={dispatch} flows={flows} flowsReason={flowsReason} t={t} />
                 </>
               ) : null}
-              <CarouselSection tpl={tpl} dispatch={dispatch} accountId={accountId} inboxId={inboxId} wabaCtx={wabaCtx} t={t} />
+              <CarouselSection tpl={tpl} dispatch={dispatch} accountId={accountId} inboxId={inboxId} wabaCtx={wabaCtx} trackObjectUrl={trackObjectUrl} t={t} />
               {!isCarousel ? <LtoSection tpl={tpl} dispatch={dispatch} t={t} /> : null}
             </>
           )}

@@ -27,6 +27,7 @@ import Dropdown from './ui/Dropdown.jsx';
 import Switch from './ui/Switch.jsx';
 import Card from './ui/Card.jsx';
 import TemplatePicker from './ui/TemplatePicker.jsx';
+import VariableRow from './ui/VariableRow.jsx';
 import MessageBubble from './ui/MessageBubble.jsx';
 import SequencePreview from './SequencePreview.jsx';
 import { useToast } from './ui/Toast.jsx';
@@ -64,8 +65,6 @@ const VAR_RE = /\{\{\s*\d+\s*\}\}/g;
 // מילון co-located (he/en) — משותף לכל רכיבי המשנה בקובץ.
 const M = {
   he: {
-    // בורר שדות מערכת (VariableRow)
-    sysFirstName: 'שם פרטי', sysFullName: 'שם מלא', sysPhone: 'טלפון', sysEmail: 'אימייל', sysCustom: 'ערך מותאם אישית',
     // מרווחים מוכנים (StepCard)
     presetNow: 'מיד', presetHour: 'שעה', preset4h: '4 שעות', presetDay: 'יום', preset3d: '3 ימים', presetWeek: 'שבוע',
     // חזרה (TimingExtras)
@@ -80,6 +79,8 @@ const M = {
     stopTitle: 'עצירה כשהנמען מגיב', stopDesc: 'הרצף ייעצר אוטומטית אם הנמען שולח הודעה',
     shabbatTitle: 'אל תשלח בשבת ובחגים', shabbatDesc: 'ההודעות יושהו אוטומטית בשבתות ובימי חג (שעון ישראל)',
     quietHours: 'שעות שקט (לא נשלחות הודעות)', quietStart: 'מתחילות', quietEnd: 'מסתיימות',
+    quietInherits: 'ריק — הרצף משתמש בשעות השקט של החשבון (הגדרות ← ציות).',
+    quietOverrides: 'הרצף הזה חורג משעות השקט של החשבון.',
     // שלבים
     stepsHeading: 'שלבי הרצף ({count})', expandAll: 'הרחב הכול', collapseAll: 'כווץ הכול',
     fullPreview: 'תצוגה מלאה', addStep: 'הוסף שלב',
@@ -130,13 +131,10 @@ const M = {
     linkAuto: 'הקישור ייווצר אוטומטית · מקסימום {max}', videoAutoCompress: ' · סרטון גדול יכווץ אוטומטית בדפדפן',
     hideManualLink: 'הסתר קישור ידני', showManualLink: 'או הדבקת קישור ידני',
     invalidHttps: 'נדרש קישור https תקין',
-    // VariableRow
-    varRowLabel: 'משתנה {n} — ערך:', varSelectAria: 'ערך למשתנה {n}', varCustomAria: 'ערך מותאם למשתנה {n}', freeText: 'טקסט חופשי',
     // MessagePreview
     preview: 'תצוגה מקדימה',
   },
   en: {
-    sysFirstName: 'First name', sysFullName: 'Full name', sysPhone: 'Phone', sysEmail: 'Email', sysCustom: 'Custom value',
     presetNow: 'Immediately', presetHour: '1 hour', preset4h: '4 hours', presetDay: '1 day', preset3d: '3 days', presetWeek: '1 week',
     repeatDay: 'Every day', repeatWeek: 'Every week', repeatMonth: 'Every month',
     mediaImage: 'Image', mediaVideo: 'Video', mediaDocument: 'Document', mediaGeneric: 'Media',
@@ -146,6 +144,8 @@ const M = {
     stopTitle: 'Stop when the recipient replies', stopDesc: 'The sequence stops automatically if the recipient sends a message',
     shabbatTitle: "Don't send on Shabbat and holidays", shabbatDesc: 'Messages are paused automatically on Shabbat and holidays (Israel time)',
     quietHours: 'Quiet hours (no messages sent)', quietStart: 'Start', quietEnd: 'End',
+    quietInherits: 'Empty — this sequence uses the account quiet hours (Settings → Compliance).',
+    quietOverrides: 'This sequence overrides the account quiet hours.',
     stepsHeading: 'Sequence steps ({count})', expandAll: 'Expand all', collapseAll: 'Collapse all',
     fullPreview: 'Full preview', addStep: 'Add step',
     durationPrefix: 'Sequence duration:', durationSuffix: 'from enrollment to the last message',
@@ -190,30 +190,9 @@ const M = {
     linkAuto: 'The link is created automatically · max {max}', videoAutoCompress: ' · a large video is compressed automatically in the browser',
     hideManualLink: 'Hide manual link', showManualLink: 'Or paste a manual link',
     invalidHttps: 'A valid https link is required',
-    varRowLabel: 'Variable {n} — value:', varSelectAria: 'Value for variable {n}', varCustomAria: 'Custom value for variable {n}', freeText: 'Free text',
     preview: 'Preview',
   },
 };
-
-/*
- * משתני התבנית יכולים למפות לשדה מערכת (מוחלף בערך האמיתי של הליד בזמן שליחה)
- * או לערך מותאם אישית (טקסט חופשי). אחסון ב-step.params[i]:
- *   שדה מערכת → המחרוזת '@first_name' / '@name' / '@phone' / '@email'
- *   מותאם     → הטקסט המילולי (כולל ריק)
- * (התוויות מתורגמות ב-VariableRow דרך t; כאן נשמר רק מזהה השדה + מפתח התווית.)
- */
-const SYSTEM_FIELDS = [
-  { value: '@first_name', labelKey: 'sysFirstName' },
-  { value: '@name', labelKey: 'sysFullName' },
-  { value: '@phone', labelKey: 'sysPhone' },
-  { value: '@email', labelKey: 'sysEmail' },
-  { value: '@custom', labelKey: 'sysCustom' },
-];
-
-// ערך מאוחסן הוא שדה מערכת אם ורק אם הוא בדיוק אחד מהטוקנים (משמש את VariableRow)
-function isSystemField(v) {
-  return v === '@first_name' || v === '@name' || v === '@phone' || v === '@email';
-}
 
 // מרווחים נוחים מהשלב הקודם (צ'יפים) — גמיש, לצד הקלט המספרי המדויק. התווית מתורגמת ב-render.
 const DELAY_PRESETS = [
@@ -579,6 +558,11 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
                 onChange={(e) => update({ quietHoursEnd: e.target.value })}
               />
             </div>
+            {/* ריק = יורש מהחשבון. בלי המשפט הזה שדה ריק נראה כמו "אין הגנה",
+                וזה בדיוק מה שהיה נכון עד 7.8 — ועכשיו כבר לא. */}
+            <p className="mt-1.5 text-xs text-n-slate-10">
+              {!draft.quietHoursStart && !draft.quietHoursEnd ? t('quietInherits') : t('quietOverrides')}
+            </p>
           </div>
         </section>
 
@@ -1393,17 +1377,25 @@ function MediaUrlField({ format, value, accountId, onChange }) {
           <p className="mt-2 text-xs text-n-blue-11">{t('localProcessing')}</p>
         </div>
       ) : (
+        /* ⛔ גרירת קובץ שני באמצע העלאה מריצה handleFile מקבילה, ומי שמסתיים אחרון מנצח —
+            כך הקובץ הלא-נכון נדבק לשלב ששולח בוואטסאפ. הגרירה נעולה כמו הלחיצה, והאזור
+            נראה מושבת כדי שהתעלמות מגרירה תהיה גלויה ולא שקטה. */
         <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragOver={(e) => { e.preventDefault(); if (!busy) setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer?.files?.[0]); }}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!busy) handleFile(e.dataTransfer?.files?.[0]); }}
           onClick={() => !busy && inputRef.current?.click()}
           onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !busy) inputRef.current?.click(); }}
           role="button"
           tabIndex={0}
+          aria-disabled={busy || undefined}
           aria-label={t('uploadAria', { label })}
-          className={`flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-3 py-5 text-center outline-none transition-colors focus-visible:border-n-brand ${
-            dragOver ? 'border-n-brand bg-n-brand/5' : 'border-n-amber-7 bg-n-alpha-1 hover:bg-n-alpha-2'
+          className={`flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-3 py-5 text-center outline-none transition-colors focus-visible:border-n-brand ${
+            busy
+              ? 'cursor-not-allowed border-n-weak bg-n-alpha-1 opacity-60'
+              : dragOver
+                ? 'cursor-pointer border-n-brand bg-n-brand/5'
+                : 'cursor-pointer border-n-amber-7 bg-n-alpha-1 hover:bg-n-alpha-2'
           }`}
         >
           {uploading ? (
@@ -1456,47 +1448,6 @@ function MediaUrlField({ format, value, accountId, onChange }) {
           placeholder="https://example.com/media.jpg"
           onChange={(e) => onChange(e.target.value)}
           error={invalid ? t('invalidHttps') : ''}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-/*
- * VariableRow — שורת משתנה: בורר שדה (שם/טלפון/אימייל/מותאם) + קלט טקסט
- * שמופיע רק כשנבחר "ערך מותאם אישית". אחסון ב-params[i]:
- *   שדה מערכת → '@name' / '@phone' / '@email'
- *   מותאם     → הטקסט המילולי
- */
-function VariableRow({ index, value, example, onChange }) {
-  const t = useT(M);
-  const custom = !isSystemField(value);
-  // הערך לבורר: '@name'/'@phone'/'@email' או '@custom' כשזה ערך מותאם
-  const selectValue = custom ? '@custom' : value;
-  // תוויות שדות המערכת מתורגמות כאן (המזהים קבועים ב-SYSTEM_FIELDS)
-  const options = SYSTEM_FIELDS.map((f) => ({ value: f.value, label: t(f.labelKey) }));
-
-  const onSelect = (v) => {
-    // מעבר לשדה מערכת → מאחסנים את הטוקן; מעבר ל"מותאם" → מתחילים מטקסט ריק
-    onChange(v === '@custom' ? '' : v);
-  };
-
-  return (
-    <div>
-      <label className="mb-1.5 block text-sm font-medium text-n-slate-12">{t('varRowLabel', { n: index + 1 })}</label>
-      <Dropdown
-        options={options}
-        value={selectValue}
-        onChange={onSelect}
-        ariaLabel={t('varSelectAria', { n: index + 1 })}
-      />
-      {custom ? (
-        <Input
-          className="mt-2"
-          aria-label={t('varCustomAria', { n: index + 1 })}
-          value={value}
-          placeholder={example || t('freeText')}
-          onChange={(e) => onChange(e.target.value)}
         />
       ) : null}
     </div>

@@ -49,7 +49,11 @@ test('injector: stats row lands on the matching card (matched by title)', async 
   const bar = card.querySelector('.cwpt-stats');
   assert.ok(bar, 'stats row should be injected into the card');
   assert.match(bar.textContent, /3/);
-  assert.ok(bar.querySelector('[data-cwpt-report="7"]'), 'full-report button carries the campaign id');
+  assert.equal(
+    bar.querySelector('[data-cwpt-report]'),
+    null,
+    'the duplicate full-report action stays removed because Chatwoot 4.17 owns the drill-down'
+  );
 });
 
 test('injector: KPI bar aggregates all campaigns and lands in .max-w-5xl', async () => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isNoSendNow, nextSendAt, addInterval, jerusalemDow, skipNoSendWindows, projectSchedule } from '../src/schedule.js';
+import { isNoSendNow, nextSendAt, addInterval, jerusalemDow, skipNoSendWindows, projectSchedule, gateFor, accountQuietWindow } from '../src/schedule.js';
 
 const D = (s) => new Date(s);
 
@@ -218,4 +218,43 @@ test('skipNoSendWindows: yom-tov pushes past the whole holiday day', () => {
   // Pesach window 04-01T18:18 → 04-02T19:36. A send at 04-02 10:00 (inside) → 04-03 10:00.
   const r = skipNoSendWindows(D('2026-04-02T10:00:00+03:00'), pesach, null);
   assert.equal(r.toISOString(), D('2026-04-03T10:00:00+03:00').toISOString());
+});
+
+// ── ירושת שעות שקט מהחשבון (07.08.2026) ────────────────────────────────────────
+// לרצף בלי חלון משלו לא הייתה שום הגנה — וזו הייתה ברירת המחדל של כל רצף שנוצר.
+// הגדרה אחת ברמת החשבון חייבת לכסות גם אותו, אחרת "הגדרתי שעות שקט" זו אמירה שקרית.
+test('accountQuietWindow: שעות שלמות → HH:MM', () => {
+  assert.deepEqual(accountQuietWindow({ quiet_start_hour: 21, quiet_end_hour: 8 }), { start: '21:00', end: '08:00' });
+  assert.deepEqual(accountQuietWindow({ quiet_start_hour: 9, quiet_end_hour: 9 }), null, 'start===end = כבוי');
+  assert.equal(accountQuietWindow(null), null);
+  assert.equal(accountQuietWindow({}), null);
+});
+
+test('רצף בלי שעות שקט יורש את החלון של החשבון', () => {
+  const seq = { skip_shabbat: false, quiet_start: null, quiet_end: null };
+  const g = gateFor(seq, 2, new Date(), [], { quiet_start_hour: 21, quiet_end_hour: 8 });
+  assert.equal(g.quietStart, '21:00');
+  assert.equal(g.quietEnd, '08:00');
+});
+
+test('חלון מפורש של הרצף גובר על ברירת המחדל של החשבון', () => {
+  const seq = { skip_shabbat: false, quiet_start: '22:30', quiet_end: '07:00' };
+  const g = gateFor(seq, 2, new Date(), [], { quiet_start_hour: 21, quiet_end_hour: 8 });
+  assert.equal(g.quietStart, '22:30');
+  assert.equal(g.quietEnd, '07:00');
+});
+
+test('ההודעה הראשונה עדיין פטורה — גם כשיורשים מהחשבון', () => {
+  // הפטור הזה מכוון ומתועד: זו התשובה לטופס שהליד מילא לפני רגע, לא דיוור.
+  const seq = { skip_shabbat: false, quiet_start: null, quiet_end: null };
+  const g = gateFor(seq, 1, new Date(), [], { quiet_start_hour: 21, quiet_end_hour: 8 });
+  assert.equal(g.quietStart, undefined);
+  assert.equal(g.quietEnd, undefined);
+});
+
+test('אין הגדרת חשבון — התנהגות כשהייתה', () => {
+  const seq = { skip_shabbat: false, quiet_start: null, quiet_end: null };
+  const g = gateFor(seq, 2, new Date(), [], null);
+  assert.equal(g.quietStart, undefined);
+  assert.equal(g.quietEnd, undefined);
 });

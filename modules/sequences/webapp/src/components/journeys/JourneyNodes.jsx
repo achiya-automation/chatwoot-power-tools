@@ -2,6 +2,7 @@ import { Handle, Position } from '@xyflow/react';
 import {
   Zap,
   MessageSquare,
+  Lock,
   LayoutTemplate,
   HelpCircle,
   MousePointerClick,
@@ -31,6 +32,7 @@ const M = {
   he: {
     trigger: 'טריגר',
     message: 'הודעה',
+    private_reply: 'הודעה פרטית למגיב',
     template: 'תבנית וואטסאפ',
     question: 'שאלה',
     buttons: 'כפתורים',
@@ -58,10 +60,12 @@ const M = {
     defaultOut: 'ברירת מחדל',
     tplParams: '{n} פרמטרים',
     noTemplate: 'לא נבחרה תבנית',
+    tplWait: 'ממתין לתשובה',
   },
   en: {
     trigger: 'Trigger',
     message: 'Message',
+    private_reply: 'Private reply to commenter',
     template: 'WhatsApp template',
     question: 'Question',
     buttons: 'Buttons',
@@ -89,6 +93,7 @@ const M = {
     defaultOut: 'Default',
     tplParams: '{n} params',
     noTemplate: 'No template selected',
+    tplWait: 'Waiting for reply',
   },
 };
 
@@ -96,6 +101,7 @@ const M = {
 export const NODE_META = {
   trigger: { icon: Zap, color: 'teal' },
   message: { icon: MessageSquare, color: 'blue' },
+  private_reply: { icon: Lock, color: 'violet' },
   template: { icon: LayoutTemplate, color: 'blue' },
   question: { icon: HelpCircle, color: 'violet' },
   buttons: { icon: MousePointerClick, color: 'violet' },
@@ -262,6 +268,14 @@ function TemplateNode({ data, selected }) {
       {nParams ? (
         <span className="text-xxs text-n-slate-10">{t('tplParams', { n: nParams })}</span>
       ) : null}
+      {data?.waitForReply ? (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="inline-flex rounded bg-n-amber-3 px-1.5 py-0.5 text-xxs font-medium text-n-amber-11">
+            {t('tplWait')}
+          </span>
+          {data?.saveTo?.key ? <KeyChip>{t('saveToChip', { key: data.saveTo.key })}</KeyChip> : null}
+        </div>
+      ) : null}
     </NodeShell>
   );
 }
@@ -339,10 +353,20 @@ function HandoffNode({ data, selected }) {
   );
 }
 
+function PrivateReplyNode({ data, selected }) {
+  const t = useT(M);
+  return (
+    <NodeShell type="private_reply" selected={selected}>
+      <Snippet text={data?.text} fallback={t('empty')} />
+    </NodeShell>
+  );
+}
+
 // Registered once at module level — React Flow requires a stable reference.
 export const nodeTypes = {
   trigger: TriggerNode,
   message: MessageNode,
+  private_reply: PrivateReplyNode,
   template: TemplateNode,
   question: QuestionNode,
   buttons: ButtonsNode,

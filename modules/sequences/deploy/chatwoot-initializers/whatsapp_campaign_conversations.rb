@@ -1,94 +1,211 @@
-# Custom initializer: WhatsApp campaign enhancements
-# 1. Records a conversation + message in Chatwoot for every campaign send
-#    (upstream sends the template via Meta API but records nothing in the inbox)
-# 2. Preserves upstream Liquid personalization per contact:
-#    {{contact.first_name}}, {{contact.name}}, {{contact.email}},
-#    {{contact.phone_number}}, {{contact.custom_attribute.<key>}},
-#    {{agent.name}} etc. — resolved by Whatsapp::LiquidTemplateProcessorService
-# 3. CAROUSEL template support: upstream v4.14 builds only header/body/footer/
-#    buttons components, so Meta rejects carousel templates with error #132012
-#    ("header component parameter should not be empty"). We append the carousel
-#    component built from the synced template definition itself: each card gets
-#    its header media + a payload per quick-reply button. Card media: the
-#    template's example handle is downloaded and re-uploaded to the WhatsApp
-#    Media API (Meta's fetcher 403s on its own scontent links — error 131053),
-#    and the media id is cached in Redis for 25 days.
-# 4. Captures the exact audience before processing and stamps the original contact identity on
-#    every recorded message. Imported contacts can otherwise be represented by a second,
-#    channel-bound Contact record with an automatic name and no phone, corrupting CSV reports.
-# 5. Records a ledger row for EVERY recipient, including the ones upstream drops in silence:
-#    no phone, no template params, blank Liquid, or a send Meta rejected. Without them a
-#    recipient simply vanishes from the report with no reason attached — that is how 39
-#    phone-less contacts sat in a campaign audience and received nothing, unnoticed.
+# Custom initializer: WhatsApp campaign enhancements (v4.17 enterprise-graft)
+#
+# Since 4.17 Chatwoot's enterprise pipeline owns the whole campaign flow — audience freeze,
+# per-recipient tracking (public.campaign_recipients), skip/failure reasons and delivery
+# webhooks. The engine's reports read that table directly, so this file grafts ONLY what is
+# still not native:
+# 1. CAROUSEL template support: upstream builds only header/body/footer/buttons components,
+#    so Meta rejects carousel templates with error #132012. We append the carousel component
+#    built from the synced template definition itself: each card gets its header media + a
+#    payload per quick-reply button. Card media: the template's example handle is downloaded
+#    and re-uploaded to the WhatsApp Media API (Meta's fetcher 403s on its own scontent
+#    links — error 131053), and the media id is cached in Redis for 25 days.
+# 2. Records a conversation + message in Chatwoot for every successful campaign send
+#    (upstream sends the template via Meta API but records nothing in the inbox), with the
+#    original contact identity stamped on the message. Imported contacts can otherwise be
+#    represented by a second, channel-bound Contact record with an automatic name and no
+#    phone, corrupting reports.
+# 3. Applies the optional campaign assignee from trigger_rules. The WhatsApp campaign form
+#    stores { assignee: { type: 'User'|'AgentBot', id: N } }; every created/reused
+#    conversation is assigned before its outgoing campaign message is recorded.
+#
+# (Until 20.8.26 this file also wrote the drip.campaign_send_snapshots /
+# drip.campaign_audience_snapshots ledger. The engine now reads campaign_recipients for
+# 4.17 campaigns — the drip ledger keeps serving pre-4.17 history and resend retries,
+# which the engine writes itself.)
 #
 # Mounted read-only via docker-compose into rails + sidekiq (survives image updates).
-# Created: 2026-02-18 | Rewritten: 2026-06-10 for Chatwoot v4.14.1
-#   The original version was written against an older Chatwoot: it bypassed the
-#   (then nonexistent) Liquid processing AND called send_whatsapp_template_message
-#   without the template_params: keyword, which raises ArgumentError on v4.14.1
-#   and broke campaign sends entirely. This version overrides process_contact +
-#   send_whatsapp_template_message (same signature, carousel-aware), reuses
-#   upstream Liquid + send logic, and records the *rendered* per-contact text.
+# Created: 2026-02-18 | Rewritten: 2026-06-10 (v4.14.1) | Native-first trim: 2026-08-20 (v4.17)
 #
-# Update safety: the guard below verifies the upstream methods + signature
-# before patching. If a future Chatwoot version changes them, the patch is NOT
-# applied — upstream campaign sending keeps working, only the local extras
-# (conversation recording, carousel) are skipped — and a loud error is logged.
+# Update safety: the guard below verifies the upstream methods + signature before patching.
+# If a future Chatwoot version changes them, the patch is NOT applied — upstream campaign
+# sending keeps working, only the local extras (conversation recording, carousel, assignee)
+# are skipped — and a loud error is logged.
 
-# Delivery webhooks can update or replace Chatwoot's presentation message. Keep the durable
-# attempt row in sync by Meta source id so reports do not lose a final status with the UI row.
-module WhatsappCampaignStatusSnapshotWriter
-  def self.record(message)
-    return if message.source_id.blank?
-
-    connection = ActiveRecord::Base.connection
-    status = message.status_before_type_cast.to_i
-    error = status == 3 ? message.external_error : nil
-    connection.execute(<<~SQL.squish)
-      UPDATE drip.campaign_send_snapshots
-         SET message_id = #{message.id.to_i},
-             conversation_id = #{message.conversation_id.to_i},
-             status = CASE
-               WHEN status = 3 OR #{status} = 3 THEN 3
-               ELSE GREATEST(status, #{status})
-             END,
-             error_title = CASE
-               WHEN #{status} = 3 THEN #{connection.quote(error)}
-               ELSE error_title
-             END,
-             status_updated_at = CURRENT_TIMESTAMP
-       WHERE account_id = #{message.account_id.to_i}
-         AND source_id = #{connection.quote(message.source_id.to_s)}
-    SQL
-  rescue StandardError => e
-    Rails.logger.error "Campaign delivery snapshot update failed: #{e.class}: #{e.message}"
-  end
-end
-
-module WhatsappCampaignIncomingStatusPatch
+# The graft rides on Enterprise::Whatsapp::OneoffCampaignService's shape — recipient-first
+# sends + provider-response hook. All heavy lifting (helpers) stays defined on the service
+# via class_eval below; this module only re-routes the 4.17 pipeline through them.
+module WhatsappCampaignGraft417
   private
 
-  def update_message_with_status(message, status)
-    result = super
-    WhatsappCampaignStatusSnapshotWriter.record(message)
-    result
+  # the native 4.17 flow verbatim, plus carousel support before the send and
+  # conversation recording after a successful one
+  def send_whatsapp_template_message(recipient:, to:, template_params:)
+    processor = Whatsapp::TemplateProcessorService.new(
+      channel: channel,
+      template_params: template_params
+    )
+
+    name, namespace, lang_code, processed_parameters = processor.call
+
+    if name.blank?
+      recipient.mark_skipped!('Template name could not be resolved')
+      return
+    end
+
+    processed_parameters = append_carousel_component(name, lang_code, processed_parameters)
+    source_id = channel.send_template(to, template_info(name, namespace, lang_code, processed_parameters), nil)
+    update_recipient_from_provider_response(recipient, source_id)
+
+    create_campaign_conversation_and_message(recipient.contact, source_id, template_params) if source_id.present?
+    source_id
+  rescue StandardError => e
+    Rails.logger.error "Failed to send WhatsApp template message to #{to}: #{e.message}"
+    Rails.logger.error "Backtrace: #{e.backtrace.first(5).join('\n')}"
+    recipient.mark_failed!(message: e.message)
+    nil
   end
 end
 
-# Error sink handed to Chatwoot's send_template in place of the `message` argument.
-# Upstream passes nil, so Meta's rejection reason is written to the log and lost. A real
-# Message can't be used either: Base::SendOnChannelService skips a send only when source_id
-# is already present, so an unsent Message record would be delivered a second time by
-# SendReplyJob. This object satisfies the calls handle_error makes and nothing else.
-class WhatsappCampaignErrorSink
-  attr_accessor :external_error, :status
+# The campaign opener automation must assign the selected/default bot before its webhook is
+# queued. Doing this in Chatwoot closes the race where n8n receives the outgoing opener while
+# the conversation is still unassigned. Existing User/AgentBot assignments always win, so a
+# campaign-level selection or a human takeover is never overwritten.
+module WhatsappCampaignAutomationActionService
+  private
 
-  def blank?
-    false
+  def assign_agent_bot_if_unassigned(agent_bot_ids = [])
+    return if @conversation.assignee_id.present? || @conversation.assignee_agent_bot_id.present?
+
+    agent_bot_id = Array(agent_bot_ids).first.to_i
+    return if agent_bot_id.zero?
+
+    Conversations::AssignmentService.new(
+      conversation: @conversation,
+      assignee_id: agent_bot_id,
+      assignee_type: 'AgentBot'
+    ).perform
   end
 
-  def save!
-    true
+  # A Web/Mobile macro calls this guard directly (legacy AutomationRules may call it too).
+  # The explicit action may replace a human assignment, but only after proving that the
+  # contact has a recorded campaign opener. This preserves the campaign-only bot boundary.
+  # Params: [agent_bot_id, inbox_id, opener_marker_1, opener_marker_2, ...]
+  def assign_agent_bot_for_campaign_contact(params = [])
+    agent_bot_id, inbox_id, *campaign_markers = Array(params)
+    agent_bot_id = agent_bot_id.to_i
+    inbox_id = inbox_id.to_i
+
+    return if agent_bot_id.zero? || inbox_id.zero?
+    return unless @conversation.inbox_id == inbox_id
+    return unless AgentBot.accessible_to(@account).exists?(id: agent_bot_id)
+
+    @conversation.with_lock do
+      unless campaign_contact?(inbox_id, campaign_markers)
+        Rails.logger.info(
+          "[CUSTOM] Campaign bot assignment skipped for conversation #{@conversation.id}: contact is not campaign-eligible"
+        )
+        next
+      end
+
+      Conversations::AssignmentService.new(
+        conversation: @conversation,
+        assignee_id: agent_bot_id,
+        assignee_type: 'AgentBot'
+      ).perform
+    end
+  end
+
+  # Removes only the requested AgentBot. Human and team assignments are never changed.
+  # Params: [agent_bot_id]
+  def remove_specific_agent_bot(agent_bot_ids = [])
+    agent_bot_id = Array(agent_bot_ids).first.to_i
+    return if agent_bot_id.zero?
+
+    @conversation.with_lock do
+      next unless @conversation.assignee_agent_bot_id == agent_bot_id
+
+      Conversations::AssignmentService.new(
+        conversation: @conversation,
+        assignee_id: nil,
+        assignee_type: 'User'
+      ).perform
+    end
+  end
+
+  def campaign_contact?(inbox_id, campaign_markers)
+    return false if @conversation.contact_id.blank?
+
+    related_conversations = @account.conversations.where(inbox_id: inbox_id, contact_id: @conversation.contact_id)
+    if @conversation.contact_inbox_id.present?
+      same_contact_inbox = @account.conversations.where(
+        inbox_id: inbox_id,
+        contact_inbox_id: @conversation.contact_inbox_id
+      )
+      related_conversations = related_conversations.or(same_contact_inbox)
+    end
+
+    return true if related_conversations.where.not(campaign_id: nil).exists?
+
+    campaign_messages = Message.reorder(nil).where(
+      account_id: @account.id,
+      conversation_id: related_conversations.select(:id),
+      message_type: :outgoing
+    )
+    return true if campaign_messages.where("messages.content_attributes::jsonb ? 'campaign_id'").exists?
+
+    campaign_markers.compact_blank.any? do |marker|
+      escaped_marker = ActiveRecord::Base.sanitize_sql_like(marker.to_s)
+      campaign_messages.where('messages.content ILIKE ?', "%#{escaped_marker}%").exists?
+    end
+  end
+end
+
+# Chatwoot macros historically accept only human ids in the built-in `assign_agent`
+# action. The dashboard overlay represents an AgentBot as `AgentBot:<id>` so User and
+# AgentBot ids can never collide, while every legacy macro payload keeps its original
+# behaviour through `super`.
+#
+# Bot 12 is deliberately campaign-only. Keeping this policy here (rather than only in
+# the dashboard) means a macro executed from Web, Mobile or the API cannot bypass it.
+module WhatsappCampaignMacroActionService
+  CAMPAIGN_ONLY_AGENT_BOTS = {
+    [11, 12] => {
+      inbox_id: 38,
+      markers: ['חשבת אולי למכור', 'רציתי לשאול בנוגע לדירה', 'חשבתם אולי למכור']
+    }
+  }.freeze
+
+  private
+
+  def assign_agent(agent_ids)
+    encoded_assignee = Array(agent_ids).first.to_s
+    match = encoded_assignee.match(/\AAgentBot:(\d+)\z/)
+    return super unless match
+
+    agent_bot_id = match[1].to_i
+    policy = CAMPAIGN_ONLY_AGENT_BOTS[[@account.id, agent_bot_id]]
+    if policy
+      return assign_agent_bot_for_campaign_contact(
+        [agent_bot_id, policy[:inbox_id], *policy[:markers]]
+      )
+    end
+
+    return unless AgentBot.accessible_to(@account).exists?(id: agent_bot_id)
+
+    @conversation.with_lock do
+      Conversations::AssignmentService.new(
+        conversation: @conversation,
+        assignee_id: agent_bot_id,
+        assignee_type: 'AgentBot'
+      ).perform
+    end
+  end
+end
+
+module WhatsappCampaignAutomationRuleActions
+  def actions_attributes
+    super + %w[assign_agent_bot_if_unassigned assign_agent_bot_for_campaign_contact remove_specific_agent_bot]
   end
 end
 
@@ -96,13 +213,47 @@ Rails.application.config.after_initialize do
   Rails.logger.info '[CUSTOM] Loading WhatsApp campaign conversation patch...'
 
   begin
+    unless AutomationRule.ancestors.include?(WhatsappCampaignAutomationRuleActions)
+      AutomationRule.prepend(WhatsappCampaignAutomationRuleActions)
+    end
+
+    unless AutomationRules::ActionService.ancestors.include?(WhatsappCampaignAutomationActionService)
+      AutomationRules::ActionService.prepend(WhatsappCampaignAutomationActionService)
+    end
+
+    # `remove_specific_agent_bot` is a direct macro action. Register it additively,
+    # preserving every upstream action and failing loudly if the registry shape changes.
+    macro_actions = Macro.const_get(:ACTIONS_ATTRS, false)
+    raise 'Macro::ACTIONS_ATTRS changed upstream' unless macro_actions.is_a?(Array)
+
+    unless macro_actions.include?('remove_specific_agent_bot')
+      Macro.send(:remove_const, :ACTIONS_ATTRS)
+      Macro.const_set(:ACTIONS_ATTRS, (macro_actions + ['remove_specific_agent_bot']).uniq.freeze)
+    end
+
+    unless Macros::ExecutionService.ancestors.include?(WhatsappCampaignAutomationActionService)
+      Macros::ExecutionService.prepend(WhatsappCampaignAutomationActionService)
+    end
+
+    unless Macros::ExecutionService.ancestors.include?(WhatsappCampaignMacroActionService)
+      Macros::ExecutionService.prepend(WhatsappCampaignMacroActionService)
+    end
+
     svc = Whatsapp::OneoffCampaignService
 
-    expected_send_signature = [%i[keyreq to], %i[keyreq template_params]]
+    # 4.17: the effective pipeline is Enterprise::Whatsapp::OneoffCampaignService (prepended
+    # upstream). The graft rides on ITS shape — recipient-first sends + provider-response hook.
+    expected_send_signature = [%i[keyreq recipient], %i[keyreq to], %i[keyreq template_params]]
     problems = []
 
-    %i[process_audience process_contact process_liquid_template_params send_whatsapp_template_message].each do |meth|
+    # Only what the graft itself calls: the send override + the upstream helpers it reuses.
+    %i[send_whatsapp_template_message update_recipient_from_provider_response template_info].each do |meth|
       problems << "missing method ##{meth}" unless svc.private_method_defined?(meth) || svc.method_defined?(meth)
+    end
+
+    problems << 'CampaignRecipient model missing' unless defined?(CampaignRecipient)
+    %i[mark_skipped! mark_failed!].each do |meth|
+      problems << "CampaignRecipient##{meth} missing" if defined?(CampaignRecipient) && !CampaignRecipient.method_defined?(meth)
     end
 
     if problems.empty? && svc.instance_method(:send_whatsapp_template_message).parameters != expected_send_signature
@@ -111,171 +262,16 @@ Rails.application.config.after_initialize do
 
     if problems.any?
       Rails.logger.error "[CUSTOM] WhatsApp campaign patch NOT applied (upstream changed): #{problems.join('; ')}"
-      Rails.logger.error '[CUSTOM] Campaign sends keep working natively, but conversations/messages and the ' \
-                         'send ledger will not be recorded — campaign reports go blind. ' \
+      Rails.logger.error '[CUSTOM] Campaign sends and reports keep working natively, but carousel templates, ' \
+                         'the per-send conversation/message and the campaign assignee will be skipped. ' \
                          'Review /opt/chatwoot/custom-initializers/whatsapp_campaign_conversations.rb against the new Chatwoot version!'
     else
       svc.class_eval do
         private
 
-        # Freeze the exact relation once so the audience count, snapshot and processed contacts
-        # cannot drift if label membership changes while a large campaign is running.
-        def process_audience(audience_labels)
-          contacts = campaign.account.contacts.tagged_with(audience_labels, any: true).to_a
-          Rails.logger.info "Processing #{contacts.length} contacts for campaign #{campaign.id}"
-
-          snapshot_campaign_audience(contacts)
-          contacts.each { |contact| process_contact(contact) }
-
-          Rails.logger.info "Campaign #{campaign.id} processing completed"
-        end
-
-        # Best-effort by design: a reporting-table problem must never block customer messages.
-        # ON CONFLICT DO NOTHING preserves the first (historically correct) audience on job retry.
-        def snapshot_campaign_audience(contacts)
-          return if contacts.empty?
-
-          connection = ActiveRecord::Base.connection
-          contacts.each_slice(500) do |batch|
-            values = batch.map do |contact|
-              "(#{campaign.account_id.to_i},#{campaign.id.to_i},#{contact.id.to_i}," \
-                "#{connection.quote(contact.name)},#{connection.quote(contact.phone_number)},CURRENT_TIMESTAMP)"
-            end.join(',')
-
-            connection.execute(<<~SQL.squish)
-              INSERT INTO drip.campaign_audience_snapshots
-                (account_id, campaign_id, contact_id, contact_name, phone, captured_at)
-              VALUES #{values}
-              ON CONFLICT (account_id, campaign_id, contact_id) DO NOTHING
-            SQL
-          end
-          Rails.logger.info "Campaign #{campaign.id}: Captured audience snapshot (#{contacts.length} contacts)"
-        rescue StandardError => e
-          Rails.logger.error "Campaign #{campaign.id}: Audience snapshot failed: #{e.class}: #{e.message}"
-        end
-
-        # Record the accepted Meta send before touching Chatwoot's conversation/message layer.
-        # source_id is Meta's stable wamid and therefore remains reliable even when an outgoing
-        # echo is later represented by a different Chatwoot message row.
-        #
-        # status: 0 = accepted by Meta, 3 = Meta rejected the request, 4 = local skip, no send
-        # was attempted at all (reason in error_title). 4 is ours; 0..3 mirror Message#status.
-        def snapshot_campaign_send(contact, whatsapp_message_id, status: 0, error: nil)
-          connection = ActiveRecord::Base.connection
-          # A skip or a rejection has no wamid, but source_id is part of the primary key —
-          # a per-contact synthetic key keeps one row per recipient and lets a re-run update it.
-          key = whatsapp_message_id.presence || "skip:#{campaign.id}:#{contact.id}"
-          # ⚠️ No `--` comments inside the heredoc: .squish collapses it to a single line and
-          # a SQL line comment would swallow everything after it.
-          # ON CONFLICT rules: a terminal outcome (3/4) always wins, because a re-run can turn
-          # a skip into a real send or the reverse. An accepted send (0) must NOT overwrite a
-          # status a delivery webhook has already advanced.
-          connection.execute(<<~SQL.squish)
-            INSERT INTO drip.campaign_send_snapshots
-              (account_id, campaign_id, contact_id, contact_name, phone, source_id, status,
-               error_title, attempted_at, status_updated_at)
-            VALUES
-              (#{campaign.account_id.to_i}, #{campaign.id.to_i}, #{contact.id.to_i},
-               #{connection.quote(contact.name)}, #{connection.quote(contact.phone_number)},
-               #{connection.quote(key.to_s)}, #{status.to_i}, #{connection.quote(error)},
-               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (account_id, campaign_id, source_id) DO UPDATE
-              SET contact_id = EXCLUDED.contact_id,
-                  contact_name = EXCLUDED.contact_name,
-                  phone = EXCLUDED.phone,
-                  status = CASE WHEN EXCLUDED.status >= 3 THEN EXCLUDED.status
-                                ELSE drip.campaign_send_snapshots.status END,
-                  error_title = COALESCE(EXCLUDED.error_title, drip.campaign_send_snapshots.error_title),
-                  status_updated_at = CURRENT_TIMESTAMP
-          SQL
-        rescue StandardError => e
-          Rails.logger.error "Campaign #{campaign.id}: Send snapshot failed: #{e.class}: #{e.message}"
-        end
-
-        def attach_campaign_send_snapshot(whatsapp_message_id, conversation, message = nil)
-          connection = ActiveRecord::Base.connection
-          message_id_sql = message&.id ? message.id.to_i : 'message_id'
-          status = message&.status_before_type_cast.to_i
-          connection.execute(<<~SQL.squish)
-            UPDATE drip.campaign_send_snapshots
-               SET conversation_id = #{conversation.id.to_i},
-                   message_id = #{message_id_sql},
-                   status = CASE WHEN status = 3 THEN 3 ELSE GREATEST(status, #{status}) END,
-                   status_updated_at = CURRENT_TIMESTAMP
-             WHERE account_id = #{campaign.account_id.to_i}
-               AND campaign_id = #{campaign.id.to_i}
-               AND source_id = #{connection.quote(whatsapp_message_id.to_s)}
-          SQL
-        rescue StandardError => e
-          Rails.logger.error "Campaign #{campaign.id}: Send snapshot link failed: #{e.class}: #{e.message}"
-        end
-
-        # Same flow as upstream v4.14.1 #process_contact (including Liquid), plus
-        # conversation/message recording after a successful send — and a ledger row for every
-        # outcome. Upstream returns silently on each of these skips, which is exactly how a
-        # recipient disappears from the report with no reason attached.
-        def process_contact(contact)
-          Rails.logger.info "Processing contact: #{contact.name} (#{contact.phone_number})"
-
-          if contact.phone_number.blank?
-            Rails.logger.info "Skipping contact #{contact.name} - no phone number"
-            return snapshot_campaign_send(contact, nil, status: 4, error: 'no_phone')
-          end
-
-          if campaign.template_params.blank?
-            Rails.logger.error "Skipping contact #{contact.name} - no template_params found for WhatsApp campaign"
-            return snapshot_campaign_send(contact, nil, status: 4, error: 'no_template_params')
-          end
-
-          processed_template_params = process_liquid_template_params(contact)
-          if processed_template_params.nil?
-            return snapshot_campaign_send(contact, nil, status: 4, error: 'liquid_blank')
-          end
-
-          error_sink = WhatsappCampaignErrorSink.new
-          whatsapp_message_id = send_whatsapp_template_message(
-            to: contact.phone_number, template_params: processed_template_params, error_sink: error_sink
-          )
-
-          if whatsapp_message_id.present?
-            snapshot_campaign_send(contact, whatsapp_message_id)
-            create_campaign_conversation_and_message(contact, whatsapp_message_id, processed_template_params)
-          else
-            Rails.logger.error "Campaign #{campaign.id}: Send failed for #{contact.phone_number}"
-            snapshot_campaign_send(contact, nil, status: 3,
-                                                 error: error_sink.external_error.presence || 'send_failed')
-          end
-        end
-
-        # Same as upstream v4.14.1, plus append_carousel_component before send and the error
-        # sink in place of upstream's nil (see WhatsappCampaignErrorSink).
-        def send_whatsapp_template_message(to:, template_params:, error_sink: nil)
-          processor = Whatsapp::TemplateProcessorService.new(
-            channel: channel,
-            template_params: template_params
-          )
-
-          name, namespace, lang_code, processed_parameters = processor.call
-
-          if name.blank?
-            error_sink&.external_error = 'template_not_found'
-            return
-          end
-
-          processed_parameters = append_carousel_component(name, lang_code, processed_parameters)
-
-          channel.send_template(to, {
-                                  name: name,
-                                  namespace: namespace,
-                                  lang_code: lang_code,
-                                  parameters: processed_parameters
-                                }, error_sink)
-        rescue StandardError => e
-          Rails.logger.error "Failed to send WhatsApp template message to #{to}: #{e.message}"
-          Rails.logger.error "Backtrace: #{e.backtrace.first(5).join('\n')}"
-          error_sink&.external_error = e.message.to_s.first(200)
-          nil
-        end
+        # (process_contact and the drip snapshot writers were removed in the 4.17 native-first
+        # trim — the enterprise pipeline owns audience/skips/statuses via campaign_recipients,
+        # and the engine reads that table directly. See WhatsappCampaignGraft417.)
 
         def append_carousel_component(template_name, lang_code, parameters)
           parameters ||= []
@@ -431,7 +427,7 @@ Rails.application.config.after_initialize do
             end
           end
 
-          attach_campaign_send_snapshot(whatsapp_message_id, conversation)
+          assign_campaign_conversation(conversation)
 
           template_text = build_template_text(template_params)
           sender = campaign.sender || campaign.account.users.first
@@ -453,7 +449,6 @@ Rails.application.config.after_initialize do
           )
 
           if message.persisted?
-            attach_campaign_send_snapshot(whatsapp_message_id, conversation, message)
             Rails.logger.info "Campaign #{campaign.id}: Created message #{message.id} in conversation #{conversation.id} for #{contact.phone_number}"
           else
             Rails.logger.error "Campaign #{campaign.id}: Failed to create message: #{message.errors.full_messages.join(', ')}"
@@ -497,6 +492,32 @@ Rails.application.config.after_initialize do
                             "#{contact_inbox.contact_id}: #{e.message}"
         end
 
+        def assign_campaign_conversation(conversation)
+          assignee = campaign.trigger_rules&.dig('assignee')
+          return if assignee.blank?
+
+          assignee_id = assignee['id'].to_i
+          assignee_type = assignee['type'].to_s
+          valid_assignee = if assignee_type == 'AgentBot'
+                             AgentBot.accessible_to(campaign.account).exists?(id: assignee_id)
+                           elsif assignee_type == 'User'
+                             campaign.account.users.exists?(id: assignee_id)
+                           else
+                             false
+                           end
+
+          unless valid_assignee
+            Rails.logger.error "Campaign #{campaign.id}: Invalid #{assignee_type} assignee #{assignee_id}"
+            return
+          end
+
+          Conversations::AssignmentService.new(
+            conversation: conversation,
+            assignee_id: assignee_id,
+            assignee_type: assignee_type
+          ).perform
+        end
+
         # Renders the template body using the per-contact (Liquid-resolved)
         # params, so the recorded message shows the real values sent.
         def build_template_text(template_params)
@@ -515,13 +536,399 @@ Rails.application.config.after_initialize do
         end
       end
 
-      unless Whatsapp::IncomingMessageBaseService.ancestors.include?(WhatsappCampaignIncomingStatusPatch)
-        Whatsapp::IncomingMessageBaseService.prepend(WhatsappCampaignIncomingStatusPatch)
+      unless svc.ancestors.include?(WhatsappCampaignGraft417)
+        svc.prepend(WhatsappCampaignGraft417)
       end
 
-      Rails.logger.info '[CUSTOM] WhatsApp campaign conversation patch loaded successfully (v4.14.1 Liquid-aware)'
+      Rails.logger.info '[CUSTOM] WhatsApp campaign conversation patch loaded successfully (v4.17 enterprise-graft)'
     end
   rescue StandardError => e
     Rails.logger.error "[CUSTOM] WhatsApp campaign patch failed to load: #{e.class}: #{e.message}"
   end
+end
+
+# Bridges pre-4.17 campaign history into Chatwoot's native 4.17 analytics screen.
+#
+# Chatwoot 4.17 introduced public.campaign_recipients. New campaigns use it natively, but
+# campaigns sent before the upgrade live in the immutable drip audience/send ledgers. Some
+# of those historical contacts were later deleted, so copying the ledger into the native
+# table would either violate its contact foreign key or recreate hundreds of contacts in the
+# live address book. This adapter leaves the data in place and supplies the native controller
+# with the same payload shape. Native rows always win; the fallback is used only when a
+# campaign has no campaign_recipients and a legacy source has rows.
+
+class LegacyCampaignAnalytics417
+  RESULTS_PER_PAGE = 25
+  STATUSES = %w[queued skipped sent delivered read failed].freeze
+
+  def initialize(campaign)
+    @campaign = campaign
+    @connection = ApplicationRecord.connection
+  end
+
+  def available?
+    return false if @campaign.campaign_recipients.exists?
+    return false unless legacy_tables_available?
+
+    deliveries.any?
+  rescue StandardError => e
+    Rails.logger.error("[CUSTOM] Legacy campaign analytics availability failed: #{e.class}: #{e.message}")
+    false
+  end
+
+  def metrics
+    counts = STATUSES.index_with { 0 }
+    deliveries.each { |row| counts[row.fetch('status')] += 1 }
+
+    {
+      audience: deliveries.length,
+      sent: counts['sent'] + counts['delivered'] + counts['read'],
+      delivered: counts['delivered'] + counts['read'],
+      read: counts['read'],
+      failed: counts['failed'],
+      skipped: counts['skipped'],
+      status_counts: counts
+    }
+  end
+
+  def contacts(status:, page:)
+    filtered = STATUSES.include?(status.to_s) ? deliveries.select { |row| row['status'] == status.to_s } : deliveries
+    current_page = [page.to_i, 1].max
+    total_count = filtered.length
+    total_pages = (total_count.to_f / RESULTS_PER_PAGE).ceil
+    offset = (current_page - 1) * RESULTS_PER_PAGE
+
+    {
+      payload: (filtered.slice(offset, RESULTS_PER_PAGE) || []).map { |row| recipient_payload(row) },
+      meta: {
+        current_page: current_page,
+        total_pages: total_pages,
+        total_count: total_count
+      }
+    }
+  end
+
+  private
+
+  def deliveries
+    @deliveries ||= begin
+      rows = if audience_snapshot_exists?
+               audience_snapshot_deliveries
+             elsif send_snapshot_exists?
+               send_snapshot_deliveries
+             else
+               tagged_message_deliveries
+             end
+
+      rows.map do |row|
+        row['message_content'] = @campaign.message if row['message_content'].blank?
+        row
+      end
+    end
+  end
+
+  def legacy_tables_available?
+    @legacy_tables_available ||= begin
+      tables = @connection.select_rows(<<~SQL.squish)
+        SELECT to_regclass('drip.campaign_audience_snapshots')::text,
+               to_regclass('drip.campaign_send_snapshots')::text
+      SQL
+      tables.dig(0, 0).present? && tables.dig(0, 1).present?
+    end
+  end
+
+  def audience_snapshot_exists?
+    select_value(<<~SQL).to_i.positive?
+      SELECT 1
+        FROM drip.campaign_audience_snapshots
+       WHERE account_id = :account_id AND campaign_id = :campaign_id
+       LIMIT 1
+    SQL
+  end
+
+  def send_snapshot_exists?
+    select_value(<<~SQL).to_i.positive?
+      SELECT 1
+        FROM drip.campaign_send_snapshots
+       WHERE account_id = :account_id AND campaign_id = :campaign_id
+       LIMIT 1
+    SQL
+  end
+
+  def audience_snapshot_deliveries
+    select_all(<<~SQL)
+      WITH audience AS MATERIALIZED (
+        SELECT DISTINCT ON (a.contact_id)
+               a.contact_id, a.contact_name, a.phone, a.captured_at
+          FROM drip.campaign_audience_snapshots a
+         WHERE a.account_id = :account_id AND a.campaign_id = :campaign_id
+         ORDER BY a.contact_id, a.captured_at DESC
+      ), attempts AS MATERIALIZED (
+        SELECT s.contact_id,
+               s.contact_name,
+               s.phone,
+               s.source_id,
+               s.error_title,
+               s.attempted_at,
+               m.content AS message_content,
+               cv.contact_id AS conversation_contact_id,
+               CASE
+                 WHEN s.status IN (3, 4) THEN s.status
+                 ELSE greatest(s.status, coalesce(m.status, 0))
+               END AS effective_status
+          FROM drip.campaign_send_snapshots s
+          LEFT JOIN LATERAL (
+            SELECT mm.id, mm.status, mm.content, mm.conversation_id
+              FROM public.messages mm
+             WHERE mm.account_id = s.account_id
+               AND (mm.id = s.message_id OR (mm.source_id IS NOT NULL AND mm.source_id = s.source_id))
+             ORDER BY (mm.id = s.message_id) DESC, mm.id DESC
+             LIMIT 1
+          ) m ON true
+          LEFT JOIN public.conversations cv ON cv.id = coalesce(m.conversation_id, s.conversation_id)
+         WHERE s.account_id = :account_id AND s.campaign_id = :campaign_id
+      ), ranked AS (
+        SELECT attempts.*,
+               row_number() OVER (
+                 PARTITION BY contact_id
+                 ORDER BY CASE effective_status
+                            WHEN 2 THEN 5 WHEN 1 THEN 4 WHEN 0 THEN 3
+                            WHEN 3 THEN 2 WHEN 4 THEN 1 ELSE 0
+                          END DESC,
+                          attempted_at DESC NULLS LAST,
+                          source_id DESC NULLS LAST
+               ) AS attempt_rank
+          FROM attempts
+      )
+      SELECT 'snapshot:' || audience.contact_id::text AS recipient_id,
+             coalesce(direct_contact.id, conversation_contact.id) AS contact_id,
+             coalesce(nullif(audience.contact_name, ''), direct_contact.name, conversation_contact.name, '') AS contact_name,
+             coalesce(nullif(audience.phone, ''), direct_contact.phone_number, conversation_contact.phone_number, '') AS phone_number,
+             CASE ranked.effective_status
+               WHEN 0 THEN 'sent'
+               WHEN 1 THEN 'delivered'
+               WHEN 2 THEN 'read'
+               WHEN 3 THEN 'failed'
+               WHEN 4 THEN 'skipped'
+               ELSE 'queued'
+             END AS status,
+             ranked.message_content,
+             substring(ranked.error_title FROM '^([0-9]+)') AS error_code,
+             ranked.error_title,
+             ranked.error_title AS error_message,
+             ranked.attempted_at
+        FROM audience
+        LEFT JOIN ranked ON ranked.contact_id = audience.contact_id AND ranked.attempt_rank = 1
+        LEFT JOIN public.contacts direct_contact
+          ON direct_contact.id = audience.contact_id AND direct_contact.account_id = :account_id
+        LEFT JOIN public.contacts conversation_contact
+          ON conversation_contact.id = ranked.conversation_contact_id
+         AND conversation_contact.account_id = :account_id
+       ORDER BY ranked.attempted_at DESC NULLS LAST, audience.contact_id DESC
+    SQL
+  end
+
+  def send_snapshot_deliveries
+    select_all(<<~SQL)
+      WITH attempts AS MATERIALIZED (
+        SELECT s.*,
+               coalesce(
+                 CASE WHEN s.contact_id IS NOT NULL THEN 'contact:' || s.contact_id::text END,
+                 CASE WHEN nullif(regexp_replace(coalesce(s.phone, ''), '[^0-9]', '', 'g'), '') IS NOT NULL
+                      THEN 'phone:' || regexp_replace(s.phone, '[^0-9]', '', 'g') END,
+                 'source:' || coalesce(s.source_id, s.id::text)
+               ) AS recipient_key,
+               m.content AS message_content,
+               cv.contact_id AS conversation_contact_id,
+               CASE
+                 WHEN s.status IN (3, 4) THEN s.status
+                 ELSE greatest(s.status, coalesce(m.status, 0))
+               END AS effective_status
+          FROM drip.campaign_send_snapshots s
+          LEFT JOIN LATERAL (
+            SELECT mm.id, mm.status, mm.content, mm.conversation_id
+              FROM public.messages mm
+             WHERE mm.account_id = s.account_id
+               AND (mm.id = s.message_id OR (mm.source_id IS NOT NULL AND mm.source_id = s.source_id))
+             ORDER BY (mm.id = s.message_id) DESC, mm.id DESC
+             LIMIT 1
+          ) m ON true
+          LEFT JOIN public.conversations cv ON cv.id = coalesce(m.conversation_id, s.conversation_id)
+         WHERE s.account_id = :account_id AND s.campaign_id = :campaign_id
+      ), ranked AS (
+        SELECT attempts.*,
+               row_number() OVER (
+                 PARTITION BY recipient_key
+                 ORDER BY CASE effective_status
+                            WHEN 2 THEN 5 WHEN 1 THEN 4 WHEN 0 THEN 3
+                            WHEN 3 THEN 2 WHEN 4 THEN 1 ELSE 0
+                          END DESC,
+                          attempted_at DESC NULLS LAST,
+                          id DESC
+               ) AS attempt_rank
+          FROM attempts
+      )
+      SELECT ranked.recipient_key AS recipient_id,
+             coalesce(direct_contact.id, conversation_contact.id) AS contact_id,
+             coalesce(nullif(ranked.contact_name, ''), direct_contact.name, conversation_contact.name, '') AS contact_name,
+             coalesce(nullif(ranked.phone, ''), direct_contact.phone_number, conversation_contact.phone_number, '') AS phone_number,
+             CASE ranked.effective_status
+               WHEN 0 THEN 'sent'
+               WHEN 1 THEN 'delivered'
+               WHEN 2 THEN 'read'
+               WHEN 3 THEN 'failed'
+               WHEN 4 THEN 'skipped'
+               ELSE 'queued'
+             END AS status,
+             ranked.message_content,
+             substring(ranked.error_title FROM '^([0-9]+)') AS error_code,
+             ranked.error_title,
+             ranked.error_title AS error_message,
+             ranked.attempted_at
+        FROM ranked
+        LEFT JOIN public.contacts direct_contact
+          ON direct_contact.id = ranked.contact_id AND direct_contact.account_id = :account_id
+        LEFT JOIN public.contacts conversation_contact
+          ON conversation_contact.id = ranked.conversation_contact_id
+         AND conversation_contact.account_id = :account_id
+       WHERE ranked.attempt_rank = 1
+       ORDER BY ranked.attempted_at DESC NULLS LAST, ranked.recipient_key
+    SQL
+  end
+
+  def tagged_message_deliveries
+    select_all(<<~SQL)
+      WITH tagged AS MATERIALIZED (
+        SELECT m.id,
+               m.status,
+               m.content AS message_content,
+               m.created_at AS attempted_at,
+               attrs.value AS attributes,
+               cv.contact_id AS conversation_contact_id,
+               coalesce(
+                 CASE WHEN (attrs.value ->> 'campaign_contact_id') ~ '^[0-9]+$'
+                      THEN 'contact:' || (attrs.value ->> 'campaign_contact_id') END,
+                 CASE WHEN cv.contact_id IS NOT NULL THEN 'contact:' || cv.contact_id::text END,
+                 CASE WHEN nullif(regexp_replace(coalesce(
+                        attrs.value ->> 'campaign_phone', ci.source_id, ''), '[^0-9]', '', 'g'), '') IS NOT NULL
+                      THEN 'phone:' || regexp_replace(coalesce(
+                        attrs.value ->> 'campaign_phone', ci.source_id, ''), '[^0-9]', '', 'g') END,
+                 'message:' || m.id::text
+               ) AS recipient_key
+          FROM public.messages m
+          CROSS JOIN LATERAL (
+            SELECT (m.content_attributes::jsonb #>> '{}')::jsonb AS value
+          ) attrs
+          LEFT JOIN public.conversations cv ON cv.id = m.conversation_id
+          LEFT JOIN public.contact_inboxes ci ON ci.id = cv.contact_inbox_id
+         WHERE m.account_id = :account_id
+           AND (attrs.value ->> 'campaign_id') ~ '^[0-9]+$'
+           AND (attrs.value ->> 'campaign_id')::bigint = :campaign_id
+      ), ranked AS (
+        SELECT tagged.*,
+               row_number() OVER (
+                 PARTITION BY recipient_key
+                 ORDER BY CASE status
+                            WHEN 2 THEN 4 WHEN 1 THEN 3 WHEN 0 THEN 2 WHEN 3 THEN 1 ELSE 0
+                          END DESC,
+                          attempted_at DESC,
+                          id DESC
+               ) AS attempt_rank
+          FROM tagged
+      )
+      SELECT ranked.recipient_key AS recipient_id,
+             coalesce(campaign_contact.id, conversation_contact.id) AS contact_id,
+             coalesce(nullif(ranked.attributes ->> 'campaign_contact_name', ''),
+                      campaign_contact.name, conversation_contact.name, '') AS contact_name,
+             coalesce(nullif(ranked.attributes ->> 'campaign_phone', ''),
+                      campaign_contact.phone_number, conversation_contact.phone_number, '') AS phone_number,
+             CASE ranked.status
+               WHEN 0 THEN 'sent'
+               WHEN 1 THEN 'delivered'
+               WHEN 2 THEN 'read'
+               WHEN 3 THEN 'failed'
+               ELSE 'queued'
+             END AS status,
+             ranked.message_content,
+             substring(ranked.attributes ->> 'external_error' FROM '^([0-9]+)') AS error_code,
+             ranked.attributes ->> 'external_error' AS error_title,
+             ranked.attributes ->> 'external_error' AS error_message,
+             ranked.attempted_at
+        FROM ranked
+        LEFT JOIN public.contacts campaign_contact
+          ON campaign_contact.id = CASE
+               WHEN (ranked.attributes ->> 'campaign_contact_id') ~ '^[0-9]+$'
+               THEN (ranked.attributes ->> 'campaign_contact_id')::bigint
+             END
+         AND campaign_contact.account_id = :account_id
+        LEFT JOIN public.contacts conversation_contact
+          ON conversation_contact.id = ranked.conversation_contact_id
+         AND conversation_contact.account_id = :account_id
+       WHERE ranked.attempt_rank = 1
+       ORDER BY ranked.attempted_at DESC, ranked.id DESC
+    SQL
+  end
+
+  def recipient_payload(row)
+    {
+      recipient_id: row['recipient_id'],
+      contact: {
+        id: row['contact_id']&.to_i,
+        name: row['contact_name'],
+        phone_number: row['phone_number'],
+        linkable: row['contact_id'].present?
+      },
+      status: row['status'],
+      message_content: row['message_content'],
+      error_code: row['error_code'],
+      error_title: row['error_title'],
+      error_message: row['error_message']
+    }
+  end
+
+  def select_value(sql)
+    @connection.select_value(interpolate(sql))
+  end
+
+  def select_all(sql)
+    @connection.select_all(interpolate(sql)).to_a
+  end
+
+  def interpolate(sql)
+    ActiveRecord::Base.send(
+      :sanitize_sql_array,
+      [sql, { account_id: @campaign.account_id.to_i, campaign_id: @campaign.id.to_i }]
+    )
+  end
+end
+
+module LegacyCampaignAnalyticsController417
+  def metrics
+    analytics = legacy_campaign_analytics_417
+    return super unless analytics.available?
+
+    render json: analytics.metrics
+  end
+
+  def contacts
+    analytics = legacy_campaign_analytics_417
+    return super unless analytics.available?
+
+    render json: analytics.contacts(status: params[:status], page: params[:page])
+  end
+
+  private
+
+  def legacy_campaign_analytics_417
+    @legacy_campaign_analytics_417 ||= LegacyCampaignAnalytics417.new(@campaign)
+  end
+end
+
+Rails.application.config.to_prepare do
+  controller = 'Api::V1::Accounts::Campaigns::AnalyticsController'.safe_constantize
+  next unless controller
+  next if controller.ancestors.include?(LegacyCampaignAnalyticsController417)
+
+  controller.prepend(LegacyCampaignAnalyticsController417)
+  Rails.logger.info '[CUSTOM] Legacy campaign analytics adapter active for Chatwoot 4.17'
 end
