@@ -24,6 +24,7 @@ class WahaContactSync
   WA_LID = 'waha_whatsapp_lid'
   TECHNICAL_NAME = /\A\d{7,20}@(c\.us|s\.whatsapp\.net|lid|g\.us)\z/i
   PRIVATE_JID = /\A(\d{7,15})@(c\.us|s\.whatsapp\.net)\z/i
+  LID_JID = /\A\d{7,20}@lid\z/i
 
   class SyncError < StandardError; end
 
@@ -39,8 +40,8 @@ class WahaContactSync
 
     totals = Hash.new(0)
     counter_keys = %i[
-      scanned updated_names updated_phones unchanged missing_source_name
-      phone_conflicts errors
+      scanned updated_names updated_phones updated_identities unchanged
+      missing_source_name fallback_names phone_conflicts errors
     ]
     @config.fetch('targets').each do |target|
       result = sync_target(target)
@@ -66,10 +67,11 @@ class WahaContactSync
 
     profile_map = @mode == 'full' ? load_all_profiles(session, key) : nil
     group_map = @mode == 'full' ? load_all_groups(session, key) : nil
+    lid_map = @mode == 'full' ? load_all_lids(session, key) : nil
     scope_for(account_id, inbox_id).find_each do |contact|
       stats[:scanned] += 1
       begin
-        sync_contact(contact, session, key, profile_map, group_map, stats)
+        sync_contact(contact, session, key, profile_map, group_map, lid_map, stats)
       rescue StandardError
         # Contact IDs, names and phone numbers are deliberately omitted from logs.
         stats[:errors] += 1
@@ -96,7 +98,7 @@ class WahaContactSync
     scope.where('contacts.last_activity_at >= ? OR contacts.created_at >= ?', since, since)
   end
 
-  def sync_contact(contact, session, key, profile_map, group_map, stats)
+  def sync_contact(contact, session, key, profile_map, group_map, lid_map, stats)
     attrs = contact.custom_attributes.to_h
     chat_id = normalize_jid(attrs[WA_CHAT_ID])
     jid = normalize_jid(attrs[WA_JID])
@@ -107,28 +109,48 @@ class WahaContactSync
       group_id = [chat_id, jid].compact.find { |value| value.end_with?('@g.us') }
       desired_name = group_map ? group_map[group_id] : load_one_group_name(session, key, group_id)
       stats[:missing_source_name] += 1 if desired_name.nil?
-      apply_changes(contact, desired_name, nil, stats)
+      if desired_name.nil? && technical_name?(contact.name)
+        desired_name = unavailable_name('קבוצת WhatsApp', group_id)
+        stats[:fallback_names] += 1
+      end
+      apply_changes(contact, desired_name, nil, nil, stats)
       return
     end
 
+    resolved_jid = jid
+    if resolved_jid.nil? && lid&.match?(LID_JID)
+      resolved_jid = lid_map ? lid_map[lid] : load_one_jid_for_lid(session, key, lid)
+    end
+
     records = if profile_map
-                [profile_map[jid], profile_map[lid], profile_map[chat_id]].compact
+                [profile_map[resolved_jid], profile_map[lid], profile_map[chat_id]].compact
               else
-                [jid, lid, chat_id].compact.uniq.filter_map do |contact_id|
+                [resolved_jid, lid, chat_id].compact.uniq.filter_map do |contact_id|
                   load_one_profile(session, key, contact_id)
                 end
               end
     desired_name = preferred_profile_name(records)
-    phone = phone_from_jid(jid)
-    desired_name ||= readable_phone_name(phone) if technical_or_phone_name?(contact.name, jid)
+    phone = phone_from_jid(resolved_jid)
+    desired_name ||= readable_phone_name(phone) if technical_or_phone_name?(contact.name, resolved_jid)
+    if desired_name.nil? && technical_name?(contact.name)
+      desired_name = unavailable_name('איש קשר WhatsApp', lid || chat_id)
+      stats[:fallback_names] += 1
+    end
     stats[:missing_source_name] += 1 if desired_name.nil?
-    apply_changes(contact, desired_name, phone, stats)
+    apply_changes(contact, desired_name, phone, (resolved_jid if jid.nil?), stats)
   end
 
-  def apply_changes(contact, desired_name, desired_phone, stats)
+  def apply_changes(contact, desired_name, desired_phone, desired_jid, stats)
     changes = {}
     clean_name = sanitize_name(desired_name)
     changes[:name] = clean_name if clean_name && clean_name != contact.name
+
+    if desired_jid
+      attributes = contact.custom_attributes.to_h
+      unless attributes[WA_JID] == desired_jid
+        changes[:custom_attributes] = attributes.merge(WA_JID => desired_jid)
+      end
+    end
 
     if desired_phone && desired_phone != contact.phone_number
       conflict = Contact.where(account_id: contact.account_id, phone_number: desired_phone)
@@ -148,6 +170,7 @@ class WahaContactSync
 
     stats[:updated_names] += 1 if changes.key?(:name)
     stats[:updated_phones] += 1 if changes.key?(:phone_number)
+    stats[:updated_identities] += 1 if changes.key?(:custom_attributes)
     contact.update_columns(changes) unless @dry_run
   end
 
@@ -165,6 +188,26 @@ class WahaContactSync
     encoded = URI.encode_www_form_component(contact_id)
     row = get_json("/api/#{session}/contacts/#{encoded}", key)
     row.is_a?(Hash) ? row : nil
+  rescue SyncError
+    nil
+  end
+
+  def load_all_lids(session, key)
+    rows = get_json("/api/#{session}/lids", key, limit: 100_000, offset: 0)
+    raise SyncError, 'lids response is not an array' unless rows.is_a?(Array)
+
+    rows.each_with_object({}) do |row, result|
+      lid = normalize_jid(row['lid'])
+      pn = normalize_jid(row['pn'])
+      result[lid] = pn if lid&.match?(LID_JID) && pn&.match?(PRIVATE_JID)
+    end
+  end
+
+  def load_one_jid_for_lid(session, key, lid)
+    encoded = URI.encode_www_form_component(lid)
+    row = get_json("/api/#{session}/lids/#{encoded}", key)
+    pn = normalize_jid(row['pn']) if row.is_a?(Hash)
+    pn&.match?(PRIVATE_JID) ? pn : nil
   rescue SyncError
     nil
   end
@@ -255,6 +298,15 @@ class WahaContactSync
     digits = value.gsub(/\D/, '')
     jid_digits = jid.to_s.sub(/@.*\z/, '')
     !jid_digits.empty? && digits == jid_digits
+  end
+
+  def technical_name?(name)
+    name.to_s.strip.match?(TECHNICAL_NAME)
+  end
+
+  def unavailable_name(label, technical_id)
+    suffix = technical_id.to_s.sub(/@.*\z/, '')[-6, 6]
+    suffix ? "#{label} • #{suffix}" : label
   end
 
   def sanitize_name(value)
