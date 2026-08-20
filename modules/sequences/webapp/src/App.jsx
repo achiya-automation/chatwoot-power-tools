@@ -406,7 +406,7 @@ export default function App() {
   return (
     <div dir={dir} className="min-h-screen bg-n-background font-inter text-n-slate-12">
       <div
-        className={`mx-auto max-w-5xl px-4 sm:px-6 ${
+        className={`mx-auto ${view === 'journeys' ? 'max-w-7xl' : 'max-w-5xl'} px-4 sm:px-6 ${
           embedded ? 'py-4' : 'py-6 sm:py-8'
         }`}
       >
