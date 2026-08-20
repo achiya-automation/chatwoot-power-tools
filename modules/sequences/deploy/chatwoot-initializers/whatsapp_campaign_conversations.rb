@@ -68,6 +68,73 @@ module WhatsappCampaignStatusSnapshotWriter
   end
 end
 
+# 4.17 (native-first, 20.8.26): Chatwoot's enterprise pipeline now owns audience→recipients→
+# send with per-recipient tracking (campaign_recipients + delivery webhooks) — everything our
+# old process_audience/process_contact overrides existed for, reporting-wise. What is STILL
+# not native, and is grafted here on top of the enterprise flow:
+#   * carousel templates (append_carousel_component + Meta media upload/caching)
+#   * a Chatwoot conversation+message per successful send — the campaign send is visible in
+#     the inbox, and delivery/read webhooks keep advancing Message#status (which feeds the
+#     drip ledger through WhatsappCampaignIncomingStatusPatch below)
+#   * the campaign assignee (agent or bot) applied to that conversation
+#   * drip.* ledger rows — the cross-campaign overview/trend/read-rate still reads them
+# All heavy lifting (helpers) stays defined on the service via class_eval below; this module
+# only re-routes the 4.17 pipeline through them.
+module WhatsappCampaignGraft417
+  private
+
+  # native create_recipients is the new "audience freeze" moment
+  def create_recipients(audience_labels)
+    recipients = super
+    snapshot_campaign_audience(recipients.map(&:contact))
+    recipients
+  end
+
+  # mirror terminal skips/failures into the drip ledger (status 4 = local skip, 3 = rejected)
+  def process_recipient(recipient)
+    super
+    case recipient.status.to_s
+    when 'skipped'
+      snapshot_campaign_send(recipient.contact, nil, status: 4,
+                                                     error: recipient.error_message.presence || 'skipped')
+    when 'failed'
+      snapshot_campaign_send(recipient.contact, nil, status: 3,
+                                                     error: [recipient.error_title, recipient.error_message].compact.join(': ').presence || 'send_failed')
+    end
+  end
+
+  # the native 4.17 flow verbatim, plus carousel support before the send and
+  # conversation/ledger recording after a successful one
+  def send_whatsapp_template_message(recipient:, to:, template_params:)
+    processor = Whatsapp::TemplateProcessorService.new(
+      channel: channel,
+      template_params: template_params
+    )
+
+    name, namespace, lang_code, processed_parameters = processor.call
+
+    if name.blank?
+      recipient.mark_skipped!('Template name could not be resolved')
+      return
+    end
+
+    processed_parameters = append_carousel_component(name, lang_code, processed_parameters)
+    source_id = channel.send_template(to, template_info(name, namespace, lang_code, processed_parameters), nil)
+    update_recipient_from_provider_response(recipient, source_id)
+
+    if source_id.present?
+      snapshot_campaign_send(recipient.contact, source_id)
+      create_campaign_conversation_and_message(recipient.contact, source_id, template_params)
+    end
+    source_id
+  rescue StandardError => e
+    Rails.logger.error "Failed to send WhatsApp template message to #{to}: #{e.message}"
+    Rails.logger.error "Backtrace: #{e.backtrace.first(5).join('\n')}"
+    recipient.mark_failed!(message: e.message)
+    nil
+  end
+end
+
 module WhatsappCampaignIncomingStatusPatch
   private
 
@@ -269,11 +336,19 @@ Rails.application.config.after_initialize do
 
     svc = Whatsapp::OneoffCampaignService
 
-    expected_send_signature = [%i[keyreq to], %i[keyreq template_params]]
+    # 4.17: the effective pipeline is Enterprise::Whatsapp::OneoffCampaignService (prepended
+    # upstream). The graft rides on ITS shape — recipient-first sends + provider-response hook.
+    expected_send_signature = [%i[keyreq recipient], %i[keyreq to], %i[keyreq template_params]]
     problems = []
 
-    %i[process_audience process_contact process_liquid_template_params send_whatsapp_template_message].each do |meth|
+    %i[create_recipients process_recipient process_liquid_template_params
+       send_whatsapp_template_message update_recipient_from_provider_response template_info].each do |meth|
       problems << "missing method ##{meth}" unless svc.private_method_defined?(meth) || svc.method_defined?(meth)
+    end
+
+    problems << 'CampaignRecipient model missing' unless defined?(CampaignRecipient)
+    %i[mark_sent! mark_skipped! mark_failed!].each do |meth|
+      problems << "CampaignRecipient##{meth} missing" if defined?(CampaignRecipient) && !CampaignRecipient.method_defined?(meth)
     end
 
     if problems.empty? && svc.instance_method(:send_whatsapp_template_message).parameters != expected_send_signature
@@ -288,18 +363,6 @@ Rails.application.config.after_initialize do
     else
       svc.class_eval do
         private
-
-        # Freeze the exact relation once so the audience count, snapshot and processed contacts
-        # cannot drift if label membership changes while a large campaign is running.
-        def process_audience(audience_labels)
-          contacts = campaign.account.contacts.tagged_with(audience_labels, any: true).to_a
-          Rails.logger.info "Processing #{contacts.length} contacts for campaign #{campaign.id}"
-
-          snapshot_campaign_audience(contacts)
-          contacts.each { |contact| process_contact(contact) }
-
-          Rails.logger.info "Campaign #{campaign.id} processing completed"
-        end
 
         # Best-effort by design: a reporting-table problem must never block customer messages.
         # ON CONFLICT DO NOTHING preserves the first (historically correct) audience on job retry.
@@ -381,72 +444,8 @@ Rails.application.config.after_initialize do
           Rails.logger.error "Campaign #{campaign.id}: Send snapshot link failed: #{e.class}: #{e.message}"
         end
 
-        # Same flow as upstream v4.14.1 #process_contact (including Liquid), plus
-        # conversation/message recording after a successful send — and a ledger row for every
-        # outcome. Upstream returns silently on each of these skips, which is exactly how a
-        # recipient disappears from the report with no reason attached.
-        def process_contact(contact)
-          Rails.logger.info "Processing contact: #{contact.name} (#{contact.phone_number})"
-
-          if contact.phone_number.blank?
-            Rails.logger.info "Skipping contact #{contact.name} - no phone number"
-            return snapshot_campaign_send(contact, nil, status: 4, error: 'no_phone')
-          end
-
-          if campaign.template_params.blank?
-            Rails.logger.error "Skipping contact #{contact.name} - no template_params found for WhatsApp campaign"
-            return snapshot_campaign_send(contact, nil, status: 4, error: 'no_template_params')
-          end
-
-          processed_template_params = process_liquid_template_params(contact)
-          if processed_template_params.nil?
-            return snapshot_campaign_send(contact, nil, status: 4, error: 'liquid_blank')
-          end
-
-          error_sink = WhatsappCampaignErrorSink.new
-          whatsapp_message_id = send_whatsapp_template_message(
-            to: contact.phone_number, template_params: processed_template_params, error_sink: error_sink
-          )
-
-          if whatsapp_message_id.present?
-            snapshot_campaign_send(contact, whatsapp_message_id)
-            create_campaign_conversation_and_message(contact, whatsapp_message_id, processed_template_params)
-          else
-            Rails.logger.error "Campaign #{campaign.id}: Send failed for #{contact.phone_number}"
-            snapshot_campaign_send(contact, nil, status: 3,
-                                                 error: error_sink.external_error.presence || 'send_failed')
-          end
-        end
-
-        # Same as upstream v4.14.1, plus append_carousel_component before send and the error
-        # sink in place of upstream's nil (see WhatsappCampaignErrorSink).
-        def send_whatsapp_template_message(to:, template_params:, error_sink: nil)
-          processor = Whatsapp::TemplateProcessorService.new(
-            channel: channel,
-            template_params: template_params
-          )
-
-          name, namespace, lang_code, processed_parameters = processor.call
-
-          if name.blank?
-            error_sink&.external_error = 'template_not_found'
-            return
-          end
-
-          processed_parameters = append_carousel_component(name, lang_code, processed_parameters)
-
-          channel.send_template(to, {
-                                  name: name,
-                                  namespace: namespace,
-                                  lang_code: lang_code,
-                                  parameters: processed_parameters
-                                }, error_sink)
-        rescue StandardError => e
-          Rails.logger.error "Failed to send WhatsApp template message to #{to}: #{e.message}"
-          Rails.logger.error "Backtrace: #{e.backtrace.first(5).join('\n')}"
-          error_sink&.external_error = e.message.to_s.first(200)
-          nil
-        end
+        # (process_contact + the to:/template_params: send override were removed in the 4.17
+        # adaptation — the enterprise pipeline owns them now; see WhatsappCampaignGraft417.)
 
         def append_carousel_component(template_name, lang_code, parameters)
           parameters ||= []
@@ -729,7 +728,11 @@ Rails.application.config.after_initialize do
                            'Review /opt/chatwoot/custom-initializers/whatsapp_campaign_conversations.rb against the new Chatwoot version!'
       end
 
-      Rails.logger.info '[CUSTOM] WhatsApp campaign conversation patch loaded successfully (v4.14.1 Liquid-aware)'
+      unless svc.ancestors.include?(WhatsappCampaignGraft417)
+        svc.prepend(WhatsappCampaignGraft417)
+      end
+
+      Rails.logger.info '[CUSTOM] WhatsApp campaign conversation patch loaded successfully (v4.17 enterprise-graft)'
     end
   rescue StandardError => e
     Rails.logger.error "[CUSTOM] WhatsApp campaign patch failed to load: #{e.class}: #{e.message}"
