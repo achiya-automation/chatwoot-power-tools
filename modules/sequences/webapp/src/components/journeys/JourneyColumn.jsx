@@ -1,5 +1,13 @@
 import { useState } from 'react';
-import { Plus, Trash2, ChevronUp, ChevronDown, CornerDownLeft, Flag } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  ChevronUp,
+  ChevronDown,
+  CornerDownLeft,
+  Flag,
+  AlertCircle,
+} from 'lucide-react';
 import { NODE_META } from './JourneyNodes.jsx';
 import { ADDABLE_TYPES } from './graphModel.js';
 import useT from '../../useT.js';
@@ -29,7 +37,6 @@ const M = {
     moveDown: 'העברה למטה: {label}',
     del: 'מחיקה: {label}',
     edit: 'עריכת {label}',
-    confirmFork: 'מחיקת "{label}" תמחק גם את כל הצעדים שבמסלולים שלה. להמשיך?',
     yes: 'כן',
     no: 'לא',
     optN: 'אפשרות {n}',
@@ -71,7 +78,6 @@ const M = {
     moveDown: 'Move down: {label}',
     del: 'Delete: {label}',
     edit: 'Edit {label}',
-    confirmFork: 'Deleting “{label}” also deletes every step inside its paths. Continue?',
     yes: 'Yes',
     no: 'No',
     optN: 'Option {n}',
@@ -163,28 +169,37 @@ const PALETTE_CLS = {
 
 // הקו המקווקו שמחבר בין כרטיסים — כמו ב-MacroNodes.vue.
 function Wire() {
-  return <span aria-hidden="true" className="ms-3 block h-4 w-0 border-s border-dashed border-n-blue-7 dark:border-n-blue-11" />;
+  return <span aria-hidden="true" className="ms-4 block h-5 w-0 border-s border-dashed border-n-blue-7 dark:border-n-blue-11" />;
 }
 
-function Chip({ children }) {
-  return (
-    <span className="inline-block rounded-md bg-n-solid-blue px-1.5 py-1 text-sm leading-none text-n-blue-11">
+function Chip({ children, active = false, onClick }) {
+  const classes = [
+    'inline-flex min-h-7 w-fit items-center rounded-md bg-n-solid-blue px-2 py-1 text-sm leading-none text-n-blue-11',
+    onClick
+      ? 'outline-none transition-shadow focus-visible:outline-2 focus-visible:outline-n-brand focus-visible:outline-offset-2 motion-reduce:transition-none'
+      : '',
+    active ? 'ring-2 ring-n-brand ring-offset-2 ring-offset-n-solid-1' : '',
+  ].join(' ');
+  return onClick ? (
+    <button type="button" className={classes} aria-pressed={active} onClick={onClick}>
       {children}
-    </span>
+    </button>
+  ) : (
+    <span className={classes}>{children}</span>
   );
 }
 
 /* שורת ה-+ : לחיצה פותחת פלטת סוגים מוטמעת (בלי תפריט צף — עובד גם בצר). */
 function AddRow({ open, onToggle, onPick, label, t }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <button
           type="button"
           aria-label={label}
           aria-expanded={open}
           onClick={onToggle}
-          className="ms-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-dashed border-n-strong bg-n-background text-n-slate-11 outline-none transition-colors hover:border-n-brand hover:text-n-brand focus-visible:outline-2 focus-visible:outline-n-brand focus-visible:outline-offset-1 motion-reduce:transition-none"
+          className="inline-flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md border border-dashed border-n-strong bg-n-background px-2 text-n-slate-11 outline-none transition-colors hover:border-n-brand hover:bg-n-brand/10 hover:text-n-brand focus-visible:outline-2 focus-visible:outline-n-brand focus-visible:outline-offset-1 motion-reduce:transition-none"
         >
           <Plus size={13} aria-hidden="true" />
         </button>
@@ -193,7 +208,7 @@ function AddRow({ open, onToggle, onPick, label, t }) {
         ) : null}
       </div>
       {open ? (
-        <div className="flex flex-wrap gap-1.5 rounded-lg border border-n-weak bg-n-solid-2 p-2">
+        <div className="flex flex-wrap gap-1.5 rounded-lg border border-n-weak bg-n-solid-2 p-2.5 shadow-sm">
           {ADDABLE_TYPES.map((type) => {
             const Icon = NODE_META[type].icon;
             return (
@@ -227,10 +242,10 @@ function Card({ node, type, selected, invalid, canUp, canDown, onSelect, onMove,
   const label = t(`node_${type}`);
   const summary = node ? summaryOf(node, t) : '';
   const actionCls =
-    'inline-flex h-6 w-6 items-center justify-center rounded-md text-n-slate-11 outline-none transition-colors hover:bg-n-alpha-2 hover:text-n-slate-12 focus-visible:outline-2 focus-visible:outline-n-brand focus-visible:outline-offset-1 disabled:opacity-30 disabled:pointer-events-none motion-reduce:transition-none';
+    'inline-flex h-8 w-8 items-center justify-center rounded-md text-n-slate-11 outline-none transition-colors hover:bg-n-alpha-2 hover:text-n-slate-12 focus-visible:outline-2 focus-visible:outline-n-brand focus-visible:outline-offset-1 disabled:pointer-events-none disabled:opacity-30 motion-reduce:transition-none';
 
   return (
-    <div className="group flex items-center gap-1">
+    <div className="group flex items-center gap-1.5">
       <button
         type="button"
         onClick={onSelect}
@@ -238,13 +253,13 @@ function Card({ node, type, selected, invalid, canUp, canDown, onSelect, onMove,
         aria-label={t('edit', { label })}
         className={[
           // bg זהה ל-MacroNode.vue של Chatwoot — כרטיס בהיר על רקע הדף, כהה על solid-1.
-          'flex min-w-0 grow items-center gap-2 rounded-md bg-n-background p-2 text-start shadow-sm outline outline-1 transition-colors dark:bg-n-solid-1 motion-reduce:transition-none',
+          'flex min-h-16 min-w-0 grow items-center gap-3 rounded-md bg-n-background p-3 text-start shadow-sm outline outline-1 transition-[outline-color,box-shadow,background-color] dark:bg-n-solid-1 motion-reduce:transition-none',
           'focus-visible:outline-2 focus-visible:outline-n-brand focus-visible:outline-offset-1',
           selected ? 'outline-2 outline-n-brand' : invalid ? 'outline-n-ruby-8 bg-n-ruby-3' : 'outline-n-weak hover:outline-n-strong',
         ].join(' ')}
       >
-        <span className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${CHIP_CLS[meta.color]}`}>
-          <Icon size={13} aria-hidden="true" />
+        <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${CHIP_CLS[meta.color]}`}>
+          <Icon size={15} aria-hidden="true" />
         </span>
         <span className="min-w-0 grow">
           <span className="block text-sm font-medium text-n-slate-12">{label}</span>
@@ -253,7 +268,7 @@ function Card({ node, type, selected, invalid, canUp, canDown, onSelect, onMove,
           </span>
         </span>
         {invalid ? (
-          <span className="shrink-0 text-xxs font-medium text-n-ruby-11" title={t('hasError')}>!</span>
+          <AlertCircle size={16} className="shrink-0 text-n-ruby-11" aria-label={t('hasError')} />
         ) : null}
       </button>
       {/* במסך צר הפעולות תמיד גלויות; במסך רחב הן נחשפות ב-hover/פוקוס */}
@@ -281,8 +296,10 @@ export default function JourneyColumn({
   steps = [],
   nodes = [],
   selectedId = null,
+  startId = 'trigger',
   errorIds = null,
   onSelect,
+  onSelectStart,
   onInsert,
   onDelete,
   onMove,
@@ -318,13 +335,6 @@ export default function JourneyColumn({
     );
   };
 
-  // מחיקת צומת מסתעף מוחקת גם את הצעדים שבמסלולים שלו — רק דרכו הם נגישים.
-  const confirmDelete = (step, label) => {
-    const hasInner = (step.branches || []).some((b) => b.steps.length);
-    if (hasInner && !window.confirm(t('confirmFork', { label }))) return;
-    onDelete(step.id);
-  };
-
   // רשימת צעדים אחת. hasTail — האם אחרי הבלוק הזה יש המשך משותף להציג בענפים.
   const renderList = (list, path, hasTail, addLabel) => (
     <div className="flex flex-col">
@@ -345,16 +355,16 @@ export default function JourneyColumn({
               canDown={i < list.length - 1}
               onSelect={() => onSelect(s.id)}
               onMove={(d) => onMove(s.id, d)}
-              onDelete={() => confirmDelete(s, t(`node_${s.type}`))}
+              onDelete={() => onDelete(s.id)}
             />
             {s.branches ? (
-              <div className="ms-3 mt-1 flex flex-col gap-2 border-s-2 border-n-strong ps-3">
+              <div className="ms-4 mt-1 flex flex-col gap-3 border-s border-n-strong ps-4">
                 {s.branches.map((b) => {
                   const label = branchLabel(node, b.handle);
                   const inner = [...path, { id: s.id, handle: b.handle }];
                   return (
                     <div key={b.handle} className="flex flex-col gap-1">
-                      <span className="text-xxs font-medium uppercase tracking-wide text-n-slate-11">{label}</span>
+                      <span className="w-fit rounded-md bg-n-alpha-2 px-1.5 py-1 text-xxs font-medium text-n-slate-11">{label}</span>
                       {b.steps.length ? null : (
                         <p className="m-0 text-xs italic text-n-slate-10">{t('emptyBranch')}</p>
                       )}
@@ -384,8 +394,8 @@ export default function JourneyColumn({
   );
 
   return (
-    <div className="flex max-w-3xl flex-col gap-1">
-      <Chip>{t('start')}</Chip>
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-1">
+      <Chip active={String(selectedId) === String(startId)} onClick={onSelectStart}>{t('start')}</Chip>
       {steps.length ? null : <p className="mt-2 mb-0 text-sm text-n-slate-11">{t('noSteps')}</p>}
       <div className="mt-1.5">{renderList(steps, [], false, t('addHere'))}</div>
       <div className="mt-1.5">
