@@ -25,7 +25,7 @@ function pageDom(chatId = 'whatsapp.integration') {
     'access-token': 'test-token', 'token-type': 'Bearer', client: 'test-client', expiry: '999', uid: 'test@example.invalid',
   }));
   const dom = new JSDOM(
-    '<!doctype html><html><head></head><body><div id="app" dir="rtl"><main><div class="flex flex-col"><div class="relative resizable-editor-wrapper"><div class="reply-box"></div></div></div></main></div></body></html>',
+    '<!doctype html><html><head></head><body><div id="app" dir="rtl"><main><div class="flex flex-col"><ul class="conversation-panel"><li><div class="message-bubble-container">הודעה קיימת</div></li></ul><div class="relative resizable-editor-wrapper"><div class="reply-box"></div></div></div></main></div></body></html>',
     {
       url: 'https://chatwoot.test/app/accounts/1/inbox/23/conversations/3289',
       runScripts: 'outside-only',
@@ -67,8 +67,18 @@ test('renders only in the WAHA integration control conversation', async () => {
   const match = pageDom();
   await runInjector(match.dom);
   assert.ok(match.dom.window.document.getElementById('cwpt-waha-controls'));
-  assert.match(match.dom.window.document.body.textContent, /ניהול חיבור WhatsApp/);
-  assert.match(match.dom.window.document.body.textContent, /חיבור באמצעות קוד QR/);
+  assert.match(match.dom.window.document.body.textContent, /מה תרצו לעשות/);
+  assert.match(match.dom.window.document.body.textContent, /חיבור מחדש עם QR/);
+
+  const controlMessage = match.dom.window.document.getElementById('cwpt-waha-controls');
+  assert.equal(controlMessage.tagName, 'LI');
+  assert.ok(controlMessage.parentElement.classList.contains('conversation-panel'));
+  assert.ok(controlMessage.querySelector('.cwpt-waha-bubble'));
+  assert.equal(controlMessage.previousElementSibling.textContent, 'הודעה קיימת');
+  assert.equal(
+    match.dom.window.document.querySelector('.resizable-editor-wrapper').previousElementSibling.className,
+    'conversation-panel'
+  );
 
   const ordinary = pageDom('972501234567@c.us');
   await runInjector(ordinary.dom);
@@ -117,5 +127,5 @@ test('enhancements artifact includes the WAHA controls part', () => {
     { cwd: REPO_ROOT, encoding: 'utf8' }
   );
   assert.match(html, /part: modules\/dashboard-enhancements\/parts\/waha-controls\.js/);
-  assert.match(html, /ניהול חיבור WhatsApp/);
+  assert.match(html, /מה תרצו לעשות/);
 });
