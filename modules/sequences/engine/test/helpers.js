@@ -68,6 +68,15 @@ export async function setupDb(pool) {
     id int PRIMARY KEY, name text)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS public.taggings (
     id int PRIMARY KEY, tag_id int, taggable_type text, taggable_id int, context text)`);
+  // 4.17 native per-recipient tracking (statuses queued:0 skipped:1 sent:2 delivered:3
+  // read:4 failed:5) — the campaign queries read it first, drip is the fallback.
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.campaign_recipients (
+    id int PRIMARY KEY, account_id int, campaign_id int, contact_id int, inbox_id int,
+    source_id text, status int DEFAULT 0, error_code text, error_title text,
+    error_message text, message_content text,
+    sent_at timestamp, delivered_at timestamp, read_at timestamp, failed_at timestamp,
+    created_at timestamp DEFAULT (now() AT TIME ZONE 'UTC'),
+    updated_at timestamp DEFAULT (now() AT TIME ZONE 'UTC'))`);
   await runMigrations(pool);
 }
 
