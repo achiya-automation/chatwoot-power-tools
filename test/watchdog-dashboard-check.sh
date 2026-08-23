@@ -27,16 +27,19 @@ open(sys.argv[2], "w", encoding="utf-8").write(m.group(1) + "\n")
 EX
 [ -s "$PY" ] || exit 1
 
-ALL8="modules/smart-import/inject/import-button.js
-modules/sequences/inject/sequences-nav.js
-modules/sequences/inject/templates-nav.js
-modules/sequences/inject/journeys-nav.js
-modules/sequences/inject/journey-launch.js
-modules/dashboard-enhancements/parts/campaign-modal.js
-modules/dashboard-enhancements/parts/campaign-stats.js
-modules/dashboard-enhancements/parts/video-compressor.js"
+# רשימת המודולים נגזרת מהקאנון של lib/assemble-dashboard-script.sh — לא מועתקת ממנו.
+# כך מקרה "כל המודולים -> ok" נכשל בקול רם כשרשימת ה-EXPECTED שבתוך ה-watchdog בשרת
+# מצפה למודול שכבר אינו בקאנון (תקרית video-compressor: הוסר מהקוד ב-20/08/2026, הרשימה
+# בשרתים קפאה, וההתראה המשיכה לרוץ על מודול מת עד 23/08/2026).
+# shellcheck source=../lib/assemble-dashboard-script.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/assemble-dashboard-script.sh"
+ALL="$(for m in import sequences enhancements; do _cwpt_module_parts "$m"; done)"
 
 mk() { while read -r p; do [ -n "$p" ] && echo "// part: $p"; done; }
+names() { xargs -n1 basename | tr '\n' ' ' | sed 's/ $//'; }
+
+LAST2=$(echo "$ALL" | tail -2 | names)
+JOURNEYS=$(echo "$ALL" | grep journey | names)
 
 fail=0
 chk() { # chk <שם> <קלט> <צפוי>
@@ -55,16 +58,16 @@ chk "פלט ריק (rails לא ענה)" ""                "unknown"
 chk "רק רווחים"               "   "             "unknown"
 chk "אין רשומה ב-DB"          "NOROW"           "missing"
 chk "סקריפט בלי אף מודול"     "console.log(1);" "missing"
-chk "כל 8 המודולים"           "$(echo "$ALL8" | mk)" "ok"
-chk "חסרים 2 האחרונים"        "$(echo "$ALL8" | head -6 | mk)" \
-    "incomplete campaign-stats.js video-compressor.js"
-chk "חסרים מודולי journeys"   "$(echo "$ALL8" | grep -v journey | mk)" \
-    "incomplete journeys-nav.js journey-launch.js"
-chk "חסר campaign-stats"      "$(echo "$ALL8" | grep -v campaign-stats | mk)" \
+chk "כל המודולים"             "$(echo "$ALL" | mk)" "ok"
+chk "חסרים 2 האחרונים"        "$(echo "$ALL" | sed '$d' | sed '$d' | mk)" \
+    "incomplete $LAST2"
+chk "חסרים מודולי journeys"   "$(echo "$ALL" | grep -v journey | mk)" \
+    "incomplete $JOURNEYS"
+chk "חסר campaign-stats"      "$(echo "$ALL" | grep -v campaign-stats | mk)" \
     "incomplete campaign-stats.js"
 
 # בלוק חתום: חתימה שלא תואמת את התוכן = הערך הושחת
-body="$(echo "$ALL8" | mk)"
+body="$(echo "$ALL" | mk)"
 sig=$(printf '%s' "wrong content" | sha256sum | cut -d' ' -f1)
 chk "חתימה לא תואמת" \
     "$(printf '<!-- CWPT:START -->\n<!-- cwpt-integrity sha256:%s -->\n%s\n<!-- CWPT:END -->' "$sig" "$body")" \
