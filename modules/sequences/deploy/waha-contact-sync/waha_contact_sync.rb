@@ -43,8 +43,12 @@ class WahaContactSync
       scanned updated_names updated_phones updated_identities unchanged
       missing_source_name fallback_names phone_conflicts errors
     ]
+    seen_accounts = {}
     @config.fetch('targets').each do |target|
-      result = sync_target(target)
+      account_id = Integer(target.fetch('account_id'))
+      first_for_account = !seen_accounts.key?(account_id)
+      seen_accounts[account_id] = true
+      result = sync_target(target, first_for_account)
       counter_keys.each { |key| totals[key] += result[key] }
       puts JSON.generate(result.merge(event: 'target_complete', dry_run: @dry_run))
     end
@@ -53,7 +57,12 @@ class WahaContactSync
 
   private
 
-  def sync_target(target)
+  def managed_inbox_ids_sql
+    @managed_inbox_ids_sql ||= @config.fetch('targets')
+                                      .map { |t| Integer(t.fetch('inbox_id')) }.uniq.join(', ')
+  end
+
+  def sync_target(target, include_unlinked = false)
     session = target.fetch('session')
     account_id = Integer(target.fetch('account_id'))
     inbox_id = Integer(target.fetch('inbox_id'))
@@ -68,7 +77,7 @@ class WahaContactSync
     profile_map = @mode == 'full' ? load_all_profiles(session, key) : nil
     group_map = @mode == 'full' ? load_all_groups(session, key) : nil
     lid_map = @mode == 'full' ? load_all_lids(session, key) : nil
-    scope_for(account_id, inbox_id).find_each do |contact|
+    scope_for(account_id, inbox_id, include_unlinked).find_each do |contact|
       stats[:scanned] += 1
       begin
         sync_contact(contact, session, key, profile_map, group_map, lid_map, stats)
@@ -82,16 +91,31 @@ class WahaContactSync
     raise SyncError, "target sync failed for account #{account_id}, inbox #{inbox_id}: #{e.class}"
   end
 
-  def scope_for(account_id, inbox_id)
-    scope = Contact.joins(:contact_inboxes)
-                   .where(account_id: account_id, contact_inboxes: { inbox_id: inbox_id })
+  def scope_for(account_id, inbox_id, include_unlinked)
+    # אנשי קשר של WAHA שאינם משויכים לאף תיבה מנוהלת עדיין מופיעים ברשימת
+    # אנשי הקשר של החשבון, ולכן התיבה הראשונה של כל חשבון סורקת גם אותם.
+    membership = if include_unlinked
+                   <<~SQL.squish
+                     (EXISTS (SELECT 1 FROM contact_inboxes ci WHERE ci.contact_id = contacts.id
+                                AND ci.inbox_id = #{Integer(inbox_id)})
+                      OR NOT EXISTS (SELECT 1 FROM contact_inboxes ci WHERE ci.contact_id = contacts.id
+                                       AND ci.inbox_id IN (#{managed_inbox_ids_sql})))
+                   SQL
+                 else
+                   <<~SQL.squish
+                     EXISTS (SELECT 1 FROM contact_inboxes ci WHERE ci.contact_id = contacts.id
+                               AND ci.inbox_id = #{Integer(inbox_id)})
+                   SQL
+                 end
+
+    scope = Contact.where(account_id: account_id)
                    .where("contacts.identifier IS NULL OR contacts.identifier <> 'whatsapp.integration'")
+                   .where(membership)
                    .where(<<~SQL.squish)
                      contacts.custom_attributes->>'#{WA_CHAT_ID}' IS NOT NULL OR
                      contacts.custom_attributes->>'#{WA_JID}' IS NOT NULL OR
                      contacts.custom_attributes->>'#{WA_LID}' IS NOT NULL
                    SQL
-                   .distinct
     return scope if @mode == 'full'
 
     since = RECENT_WINDOW_MINUTES.minutes.ago
@@ -255,13 +279,14 @@ class WahaContactSync
     raise SyncError, 'WAHA returned invalid JSON'
   end
 
+  # השם השמור בפנקס הוא מקור האמת; שם הפרופיל הציבורי משמש רק כשאין שם שמור.
   def preferred_profile_name(records)
     records.each do |row|
-      value = sanitize_name(row['pushName'] || row['pushname'])
+      value = sanitize_name(row['name'])
       return value if value
     end
     records.each do |row|
-      value = sanitize_name(row['name'])
+      value = sanitize_name(row['pushName'] || row['pushname'])
       return value if value
     end
     nil
@@ -321,6 +346,8 @@ class WahaContactSync
   end
 end
 
-mode = ARGV.find { |arg| %w[recent full].include?(arg) } || 'recent'
-dry_run = ARGV.include?('--dry-run')
-WahaContactSync.new(mode: mode, dry_run: dry_run).run
+unless ENV['WAHA_CONTACT_SYNC_LIB_ONLY'] # ponytail: הבדיקה טוענת את הקובץ בלי להריץ סנכרון
+  mode = ARGV.find { |arg| %w[recent full].include?(arg) } || 'recent'
+  dry_run = ARGV.include?('--dry-run')
+  WahaContactSync.new(mode: mode, dry_run: dry_run).run
+end
