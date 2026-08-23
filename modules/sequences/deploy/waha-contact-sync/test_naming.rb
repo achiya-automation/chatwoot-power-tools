@@ -39,4 +39,47 @@ end
 # סדר העדיפות חייב להישאר פנקס->פרופיל גם כשה-JSON משתמש ב-pushName וב-pushname
 raise 'name precedence regressed' unless failures.empty?
 
-puts "ok — #{assert_pairs.size} name-precedence assertions passed"
+# קיצור התיאור: השורה הראשונה המשמעותית, בלי קישורים, מקוצרת
+topic = ->(v) { sync.send(:sanitize_topic, v) }
+topic_cases = [
+  [topic.call("ברוכים הבאים לקהילת n8n\nשורה שנייה"), 'ברוכים הבאים לקהילת n8n'],
+  [topic.call("https://chat.whatsapp.com/abc\nקבוצת משלוחים"), 'קבוצת משלוחים'],
+  [topic.call("*הקבוצה פעילה מ-2018*\nעוד טקסט"), 'הקבוצה פעילה מ-2018'],
+  [topic.call("\n\n   \n"), nil],
+  [topic.call(nil), nil],
+  [topic.call('א' * 200), "#{'א' * 120}…"],
+  [topic.call('אב'), nil]
+]
+topic_fails = topic_cases.reject do |actual, expected|
+  ok = actual == expected
+  warn "FAIL topic: #{actual.inspect}, expected #{expected.inspect}" unless ok
+  ok
+end
+raise 'topic sanitising regressed' unless topic_fails.empty?
+
+# שורת התיאור של קבוצה: מספר משתתפים + נושא
+line = ->(f) { sync.send(:group_description_line, f) }
+owns = ->(c) { sync.send(:owns_description?, c) }
+
+group_cases = [
+  [line.call({ participants: 1021, topic: 'משלוחים באזור המרכז' }), '1,021 משתתפים · משלוחים באזור המרכז'],
+  [line.call({ participants: 12, topic: nil }), '12 משתתפים'],
+  [line.call({ participants: nil, topic: 'רק נושא' }), 'רק נושא'],
+  [line.call({ participants: nil, topic: nil }), nil],
+  [line.call({ participants: 5_432, topic: nil }), '5,432 משתתפים'],
+  # נוגעים בתיאור ריק ובתיאור שאנחנו כתבנו, לא בטקסט אנושי
+  [owns.call(nil), true],
+  [owns.call(''), true],
+  [owns.call('1,021 משתתפים · משלוחים'), true],
+  [owns.call('12 משתתפים'), true],
+  [owns.call('לקוח חשוב — לחזור אליו'), false]
+]
+
+group_fails = group_cases.reject do |actual, expected|
+  ok = actual == expected
+  warn "FAIL group: #{actual.inspect}, expected #{expected.inspect}" unless ok
+  ok
+end
+raise 'group description regressed' unless group_fails.empty?
+
+puts "ok — #{assert_pairs.size} name-precedence + #{group_cases.size} group-description + #{topic_cases.size} topic assertions passed"
