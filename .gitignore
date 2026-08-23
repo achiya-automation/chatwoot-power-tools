@@ -4,3 +4,4 @@ deploy/.decommission*.log
 docs/superpowers/
 .DS_Store
 .claude/
+.rollback_*.csv
