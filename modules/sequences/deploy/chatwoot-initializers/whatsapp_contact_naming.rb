@@ -11,8 +11,35 @@
 # Public WhatsApp profile names and group subjects are refreshed by the
 # server-side waha_contact_sync job. This initializer is the synchronous safety
 # net that makes the phone field correct as soon as WAHA learns a JID.
+#
+# It also fixes the other place a WhatsApp name reaches an agent's eye: the
+# sender line WAHA prepends to every incoming group message. WAHA builds it as
+# `Name (jid)` (apps/chatwoot/consumers/waha/base.js), so a raw technical id
+# rides along on every group message:
+#
+#     👥 *miki (2212210188291@lid)*   ->   👥 *miki*
+#
+# The format is hard-coded in the WAHA image and cannot be configured off, so it
+# is stripped here on the way into the database. The 75,355 messages that predate
+# this were cleaned in place on 23.8.2026 (backup:
+# /opt/chatwoot-backups/waha_group_headers_20260823_160411.csv).
+
+WAHA_GROUP_SENDER_JID = /\A(👥 \*[^\n]*?) \(\d{7,20}@(?:lid|c\.us)\)\*/.freeze
 
 Rails.application.config.to_prepare do
+  Message.class_eval do
+    before_save :strip_waha_group_sender_jid
+
+    private
+
+    def strip_waha_group_sender_jid
+      # ponytail: start_with? keeps this off the hot path for every non-group message
+      return unless content.to_s.start_with?('👥 *')
+
+      self.content = content.sub(WAHA_GROUP_SENDER_JID, '\1*')
+    end
+  end
+
   Contact.class_eval do
     before_save :normalize_waha_identity_fields
 

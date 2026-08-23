@@ -41,7 +41,7 @@ class WahaContactSync
     totals = Hash.new(0)
     counter_keys = %i[
       scanned updated_names updated_phones updated_identities unchanged
-      missing_source_name fallback_names phone_conflicts errors
+      missing_source_name fallback_names phone_conflicts errors updated_group_info
     ]
     seen_accounts = {}
     @config.fetch('targets').each do |target|
@@ -131,13 +131,14 @@ class WahaContactSync
 
     if is_group
       group_id = [chat_id, jid].compact.find { |value| value.end_with?('@g.us') }
-      desired_name = group_map ? group_map[group_id] : load_one_group_name(session, key, group_id)
+      facts = group_map ? group_map[group_id] : load_one_group_facts(session, key, group_id)
+      desired_name = facts && facts[:name]
       stats[:missing_source_name] += 1 if desired_name.nil?
       if desired_name.nil? && technical_group_name?(contact.name)
         desired_name = unavailable_name('קבוצת WhatsApp', group_id)
         stats[:fallback_names] += 1
       end
-      apply_changes(contact, desired_name, nil, nil, stats)
+      apply_changes(contact, desired_name, nil, nil, stats, group_facts: facts)
       return
     end
 
@@ -164,10 +165,19 @@ class WahaContactSync
     apply_changes(contact, desired_name, phone, (resolved_jid if jid.nil?), stats)
   end
 
-  def apply_changes(contact, desired_name, desired_phone, desired_jid, stats)
+  def apply_changes(contact, desired_name, desired_phone, desired_jid, stats, group_facts: nil)
     changes = {}
     clean_name = sanitize_name(desired_name)
     changes[:name] = clean_name if clean_name && clean_name != contact.name
+
+    if group_facts
+      extra = contact.additional_attributes.to_h
+      line = group_description_line(group_facts)
+      if line && line != extra['description'] && owns_description?(extra['description'])
+        changes[:additional_attributes] = extra.merge('description' => line)
+        stats[:updated_group_info] += 1
+      end
+    end
 
     if desired_jid
       attributes = contact.custom_attributes.to_h
@@ -236,23 +246,73 @@ class WahaContactSync
     nil
   end
 
+  # שורה אחת בכרטיס הקבוצה: כמה משתתפים ועל מה הקבוצה.
+  def group_description_line(facts)
+    parts = []
+    parts << "#{format_count(facts[:participants])} משתתפים" if facts[:participants]
+    parts << facts[:topic] if facts[:topic]
+    parts.empty? ? nil : parts.join(' · ')
+  end
+
+  def format_count(number)
+    number.to_s.reverse.scan(/\d{1,3}/).join(',').reverse
+  end
+
+  # נוגעים רק בתיאור ריק או בתיאור שאנחנו כתבנו — טקסט שהוקלד ביד נשאר.
+  def owns_description?(current)
+    value = current.to_s.strip
+    value.empty? || value.match?(/\A[\d,]+ משתתפים(\z| · )/)
+  end
+
   def load_all_groups(session, key)
     rows = get_json("/api/#{session}/groups", key, limit: 500)
     raise SyncError, 'groups response is not an array' unless rows.is_a?(Array)
 
     rows.each_with_object({}) do |row, result|
       id = normalize_jid(row['JID'] || row['id'])
-      name = sanitize_name(row['Name'] || row['subject'] || row['name'])
-      result[id] = name if id&.end_with?('@g.us') && name
+      next unless id&.end_with?('@g.us')
+
+      result[id] = group_facts(row)
     end
   end
 
-  def load_one_group_name(session, key, group_id)
+  # נושא הקבוצה, התיאור ומספר המשתתפים — שלושתם מגיעים מאותה תשובה של WAHA.
+  def group_facts(row)
+    {
+      name: sanitize_name(row['Name'] || row['subject'] || row['name']),
+      topic: sanitize_topic(row['Topic'] || row['description']),
+      participants: group_participant_count(row)
+    }
+  end
+
+  def group_participant_count(row)
+    listed = row['Participants']
+    count = listed.is_a?(Array) && !listed.empty? ? listed.size : row['ParticipantCount'].to_i
+    count.positive? ? count : nil
+  end
+
+  # תיאור קבוצה בוואטסאפ הוא לרוב מגילה עם קישורים. לכרטיס נכנסת המהות בלבד:
+  # השורה הראשונה שאומרת משהו, מקוצרת לאורך שנוח לקרוא במבט אחד.
+  TOPIC_MAX = 120
+
+  def sanitize_topic(value)
+    text = value.to_s.gsub(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/, '')
+    line = text.split("\n").map { |l| l.gsub(/\*/, '').strip }
+               .find { |l| !l.empty? && !l.match?(%r{\Ahttps?://}i) && l.length > 3 }
+    return nil if line.nil?
+
+    line = line.squeeze(' ').strip
+    return line if line.length <= TOPIC_MAX
+
+    "#{line[0, TOPIC_MAX].rstrip.sub(/[\s,.;:־-]+\z/, '')}…"
+  end
+
+  def load_one_group_facts(session, key, group_id)
     encoded = URI.encode_www_form_component(group_id)
     row = get_json("/api/#{session}/groups/#{encoded}", key)
     return nil unless row.is_a?(Hash)
 
-    sanitize_name(row['Name'] || row['subject'] || row['name'])
+    group_facts(row)
   rescue SyncError
     nil
   end
