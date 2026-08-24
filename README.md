@@ -235,6 +235,7 @@ Built to be safe to run on a production support desk:
 
 - A **self-hosted** Chatwoot instance on Docker Compose v2, on a Linux host you can access as root/sudo.
 - Chatwoot v4.x (verified against v4.15.1 — the installer detects container and service names dynamically rather than assuming a fixed layout, so other v4.x releases are expected to work the same way).
+- **Chatwoot v4.17+:** Chatwoot's `SafeFetch` layer blocks webhook deliveries to private-network hosts, which silently kills the internal journeys webhook (`http://<engine>:3100/drip-api/journey-hook/…`) — sequences stop advancing with `Invalid webhook URL … has no public ip addresses` warnings in Sidekiq logs. Set `SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"` in the `environment:` of Chatwoot's `rails` and `sidekiq` services (compose override) and recreate them.
 - A reverse proxy in front of Chatwoot: **Caddy or nginx** get an automatic route; anything else (Traefik, etc.) gets a copy-paste config snippet printed instead.
 
 ## How it works

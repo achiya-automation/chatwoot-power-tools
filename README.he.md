@@ -193,6 +193,11 @@ sudo bash install.sh --uninstall
   אליו גישת root/sudo.
 - Chatwoot v4.x (נבדק אמפירית מול v4.15.1 — ההתקנה מזהה שמות containers ושירותים באופן
   דינמי במקום להניח מבנה קבוע, ולכן צפויה לעבוד באותה צורה על גרסאות v4.x אחרות).
+- **Chatwoot v4.17 ומעלה:** שכבת ה-`SafeFetch` של Chatwoot חוסמת שליחת webhooks לכתובות
+  רשת פרטיות, ולכן ה-webhook הפנימי של ה-journeys ‏(`http://<engine>:3100/drip-api/journey-hook/…`)
+  מת בשקט — רצפים מפסיקים להתקדם, עם אזהרות `Invalid webhook URL … has no public ip addresses`
+  בלוגים של Sidekiq. הפתרון: להוסיף `SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"` ל-`environment:`
+  של שירותי ה-`rails` וה-`sidekiq` (ב-compose override) ולשחזר אותם.
 - reverse proxy מול Chatwoot: Caddy או nginx מקבלים route אוטומטי; כל אחר (Traefik וכו')
   מקבל קטע קונפיגורציה מוכן-להעתקה במקום זאת.
 
