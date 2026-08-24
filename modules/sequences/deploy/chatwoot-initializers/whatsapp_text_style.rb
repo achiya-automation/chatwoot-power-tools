@@ -88,9 +88,12 @@ if defined?(Rails)
         return unless content_type == 'text' && content.present?
         return unless inbox && WhatsappTextStyle::WHATSAPP_CHANNELS.include?(inbox.channel_type)
 
-        if incoming?
+        if incoming? || (outgoing? && source_id.present?)
+          # WhatsApp-origin text (incoming, or fromMe synced by the bridge with
+          # a source_id at create time): real WhatsApp markup -> markdown
           self.content = WhatsappTextStyle.hard_breaks(WhatsappTextStyle.whatsapp_to_markdown(content))
         elsif outgoing?
+          # dashboard/API-composed text is already markdown - only keep breaks
           self.content = WhatsappTextStyle.hard_breaks(content)
         end
       end
