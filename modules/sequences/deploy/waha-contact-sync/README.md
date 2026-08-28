@@ -17,8 +17,18 @@ stored only in `/opt/chatwoot/waha-contact-sync/config.json` with mode `0600`.
 
 Two timers are installed:
 
-- recent activity every minute;
+- recent activity every three minutes (the ten-minute activity window keeps overlap);
 - a full reconciliation nightly at 05:10.
 
 The full run is idempotent. Logs contain only counts and account/inbox/session
 metadata; contact names, numbers and identifiers are never logged.
+
+`run.sh full --dry-run` exercises the live read path and scans Chatwoot without
+writing contact fields. The wrapper validates the protected config before each
+run and forwards the dry-run flag all the way to Rails. If one target becomes
+stale, the runner records only safe target metadata, continues with every other
+target, and then exits non-zero so systemd monitoring still reports the fault.
+
+The config generator reads only active WAHA sessions with enabled Chatwoot
+apps. Lines moved to the interactive engine are managed by that engine's own
+Chatwoot bridge and must not remain in this WAHA-only target list.
