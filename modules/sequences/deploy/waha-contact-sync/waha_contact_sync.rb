@@ -39,6 +39,7 @@ class WahaContactSync
     raise SyncError, "unsupported mode: #{@mode}" unless %w[recent full].include?(@mode)
 
     totals = Hash.new(0)
+    totals[:target_failures] = 0
     counter_keys = %i[
       scanned updated_names updated_phones updated_identities unchanged
       missing_source_name fallback_names phone_conflicts errors updated_group_info
@@ -46,13 +47,35 @@ class WahaContactSync
     seen_accounts = {}
     @config.fetch('targets').each do |target|
       account_id = Integer(target.fetch('account_id'))
+      inbox_id = Integer(target.fetch('inbox_id'))
+      session = target.fetch('session')
       first_for_account = !seen_accounts.key?(account_id)
       seen_accounts[account_id] = true
-      result = sync_target(target, first_for_account)
+      begin
+        result = sync_target(target, first_for_account)
+      rescue StandardError => e
+        # A stale or temporarily unavailable source must not starve every later
+        # target. Keep the unit failed for monitoring, but finish the healthy
+        # targets first. Never include response bodies or contact data here.
+        totals[:target_failures] += 1
+        puts JSON.generate(
+          session: session,
+          account_id: account_id,
+          inbox_id: inbox_id,
+          mode: @mode,
+          event: 'target_failed',
+          error_class: e.class.name,
+          dry_run: @dry_run
+        )
+        next
+      end
       counter_keys.each { |key| totals[key] += result[key] }
       puts JSON.generate(result.merge(event: 'target_complete', dry_run: @dry_run))
     end
     puts JSON.generate(totals.merge(event: 'sync_complete', mode: @mode, dry_run: @dry_run))
+    return if totals[:target_failures].zero?
+
+    raise SyncError, "#{totals[:target_failures]} target(s) failed"
   end
 
   private

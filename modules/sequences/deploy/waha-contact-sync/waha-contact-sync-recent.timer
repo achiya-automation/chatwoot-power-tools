@@ -3,7 +3,7 @@ Description=Refresh recently active WAHA contacts in Chatwoot
 
 [Timer]
 OnBootSec=3min
-OnUnitActiveSec=1min
+OnUnitActiveSec=3min
 RandomizedDelaySec=15s
 Unit=waha-contact-sync@recent.service
 Persistent=true
