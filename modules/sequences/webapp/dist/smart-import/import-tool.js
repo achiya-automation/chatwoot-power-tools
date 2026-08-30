@@ -213,6 +213,16 @@ var __cwImport = (() => {
       return v !== "" && ALL_SYNONYMS.has(stripFiller(normHeader(v)));
     });
   }
+  function matchCustomField(header2, customDefs) {
+    const n = stripFiller(normHeader(header2));
+    if (!n) return null;
+    for (const d of customDefs || []) {
+      if (normHeader(d.attribute_display_name) === n || normHeader(d.attribute_key) === n) {
+        return d.attribute_key;
+      }
+    }
+    return null;
+  }
   function detectColumns(headers, sampleRows) {
     const taken = /* @__PURE__ */ new Set();
     return headers.map((header2, index) => {
@@ -1140,7 +1150,9 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         }
         options.push({ value: "__new__", label: t("createNewField"), icon: "plus" });
         const custom = state.customMap.find((c) => c.index === i);
-        const initial = custom ? custom.create ? "__new__" : "custom:" + custom.attribute_key : state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field) ? state.mapping[i].field : "";
+        const ownField = custom ? null : matchCustomField(colHeader, customDefs);
+        if (ownField) updateMapping(i, "custom:" + ownField);
+        const initial = custom ? custom.create ? "__new__" : "custom:" + custom.attribute_key : ownField ? "custom:" + ownField : state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field) ? state.mapping[i].field : "";
         const row = el("tr");
         const tdHeader = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
         tdHeader.textContent = colHeader;
