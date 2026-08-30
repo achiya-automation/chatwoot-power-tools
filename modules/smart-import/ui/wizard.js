@@ -1,5 +1,5 @@
 import { readFileToTable } from '../lib/xlsxReader.js';
-import { detectColumns, SYSTEM_FIELDS, validateMapping, isHeaderEchoRow } from '../lib/columnDetector.js';
+import { detectColumns, matchCustomField, SYSTEM_FIELDS, validateMapping, isHeaderEchoRow } from '../lib/columnDetector.js';
 import { buildContactPayload } from '../lib/fieldMapper.js';
 import { createImportJob } from '../lib/importRunner.js';
 import { createApiClient } from '../lib/apiClient.js';
@@ -316,11 +316,16 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       // הוא לעולם לא נכתב ל-mapping.field (ראה updateMapping/commit), ולכן הסתמכות עליו
       // בלבד גרמה לבחירה להיעלם בכל חזרה לשלב הזה.
       const custom = state.customMap.find((c) => c.index === i);
+      // בלי בחירה קודמת: שדה מותאם ששמו זהה לכותרת גובר על ניחוש שדה המערכת,
+      // ו-updateMapping מיישר את ה-state כך שהמטען ילך אחרי מה שמוצג בפועל.
+      const ownField = custom ? null : matchCustomField(colHeader, customDefs);
+      if (ownField) updateMapping(i, 'custom:' + ownField);
       const initial = custom
         ? (custom.create ? '__new__' : 'custom:' + custom.attribute_key)
-        : (state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field)
-          ? state.mapping[i].field
-          : '');
+        : (ownField ? 'custom:' + ownField
+          : (state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field)
+            ? state.mapping[i].field
+            : ''));
 
       const row = el('tr');
       const tdHeader = el('td', 'px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12');
