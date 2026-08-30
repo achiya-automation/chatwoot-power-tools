@@ -110,6 +110,23 @@ export function isHeaderEchoRow(cells, mapping) {
   });
 }
 
+// שדה מותאם שהמשתמש הגדיר בעצמו מנצח שדה מערכת בעל אותו שם.
+// Why: a column headed "חברה" matches the company_name synonym and lands in
+// additional_attributes — which ContactDrop/Liquid cannot read. On 30.8.2026 that
+// silently skipped 247/247 recipients of a campaign using
+// {{contact.custom_attribute['חברה']}}. If the user defined a field by that name,
+// that is the one they meant.
+export function matchCustomField(header, customDefs) {
+  const n = stripFiller(normHeader(header));
+  if (!n) return null;
+  for (const d of customDefs || []) {
+    if (normHeader(d.attribute_display_name) === n || normHeader(d.attribute_key) === n) {
+      return d.attribute_key;
+    }
+  }
+  return null;
+}
+
 export function detectColumns(headers, sampleRows) {
   const taken = new Set();
   return headers.map((header, index) => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectColumns, SYSTEM_FIELDS, isHeaderEchoRow } from '../lib/columnDetector.js';
+import { detectColumns, matchCustomField, SYSTEM_FIELDS, isHeaderEchoRow } from '../lib/columnDetector.js';
 import { buildContactPayload } from '../lib/fieldMapper.js';
 
 const f = (res, header) => res.find((r) => r.header === header).field;
@@ -172,4 +172,32 @@ test('does not flag real data rows as header echoes', () => {
   assert.equal(isHeaderEchoRow(['', 'מלבאואר', ''], mapping), false);        // phoneless partner row stays
   assert.equal(isHeaderEchoRow(['', 'שם טוב', ''], mapping), false);          // real surname, not the label "שם"
   assert.equal(isHeaderEchoRow(['0501234567', 'שם פרטי', ''], mapping), false); // a valid phone wins — data, not header
+});
+
+// רגרסיה 30.8.2026: עמודה בכותרת "חברה" זוהתה כ-company_name ונחתה ב-additional_attributes,
+// ש-Liquid לא קורא — 247/247 נמעני קמפיין דולגו בשקט. שדה שהמשתמש הגדיר חייב לנצח.
+const CUSTOM_DEFS = [
+  { attribute_key: 'חברה', attribute_display_name: 'חברה' },
+  { attribute_key: 'role_x', attribute_display_name: 'תפקיד' },
+];
+
+test('a user-defined field beats the same-named system field', () => {
+  assert.equal(detectColumns(['חברה'], []).find((r) => r.header === 'חברה').field, 'company_name');
+  assert.equal(matchCustomField('חברה', CUSTOM_DEFS), 'חברה');
+});
+
+test('matches on display name as well as on key', () => {
+  assert.equal(matchCustomField('תפקיד', CUSTOM_DEFS), 'role_x');
+});
+
+test('normalizes the header before matching', () => {
+  assert.equal(matchCustomField('  חברה.  ', CUSTOM_DEFS), 'חברה');
+  assert.equal(matchCustomField('חברה לקוח', CUSTOM_DEFS), 'חברה');
+});
+
+test('no false positives', () => {
+  assert.equal(matchCustomField('עיר', CUSTOM_DEFS), null);
+  assert.equal(matchCustomField('', CUSTOM_DEFS), null);
+  assert.equal(matchCustomField('חברה', []), null);
+  assert.equal(matchCustomField('חברה', undefined), null);
 });
