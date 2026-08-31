@@ -29,4 +29,3 @@ test('canvas ships its custom nodes and React Flow runtime', () => {
   assert.match(nodes, /export const NODE_META/);
   assert.match(nodes, /export const nodeTypes/);
 });
-
