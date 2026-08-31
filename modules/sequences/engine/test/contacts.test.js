@@ -60,7 +60,7 @@ test('contacts: empty query returns recent contacts (newest first), scoped to ac
 
 // ─────────────────── account switcher REMOVED (by-context only) ─────────────
 // The cross-account picker was removed: a user's account follows the current Chatwoot
-// URL, and a super-admin reaches a client's sequences through Chatwoot's super-admin
+// URL, and a native Chatwoot SuperAdmin reaches a client's sequences through Chatwoot's super-admin
 // console — not an in-dashboard switcher. The `accounts` action no longer exists.
 test('accounts: action removed — handleAction falls through to "Unknown action"', async () => {
   await assert.rejects(
