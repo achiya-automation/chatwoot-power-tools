@@ -53,6 +53,8 @@ source "$TMP/lib.sh"
 # The library sets -e for its own run; a test needs commands to be allowed to fail.
 set +e
 REPO_ROOT="$REPO"
+DEPLOY_COMMIT="$(git -C "$REPO" rev-parse HEAD)"
+DEPLOY_ID="${DEPLOY_COMMIT:0:12}-20260831000000-$$"
 
 md5_of_string() { printf '%s\n' "$1" | md5_stdin; }
 
@@ -68,14 +70,8 @@ check "missing-in-HEAD path is fatal, not silently empty" "fatal" \
   "$([[ $? -ne 0 ]] && echo fatal || echo silent)"
 
 echo
-echo "deploy_engine ships HEAD (real function, transport stubbed)"
-# scp is called as: scp -q <tgz> <server>:<path> — so $2 is the archive deploy_engine built.
-# Capturing it here is the only way to see the bytes that would have gone over the wire,
-# since deploy_engine deletes its temp file on the way out.
-scp() { cp "$2" "$TMP/captured.tgz"; }
-ssh() { :; }
-
-deploy_engine fake-server flat >/dev/null
+echo "build_deploy_archive ships the pinned commit"
+build_deploy_archive flat "$TMP/captured.tgz"
 check "flat: carries committed bytes, not the dirty working tree" "COMMITTED" \
   "$(tar -xzOf "$TMP/captured.tgz" engine/src/campaigns.js | tr -d '\n')"
 check "flat: member paths unchanged (engine/src/...)" "present" \
@@ -83,7 +79,7 @@ check "flat: member paths unchanged (engine/src/...)" "present" \
 check "flat: migrations still included" "present" \
   "$(tar -tzf "$TMP/captured.tgz" | grep -q '^engine/migrations/' && echo present || echo missing)"
 
-deploy_engine fake-server modular >/dev/null
+build_deploy_archive modular "$TMP/captured.tgz"
 check "modular: carries committed bytes" "COMMITTED" \
   "$(tar -xzOf "$TMP/captured.tgz" modules/sequences/engine/src/campaigns.js | tr -d '\n')"
 check "modular: docker-compose.addons.yml still included" "present" \
@@ -107,10 +103,12 @@ git add -A && git commit -qm init
 echo 'edited-but-not-committed' > docker-compose.addons.yml   # only the yml is dirty
 
 REPO_ROOT="$REPO2"; FORCE=0
+DEPLOY_COMMIT="$(git -C "$REPO2" rev-parse HEAD)"
 ( require_clean_tree >/dev/null 2>&1 )
 check "a dirty docker-compose.addons.yml alone still stops the deploy" "stopped" \
   "$([[ $? -ne 0 ]] && echo stopped || echo "slipped through")"
 REPO_ROOT="$REPO"
+DEPLOY_COMMIT="$(git -C "$REPO" rev-parse HEAD)"
 
 echo
 if [[ $FAIL -eq 0 ]]; then printf '\033[32m%d passed\033[0m\n' "$PASS"; exit 0
