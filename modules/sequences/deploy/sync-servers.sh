@@ -725,12 +725,11 @@ require_pinned_head
 FAILED=0
 PREFLIGHT_FAILED=0
 SERVER_LAYOUTS=()
-SERVER_PATCH_SETS=()
 
 # Phase 1 is read-only across EVERY selected server. A blocker on the second server must
 # not be discovered after the first one was already changed; that used to leave the pair
-# split across versions. Preserve each server's initializer plan for phase 2 because
-# check_drift deliberately builds it per layout/server.
+# split across versions. The mutable initializer plan is intentionally rebuilt just before
+# each copy in phase 2, so a server-side change after preflight cannot be overwritten unseen.
 for ((server_index=0; server_index<${#SERVERS[@]}; server_index++)); do
   server="${SERVERS[$server_index]}"
   say "$server · preflight"
@@ -744,7 +743,6 @@ for ((server_index=0; server_index<${#SERVERS[@]}; server_index++)); do
 
   set +e; check_drift "$server" "$layout"; drift_state=$?; set -e
   SERVER_LAYOUTS[$server_index]="$layout"
-  SERVER_PATCH_SETS[$server_index]="$DEPLOY_PATCHES"
 
   # 0 = in sync · 1 = behind pinned commit · 2 = edited/other-branch server state
   # 3 = only other-branch initializer files differ; nothing this branch may deploy.
@@ -782,14 +780,24 @@ fi
 [[ $PREFLIGHT_FAILED -eq 0 ]] \
   || die "preflight failed; no selected server was changed"
 
-# Phase 2 mutates one server at a time, using only the immutable commit and the exact plan
-# captured above. The campaign guard is repeated immediately before each copy/restart.
+# Phase 2 mutates one server at a time, using only the immutable commit. Drift is checked
+# again immediately before the copy to close the preflight-to-deploy race; the campaign
+# guard is repeated immediately before each copy/restart too.
 for ((server_index=0; server_index<${#SERVERS[@]}; server_index++)); do
   server="${SERVERS[$server_index]}"
   layout="${SERVER_LAYOUTS[$server_index]}"
-  DEPLOY_PATCHES="${SERVER_PATCH_SETS[$server_index]}"
   say "$server · deploy $DEPLOY_COMMIT"
   require_pinned_head
+  set +e; check_drift "$server" "$layout"; drift_state=$?; set -e
+  case "$drift_state" in
+    0|1) ;;
+    2)
+      [[ $FORCE -eq 1 ]] \
+        || die "$server changed after preflight; no bytes were copied to this server"
+      warn "--force: overwriting drift re-confirmed immediately before copy"
+      ;;
+    *) die "$server changed to a non-deployable state after preflight" ;;
+  esac
   ensure_no_running_campaigns "$server"
   deploy_engine "$server" "$layout"
   deploy_patch "$server"
