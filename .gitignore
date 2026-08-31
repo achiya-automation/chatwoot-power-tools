@@ -5,3 +5,4 @@ docs/superpowers/
 .DS_Store
 .claude/
 .rollback_*.csv
+/.cwpt-runtime/

@@ -1,4 +1,5 @@
--- 033_journeys_role_grants.sql — רץ ע"י superuser (migrate.js מדלג על *role_grants* בכוונה).
+-- 033_journeys_role_grants.sql — דורש owner/superuser. migrate.js מדווח עליו כ-pending;
+-- install.sh ו-sync-servers.sh מחילים אותו באופן אידמפוטנטי ורושמים אותו ב-ledger.
 --
 -- למה SECURITY DEFINER: הפלואו צריך אירועי זמן-אמת מ-Chatwoot. הדרך הנקייה היא שורת
 -- webhook חשבונית ב-public.webhooks — אבל ל-drip_engine אין (ולא צריך להיות) INSERT על

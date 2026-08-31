@@ -7,8 +7,17 @@
 }
 
 @test "addons compose reads DATABASE_URL from CWPT_DATABASE_URL env" {
-  run grep -q 'DATABASE_URL: ${CWPT_DATABASE_URL}' docker-compose.addons.yml
+  run grep -q 'DATABASE_URL: ${CWPT_DATABASE_URL:-}' docker-compose.addons.yml
   [ "$status" -eq 0 ]
+}
+
+@test "addons compose passes the exact installer module selection" {
+  run grep -q 'CWPT_ENABLED_MODULES: ${CWPT_ENABLED_MODULES:-import,sequences,enhancements}' docker-compose.addons.yml
+  [ "$status" -eq 0 ]
+}
+
+@test "addons compose passes the per-install deployment identity" {
+  grep -q 'CWPT_DEPLOY_ID: ${CWPT_DEPLOY_ID:-}' docker-compose.addons.yml
 }
 
 @test "addons compose sets PUBLIC_BASE_URL from env (WhatsApp media-url fix)" {

@@ -11,7 +11,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/achiya-automation/chatwoot-power-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/achiya-automation/chatwoot-power-tools/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/achiya-automation/chatwoot-power-tools?style=social)](https://github.com/achiya-automation/chatwoot-power-tools/stargazers)
-[![Chatwoot v4.x](https://img.shields.io/badge/Chatwoot-v4.x-1f93ff)](https://www.chatwoot.com/)
+[![Chatwoot >=4.17.1](https://img.shields.io/badge/Chatwoot-%3E%3D4.17.1-1f93ff)](https://www.chatwoot.com/)
 [![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ed?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
 **3 modules** · **one `curl \| bash`** · **same-origin (zero CORS)** · **least-privilege DB role** · **no telemetry**
@@ -55,9 +55,9 @@ curl -fsSL https://github.com/achiya-automation/chatwoot-power-tools/archive/ref
 - **🔀 Visual flow builder** — a drag-and-drop conversation builder: trigger, message, template, question, buttons, condition, delay, action, webhook and handoff nodes
 - **🛡️ WhatsApp compliance guardrails** — consent records, opt-out detection in the customer's own words, live quality monitoring, and an automatic halt before Meta disables your number
 - **📊 Campaign analytics** — a delivery funnel, per-recipient outcomes with the reason each failure happened, and a read-rate comparison across campaigns
-- **✨ Dashboard upgrades** — a "Sequences" sidebar item, a supercharged campaign modal (variable chips + live preview), and client-side video compression past the 16MB WhatsApp limit
+- **✨ Dashboard upgrades** — a "Sequences" sidebar item, a supercharged campaign modal (variable chips + live preview), native Hebrew fixes, and campaign delivery analytics
 - **🧩 Modular** — install all three, or exactly the ones you want (`--modules=`)
-- **🔒 Least-privilege by design** — a DB role that can `SELECT` a few tables and write **one column**, nothing more (see [Security](#-security))
+- **🔒 Least-privilege by design** — read-only access to required Chatwoot data plus three narrowly scoped assignment/cache columns (see [Security](#-security))
 - **♻️ Clean uninstall** — one flag reverses everything and preserves your data + any existing dashboard scripts
 
 ---
@@ -92,7 +92,7 @@ Automated WhatsApp Cloud API template-message sequences, managed entirely from i
 </table>
 
 ### ✨ Dashboard Enhancements
-Adds a "Sequences" item to the main sidebar, upgrades Chatwoot's native WhatsApp campaign modal with variable chips and a live message preview, and adds a client-side video-compression button (via WebCodecs) so you can attach videos over WhatsApp's 16MB media limit without a server-side transcoding step.
+Adds a "Sequences" item to the main sidebar, upgrades Chatwoot's native WhatsApp campaign modal with variable chips and a live message preview, fills reusable template media automatically, fixes missing native Hebrew strings, and adds campaign delivery analytics.
 
 <table>
 <tr><td width="50%" align="center"><b>🇬🇧 English</b></td><td width="50%" align="center"><b>🇮🇱 עברית</b></td></tr>
@@ -183,7 +183,7 @@ sudo bash install.sh             # install for real
 |---|---|---|
 | Smart Contact Import | `import` | CSV/Excel import wizard in the dashboard |
 | WhatsApp Sequences | `sequences` | The sidecar engine and its full dashboard: sequences, flow builder, template studio, compliance, campaign analytics, contacts — plus the sidebar entry |
-| Dashboard Enhancements | `dashboard` | Campaign modal upgrade + video compressor |
+| Dashboard Enhancements | `dashboard` | Campaign modal upgrade, reusable template media, native Hebrew fixes and campaign analytics |
 
 The `sequences` module is one install unit, not six — the screens above all live in the
 same sidecar app and share its engine and database schema.
@@ -195,6 +195,19 @@ sudo bash install.sh --modules=all
 sudo bash install.sh --modules=import,sequences
 sudo bash install.sh --modules=dashboard
 ```
+
+`--modules` is the complete desired state, not an additive switch. Re-running with a
+subset removes stale unselected module directories/static assets, writes the exact
+selection to `CWPT_ENABLED_MODULES`, and disables unselected API routes, SPA entry points,
+database migrations/grants and background loops. An `import`-only install therefore does
+not provision the database role or run owner migrations; when shrinking an existing
+database-backed install, it revokes the role's public-table/function access and clears the
+database credential passed to the replacement container. `dashboard` reuses the sidecar's
+compiled campaign viewer, but non-campaign SPA entries and all sequence actions stay
+server-blocked. Existing `drip` data is never dropped when shrinking a selection.
+If the Git checkout itself is `/opt/chatwoot/chatwoot-power-tools`, selected deployment
+artifacts live in its isolated `.cwpt-runtime/` child; subset installs and uninstall never
+delete tracked checkout files.
 
 ## Usage
 
@@ -222,7 +235,7 @@ sudo bash install.sh --uninstall
 
 Built to be safe to run on a production support desk:
 
-- **Least-privilege database role.** `drip_engine` gets `SELECT` on only the handful of Chatwoot tables the engine reads, plus `UPDATE` on a **single column** (`contacts.custom_attributes`). It cannot read or change names, phones, emails, or anything else — a bug in the engine simply *can't* touch them.
+- **Least-privilege database role.** `drip_engine` gets read-only `SELECT` on only the Chatwoot tables the selected modules need (including contact names, phones and emails for sequence/contact/campaign views). With `sequences`, writes are limited to `contacts.custom_attributes` (assignment state) and the two `channel_whatsapp` template-cache columns `message_templates` / `message_templates_last_updated`; dashboard-only re-runs explicitly revoke those writes. It cannot change contact names, phones, emails, or any other contact field.
 - **No secrets in this repo.** The role's password is generated on **your** server with `openssl rand` and written only to your Chatwoot `.env`. It never enters logs, command output, or git.
 - **No telemetry, no third parties.** The engine talks only to your own Chatwoot API (which relays WhatsApp to Meta exactly as it already does for any WhatsApp channel) and the public [Hebcal](https://www.hebcal.com/) holiday API. Nothing else — no analytics, no phone-home.
 - **Non-destructive.** `--uninstall` removes everything it added and **preserves any existing `DASHBOARD_SCRIPTS`** content (it edits only its own marked block) and your data. The DB role/schema is left for you to drop manually.
@@ -234,9 +247,9 @@ Built to be safe to run on a production support desk:
 ## Requirements
 
 - A **self-hosted** Chatwoot instance on Docker Compose v2, on a Linux host you can access as root/sudo.
-- Chatwoot v4.x (verified against v4.15.1 — the installer detects container and service names dynamically rather than assuming a fixed layout, so other v4.x releases are expected to work the same way).
-- **Chatwoot v4.17+:** Chatwoot's `SafeFetch` layer blocks webhook deliveries to private-network hosts, which silently kills the internal journeys webhook (`http://<engine>:3100/drip-api/journey-hook/…`) — sequences stop advancing with `Invalid webhook URL … has no public ip addresses` warnings in Sidekiq logs. Set `SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"` in the `environment:` of Chatwoot's `rails` and `sidekiq` services (compose override) and recreate them.
-- A reverse proxy in front of Chatwoot: **Caddy or nginx** get an automatic route; anything else (Traefik, etc.) gets a copy-paste config snippet printed instead.
+- **Chatwoot 4.17.1 or newer.** This is a hard requirement: campaign analytics reads Chatwoot's native `campaign_recipients` table. The installer checks the running Rails image and exits before making changes on older, pre-release, or unversioned builds. For a verified unversioned image tag, pass its real stable version as `CWPT_CHATWOOT_VERSION=X.Y.Z`.
+- Chatwoot's `SafeFetch` layer blocks webhook deliveries to private-network hosts, which silently kills the internal journeys webhook (`http://<engine>:3100/drip-api/journey-hook/…`) — sequences stop advancing with `Invalid webhook URL … has no public ip addresses` warnings in Sidekiq logs. Set `SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"` in the `environment:` of Chatwoot's `rails` and `sidekiq` services (compose override) and recreate them.
+- A reverse proxy in front of Chatwoot: **Caddy or nginx** get an automatic route; anything else (Traefik, etc.) gets a copy-paste config snippet. The installer exits `INCOMPLETE`/non-zero until the public `/chatwoot-addons/drip-api/health` returns the same build, module list and per-run deployment identity as the loopback engine. It publishes the new dashboard block only after this check, so a missing, SPA-fallback, or stale route is never exposed or reported as success.
 
 ## How it works
 

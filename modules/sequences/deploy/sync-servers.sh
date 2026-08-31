@@ -12,6 +12,7 @@
 #   main server (chatwoot)   flat:      /opt/chatwoot/engine/{src,migrations}, webapp/dist
 #                            container:  drip-engine        base: /drip
 #   אדמון (chatwoot_admon)   modular:   /opt/chatwoot/chatwoot-power-tools/modules/...
+#                            managed:   .../chatwoot-power-tools/.cwpt-runtime/modules/...
 #                            container:  cwpt-engine        base: /chatwoot-addons
 #                            ⚠️ requires BOTH compose files or the build skips it silently
 #
@@ -42,6 +43,10 @@
 #   ./sync-servers.sh                      # deploy committed state + restart + verify
 #   ./sync-servers.sh --server chatwoot    # one server only
 #   ./sync-servers.sh --force              # proceed despite drift (still deploys HEAD)
+#
+# This fleet sync owns the complete historical sequences stack and its Rails initializers.
+# A modular subset must be updated with install.sh; sync refuses it before drift checks or
+# writes so it cannot silently re-enable code that the installer deliberately removed.
 #
 set -euo pipefail
 
@@ -168,20 +173,110 @@ head_initializer_paths() {
     '
 }
 
-# Flat install (main server) or modular install (אדמון)? Decided by what is on disk, not
-# by hostname, so a re-installed server is handled correctly without editing this script.
-detect_layout() {
-  ssh "$1" "if sudo test -d /opt/chatwoot/chatwoot-power-tools/modules/sequences; then echo modular;
-             elif sudo test -d /opt/chatwoot/engine/src; then echo flat;
-             else echo unknown; fi"
+# Classify remote facts without guessing. CWPT_BUILD_CONTEXT is authoritative for a current
+# modular install and can prove the managed layout even while a missing runtime is repaired.
+# A source checkout at the legacy root is never classified as a writable runtime because a
+# sync must not replace tracked source files in place.
+classify_layout_facts() {
+  local build_context="$1" checkout_exists="$2" managed_exists="$3" root_exists="$4" flat_exists="$5"
+  local target="/opt/chatwoot/chatwoot-power-tools"
+  local managed_context="${target}/.cwpt-runtime/modules/sequences"
+  local root_context="${target}/modules/sequences"
+  case "$build_context" in
+    "$managed_context") echo modular-managed; return 0 ;;
+    "$root_context")
+      if [[ "$checkout_exists" == 1 || "$managed_exists" == 1 ]]; then
+        echo "conflict:CWPT_BUILD_CONTEXT points at checkout source while a checkout/managed runtime exists"
+      else
+        echo modular
+      fi
+      return 0
+      ;;
+    "")
+      if [[ "$managed_exists" == 1 ]]; then
+        echo "conflict:managed runtime exists but CWPT_BUILD_CONTEXT is missing"
+      elif [[ "$checkout_exists" == 1 ]]; then
+        echo "conflict:source checkout exists at the deployment target without a managed build context"
+      elif [[ "$root_exists" == 1 ]]; then
+        echo modular
+      elif [[ "$flat_exists" == 1 ]]; then
+        echo flat
+      else
+        echo unknown
+      fi
+      return 0
+      ;;
+    *) echo "conflict:unrecognized CWPT_BUILD_CONTEXT"; return 0 ;;
+  esac
 }
 
-engine_container() { [[ "$1" == modular ]] && echo cwpt-engine || echo drip-engine; }
+detect_layout() {
+  local facts="" build_context="" checkout_exists=0 managed_exists=0 root_exists=0 flat_exists=0
+  facts="$(ssh -n "$1" 'target=/opt/chatwoot/chatwoot-power-tools
+    build_context=$(sudo sed -n "s/^CWPT_BUILD_CONTEXT=//p" /opt/chatwoot/.env 2>/dev/null | tail -n 1)
+    checkout=0; managed=0; root=0; flat=0
+    { sudo test -e "$target/.git" || { sudo test -f "$target/install.sh" && sudo test -f "$target/README.md"; }; } && checkout=1
+    sudo test -d "$target/.cwpt-runtime/modules/sequences" && managed=1
+    sudo test -d "$target/modules/sequences" && root=1
+    sudo test -d /opt/chatwoot/engine/src && flat=1
+    printf "%s|%s|%s|%s|%s\n" "$build_context" "$checkout" "$managed" "$root" "$flat"')" || {
+      echo unknown
+      return 0
+    }
+  IFS='|' read -r build_context checkout_exists managed_exists root_exists flat_exists <<< "$facts"
+  classify_layout_facts "$build_context" "$checkout_exists" "$managed_exists" "$root_exists" "$flat_exists"
+}
+
+is_modular_layout() { [[ "$1" == modular || "$1" == modular-managed ]]; }
+
+engine_container() { is_modular_layout "$1" && echo cwpt-engine || echo drip-engine; }
+
+remote_modular_root() {
+  [[ "$1" == modular-managed ]] \
+    && echo /opt/chatwoot/chatwoot-power-tools/.cwpt-runtime \
+    || echo /opt/chatwoot/chatwoot-power-tools
+}
 
 remote_engine_src() {
-  [[ "$1" == modular ]] \
-    && echo /opt/chatwoot/chatwoot-power-tools/modules/sequences/engine/src \
+  is_modular_layout "$1" \
+    && echo "$(remote_modular_root "$1")/modules/sequences/engine/src" \
     || echo /opt/chatwoot/engine/src
+}
+
+remote_engine_migrations() {
+  is_modular_layout "$1" \
+    && echo "$(remote_modular_root "$1")/modules/sequences/engine/migrations" \
+    || echo /opt/chatwoot/engine/migrations
+}
+
+# The legacy fleet sync deploys all three modules and initializers that are not independently
+# gated. Refuse a subset before any drift check or copy rather than undoing install.sh's exact
+# desired state. A pre-module legacy install is treated as the historical all-modules stack.
+assert_sync_module_selection() {
+  local server="$1" layout="$2" enabled_modules=""
+  is_modular_layout "$layout" || return 0
+  enabled_modules="$(ssh -n "$server" "sudo sed -n 's/^CWPT_ENABLED_MODULES=//p' /opt/chatwoot/.env 2>/dev/null | tail -n 1 | tr -d '[:space:]'")" \
+    || die "$server: could not read CWPT_ENABLED_MODULES; refusing an ambiguous modular sync"
+  if [[ -z "$enabled_modules" ]]; then
+    [[ "$layout" == modular ]] \
+      || die "$server: managed runtime is missing CWPT_ENABLED_MODULES; run install.sh to repair it"
+    enabled_modules="import,sequences,enhancements"
+  fi
+  local -a enabled_parts=()
+  local module="" import_count=0 sequences_count=0 enhancements_count=0
+  IFS=',' read -r -a enabled_parts <<< "$enabled_modules"
+  for module in "${enabled_parts[@]}"; do
+    case "$module" in
+      import) import_count=$((import_count + 1)) ;;
+      sequences) sequences_count=$((sequences_count + 1)) ;;
+      enhancements) enhancements_count=$((enhancements_count + 1)) ;;
+      *) die "$server: invalid CWPT_ENABLED_MODULES value; use install.sh to repair it" ;;
+    esac
+  done
+  [[ "${#enabled_parts[@]}" -eq 3 && "$import_count" -eq 1 \
+     && "$sequences_count" -eq 1 && "$enhancements_count" -eq 1 ]] \
+    || die "$server: sync-servers supports only the complete module set; '$enabled_modules' must be updated with install.sh"
+  ok "module selection is the complete sync-managed stack"
 }
 
 # A dirty tree can no longer reach a server — the deploy reads HEAD. The hard stop stays
@@ -315,9 +410,9 @@ check_drift() {
   # The modular server consumes this file at rebuild time. Treat it as deployed state,
   # not as an incidental transport file: unknown/server-only edits block, an older version
   # of this branch is updated, and a sibling branch is never silently replaced.
-  if [[ "$layout" == modular ]]; then
+  if is_modular_layout "$layout"; then
     local compose_rel="docker-compose.addons.yml"
-    local compose_dest="/opt/chatwoot/chatwoot-power-tools/docker-compose.addons.yml"
+    local compose_dest="$(remote_modular_root "$layout")/docker-compose.addons.yml"
     want="$(head_md5 "$compose_rel")"
     have="$(remote_md5 "$server" "$compose_dest")"
     if [[ -z "$have" ]]; then
@@ -358,7 +453,7 @@ archive_has_member() {
 build_deploy_archive() {
   local layout="$1" archive="$2"
   case "$layout" in
-    modular)
+    modular|modular-managed)
       git -C "$REPO_ROOT" archive --format=tar.gz -o "$archive" "$DEPLOY_COMMIT" \
         modules docker-compose.addons.yml
       archive_has_member "$archive" 'modules/sequences/engine/src/campaigns.js' \
@@ -399,7 +494,7 @@ prepare_remote_tmp() {
 apply_remote_payload() {
   local server="$1" layout="$2" archive="$3"
   # The remote script accepts only a validated temporary archive, a hex/numeric deployment
-  # id and one of two known layouts. All live and backup paths are hardcoded below; no
+  # id and one of three known layouts. All live and backup paths are hardcoded below; no
   # caller-controlled path can reach rm/mv. Existing state is MOVED into a durable backup
   # before replacement. Any error during the swap restores it and removes staging.
   ssh "$server" "sudo bash -s -- '$archive' '$DEPLOY_ID' '$layout'" <<'CWPT_REMOTE_APPLY'
@@ -414,7 +509,7 @@ layout="$3"
 [[ "$deploy_id" =~ ^[0-9a-f]{12}-[0-9]{14}-[0-9]+$ ]] || {
   echo "unsafe deployment id" >&2; exit 2;
 }
-[[ "$layout" == modular || "$layout" == flat ]] || {
+[[ "$layout" == modular || "$layout" == modular-managed || "$layout" == flat ]] || {
   echo "unknown layout" >&2; exit 2;
 }
 
@@ -424,11 +519,22 @@ backup="/opt/chatwoot/backups/cwpt-deploy-${deploy_id}"
 [[ ! -e "$backup" && ! -L "$backup" ]] || { echo "backup path already exists" >&2; exit 2; }
 
 declare -a targets staged names types touched
-if [[ "$layout" == modular ]]; then
-  target_root="/opt/chatwoot/chatwoot-power-tools"
-  [[ -d "$target_root" && ! -L "$target_root" ]] || {
-    echo "modular target root is missing or unsafe" >&2; exit 2;
+target_root_created=0
+if [[ "$layout" == modular || "$layout" == modular-managed ]]; then
+  checkout_root="/opt/chatwoot/chatwoot-power-tools"
+  [[ -d "$checkout_root" && ! -L "$checkout_root" ]] || {
+    echo "modular checkout root is missing or unsafe" >&2; exit 2;
   }
+  if [[ "$layout" == modular-managed ]]; then
+    target_root="$checkout_root/.cwpt-runtime"
+    if [[ -e "$target_root" || -L "$target_root" ]]; then
+      [[ -d "$target_root" && ! -L "$target_root" ]] || {
+        echo "managed runtime root is unsafe" >&2; exit 2;
+      }
+    fi
+  else
+    target_root="$checkout_root"
+  fi
   targets=("$target_root/modules" "$target_root/docker-compose.addons.yml")
   staged=("$stage/modules" "$stage/docker-compose.addons.yml")
   names=(modules docker-compose.addons.yml)
@@ -463,6 +569,9 @@ rollback() {
     done
     rm -f -- "$backup/DEPLOYMENT"
     rmdir "$backup" 2>/dev/null || true
+    if [[ $target_root_created -eq 1 ]]; then
+      rmdir "$target_root" 2>/dev/null || true
+    fi
   fi
   rm -rf -- "$stage"
   exit "$status"
@@ -476,7 +585,7 @@ tar -tzf "$archive" >/dev/null
 mkdir -m 700 "$stage"
 tar -C "$stage" -xzf "$archive"
 
-if [[ "$layout" == modular ]]; then
+if [[ "$layout" == modular || "$layout" == modular-managed ]]; then
   [[ -d "$stage/modules/sequences/engine/src" && ! -L "$stage/modules" \
      && -f "$stage/modules/sequences/engine/src/campaigns.js" \
      && -f "$stage/modules/sequences/webapp/dist/index.html" \
@@ -501,6 +610,11 @@ mkdir -p -m 700 /opt/chatwoot/backups
 mkdir -m 700 "$backup"
 printf 'commit=%s\nlayout=%s\n' "${deploy_id%%-*}" "$layout" > "$backup/DEPLOYMENT"
 
+if [[ "$layout" == modular-managed && ! -d "$target_root" ]]; then
+  mkdir -m 755 "$target_root"
+  target_root_created=1
+fi
+
 for ((i=0; i<${#targets[@]}; i++)); do
   [[ ! -L "${targets[$i]}" ]] || { echo "refusing symlink target: ${targets[$i]}" >&2; exit 2; }
   if [[ -e "${targets[$i]}" ]]; then
@@ -524,7 +638,7 @@ deploy_engine() {
   local server="$1" layout="$2"
   require_pinned_head
   case "$server" in chatwoot|chatwoot_admon) ;; *) die "refusing unknown server: $server" ;; esac
-  case "$layout" in modular|flat) ;; *) die "refusing unknown deployment layout: $layout" ;; esac
+  case "$layout" in modular|modular-managed|flat) ;; *) die "refusing unknown deployment layout: $layout" ;; esac
 
   LOCAL_DEPLOY_TMP="$(mktemp "${TMPDIR:-/tmp}/cwpt-sync.XXXXXX")" \
     || die "could not create local deployment archive"
@@ -543,6 +657,61 @@ deploy_engine() {
   fi
   cleanup_deploy_temps
   ok "engine + webapp copied from $DEPLOY_COMMIT with backup ($layout)"
+}
+
+# Owner-only migrations cannot run as drip_engine. Apply and ledger them transactionally
+# with the Chatwoot database owner after the committed migration files are copied but before
+# an initializer is published or an engine image is rebuilt. Older engines ran some of these
+# grants outside schema_migrations, so reapplying the idempotent SQL is the verified backfill.
+apply_owner_migrations_remote() {
+  local server="$1" layout="$2" migrations_dir
+  migrations_dir="$(remote_engine_migrations "$layout")"
+  if ! ssh "$server" bash -s -- "$migrations_dir" <<'CWPT_OWNER_MIGRATIONS'
+set -euo pipefail
+migrations_dir="$1"
+pg_container="$(sudo docker ps -q --filter label=com.docker.compose.service=postgres | head -n 1)"
+[[ -n "$pg_container" ]] || { echo "postgres container not found" >&2; exit 1; }
+
+export LC_ALL=C
+enabled_modules="$(sudo sed -n 's/^CWPT_ENABLED_MODULES=//p' /opt/chatwoot/.env 2>/dev/null | tail -n 1)"
+enabled_modules="${enabled_modules:-import,sequences,enhancements}"
+IFS=',' read -r -a enabled_parts <<< "$enabled_modules"
+[[ "${#enabled_parts[@]}" -gt 0 ]] || { echo "empty CWPT_ENABLED_MODULES" >&2; exit 1; }
+for module in "${enabled_parts[@]}"; do
+  case "$module" in import|sequences|enhancements) ;; *) echo "unknown enabled module" >&2; exit 1 ;; esac
+done
+
+selected=0
+for migration in "$migrations_dir"/*_role_grants.sql; do
+  [[ -f "$migration" ]] || continue
+  filename="${migration##*/}"
+  case "$filename" in *[!A-Za-z0-9_.-]*) echo "unsafe migration filename" >&2; exit 1 ;; esac
+  if [[ ",${enabled_modules}," == *",sequences,"* ]]; then
+    : # Every owner migration is required by the complete sequences stack, including 053.
+  elif [[ ",${enabled_modules}," == *",enhancements,"* && "$filename" == 051_* ]]; then
+    : # Dashboard-only needs only the campaign-recipient grant.
+  else
+    continue
+  fi
+  selected=1
+  {
+    printf 'BEGIN;\n'
+    sudo cat "$migration"
+    printf "\nINSERT INTO drip.schema_migrations(version, applied_at) VALUES ('%s', now()) ON CONFLICT (version) DO UPDATE SET applied_at=EXCLUDED.applied_at;\n" "$filename"
+    printf 'COMMIT;\n'
+  } | sudo docker exec -i "$pg_container" sh -c \
+      'exec psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-chatwoot}"' \
+      >/dev/null
+done
+[[ "$selected" -eq 1 ]] || [[ "$enabled_modules" == import ]] || {
+  echo "no owner migrations selected" >&2
+  exit 1
+}
+CWPT_OWNER_MIGRATIONS
+  then
+    die "$server: owner migrations failed — engine was not rebuilt"
+  fi
+  ok "owner migrations applied + ledgered before rebuild ($layout)"
 }
 
 deploy_patch() {
@@ -626,19 +795,21 @@ CWPT_REMOTE_PATCH
 rebuild_engine() {
   local server="$1" layout="$2"
   case "$server" in chatwoot|chatwoot_admon) ;; *) die "refusing unknown server: $server" ;; esac
-  case "$layout" in modular|flat) ;; *) die "refusing unknown deployment layout: $layout" ;; esac
+  case "$layout" in modular|modular-managed|flat) ;; *) die "refusing unknown deployment layout: $layout" ;; esac
   local container; container="$(engine_container "$layout")"
-  if [[ "$layout" == modular ]]; then
+  if is_modular_layout "$layout"; then
     # Both -f files are mandatory: cwpt-engine is defined in the addons file, and without it
     # compose silently ignores the service and reports success.
-    local want_compose have_compose
+    local want_compose have_compose compose_root compose_rel
+    compose_root="$(remote_modular_root "$layout")"
+    compose_rel="${compose_root#/opt/chatwoot/}/docker-compose.addons.yml"
     want_compose="$(head_md5 docker-compose.addons.yml)"
-    have_compose="$(remote_md5 "$server" /opt/chatwoot/chatwoot-power-tools/docker-compose.addons.yml)"
+    have_compose="$(remote_md5 "$server" "$compose_root/docker-compose.addons.yml")"
     [[ "$want_compose" == "$have_compose" ]] \
       || die "$server: refusing build with docker-compose.addons.yml different from $DEPLOY_COMMIT"
     ssh "$server" "cd /opt/chatwoot \
-      && sudo docker compose -f docker-compose.yml -f chatwoot-power-tools/docker-compose.addons.yml -p chatwoot config --quiet \
-      && sudo docker compose -f docker-compose.yml -f chatwoot-power-tools/docker-compose.addons.yml -p chatwoot up -d --build --no-deps $container" \
+      && sudo docker compose -f docker-compose.yml -f '$compose_rel' -p chatwoot config --quiet \
+      && sudo docker compose -f docker-compose.yml -f '$compose_rel' -p chatwoot up -d --build --no-deps $container" \
       >/dev/null 2>&1 || die "$server: $container rebuild failed"
   else
     ssh "$server" "cd /opt/chatwoot \
@@ -694,9 +865,11 @@ verify() {
   have="$(ssh "$server" "docker exec $container md5sum /app/webapp-dist/index.html 2>/dev/null" | awk '{print $1}')"
   [[ "$want" == "$have" ]] \
     || die "$server runs a webapp build different from $DEPLOY_COMMIT"
-  if [[ "$layout" == modular ]]; then
+  if is_modular_layout "$layout"; then
+    local compose_root
+    compose_root="$(remote_modular_root "$layout")"
     want="$(head_md5 docker-compose.addons.yml)"
-    have="$(remote_md5 "$server" /opt/chatwoot/chatwoot-power-tools/docker-compose.addons.yml)"
+    have="$(remote_md5 "$server" "$compose_root/docker-compose.addons.yml")"
     [[ "$want" == "$have" ]] \
       || die "$server has docker-compose.addons.yml different from $DEPLOY_COMMIT"
   fi
@@ -727,6 +900,10 @@ verify() {
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────
+if [[ "${CWPT_SYNC_SERVERS_LIBRARY_ONLY:-0}" == 1 ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 trap cleanup_deploy_temps EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -749,10 +926,12 @@ for ((server_index=0; server_index<${#SERVERS[@]}; server_index++)); do
   require_pinned_head
   layout="$(detect_layout "$server")"
   case "$layout" in
-    modular|flat) ;;
+    modular|modular-managed|flat) ;;
+    conflict:*) die "$server: ${layout#conflict:} — run install.sh to repair/migrate the layout" ;;
     *) die "$server: no recognizable addon install (reported: $layout)" ;;
   esac
   echo "  layout: $layout · container: $(engine_container "$layout")"
+  assert_sync_module_selection "$server" "$layout"
 
   set +e; check_drift "$server" "$layout"; drift_state=$?; set -e
   SERVER_LAYOUTS[$server_index]="$layout"
@@ -801,6 +980,10 @@ for ((server_index=0; server_index<${#SERVERS[@]}; server_index++)); do
   layout="${SERVER_LAYOUTS[$server_index]}"
   say "$server · deploy $DEPLOY_COMMIT"
   require_pinned_head
+  current_layout="$(detect_layout "$server")"
+  [[ "$current_layout" == "$layout" ]] \
+    || die "$server layout changed after preflight ($layout -> $current_layout); no bytes were copied"
+  assert_sync_module_selection "$server" "$layout"
   set +e; check_drift "$server" "$layout"; drift_state=$?; set -e
   case "$drift_state" in
     0|1) ;;
@@ -813,6 +996,9 @@ for ((server_index=0; server_index<${#SERVERS[@]}; server_index++)); do
   esac
   ensure_no_running_campaigns "$server"
   deploy_engine "$server" "$layout"
+  apply_owner_migrations_remote "$server" "$layout"
+  # Publish Rails code only after the owner-side schema/grants have been proven. A failed
+  # owner migration therefore cannot become active on an unrelated future Rails restart.
   deploy_patch "$server"
   rebuild_engine "$server" "$layout"
   wait_healthy "$server" "$(engine_container "$layout")"

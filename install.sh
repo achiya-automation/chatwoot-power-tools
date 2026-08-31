@@ -5,11 +5,14 @@
 # requires it — docs/superpowers/discovery-2026-07-03.md). Detects the environment
 # dynamically (lib/detect.sh) — nothing here is specific to any one deployment.
 #
-# Flow: parse flags -> preflight -> detect environment -> provision DB role/schema ->
-# copy modules/ into the compose dir -> write addons env vars -> `docker compose up` the
-# engine -> add the single /chatwoot-addons/* proxy route -> inject the dashboard script
-# -> verify. `--dry-run` prints this plan (using best-effort real detection where
-# possible) and performs zero side effects; `--uninstall` reverses steps 2-6, always
+# Flow: parse flags -> preflight -> detect environment -> provision DB role/schema when a
+# database-backed module is selected -> copy selected artifacts into the compose dir ->
+# write addons env vars -> `docker compose up` the engine -> finalize the exact module
+# privileges -> apply owner migrations for database-backed modules -> add the single
+# /chatwoot-addons/* proxy route -> verify the public deployment identity -> inject the
+# dashboard script. `--dry-run` prints this plan (using best-effort real detection where
+# possible) and performs zero side effects; `--uninstall` removes deployed artifacts,
+# route and dashboard integration, always
 # leaving the provisioned database role/schema in place (a manual DROP is printed, never
 # run automatically — data safety over convenience).
 #
@@ -76,7 +79,8 @@ Options:
   --modules=LIST     Comma-separated: all | import,sequences,dashboard (default: all).
                      The FULL desired set, re-applied idempotently — NOT additive. To update
                      an existing install (or add a newly-shipped module), just re-run with no
-                     --modules (defaults to all); passing a subset shrinks the injected UI.
+                     --modules (defaults to all). A subset removes unselected artifacts and
+                     disables their server routes/background work.
   --yes              Do not prompt for confirmation.
   -h, --help         Show this help.
 
@@ -108,21 +112,27 @@ done
 #   Prints one resolved (internal) module name per line. Returns 1 with a message on
 #   stderr for an unrecognized name — prints nothing in that case.
 _cwpt_resolve_modules() {
-  local raw="$1" name
+  local raw="$1" name internal seen=","
   if [ "$raw" = "all" ]; then
     printf 'import\nsequences\nenhancements\n'
     return 0
   fi
   for name in ${raw//,/ }; do
     case "$name" in
-      import) echo "import" ;;
-      sequences) echo "sequences" ;;
-      dashboard) echo "enhancements" ;;
+      import) internal="import" ;;
+      sequences) internal="sequences" ;;
+      dashboard) internal="enhancements" ;;
       *)
         echo "install.sh: unknown module '${name}' (expected: import, sequences, dashboard)" >&2
         return 1
         ;;
     esac
+    # A duplicate flag value must not duplicate copied tar members or injected UI blocks.
+    # Preserve the operator's first-seen order while emitting each internal module once.
+    if [[ "$seen" != *",${internal},"* ]]; then
+      echo "$internal"
+      seen="${seen}${internal},"
+    fi
   done
 }
 
@@ -146,6 +156,57 @@ _cwpt_preflight() {
   return 0
 }
 
+# _cwpt_detect_chatwoot_version <compose_dir>
+#   Reads the running Rails container's image tag (or the explicit operator override) and
+#   prints a normalized X.Y.Z. We intentionally do not guess for `latest`, digests, or
+#   custom unversioned image names: the engine reads public.campaign_recipients directly,
+#   which is only part of the supported Chatwoot schema from 4.17.1 onward.
+_cwpt_detect_chatwoot_version() {
+  local compose_dir="$1" raw="${CWPT_CHATWOOT_VERSION:-}"
+  if [ -z "$raw" ]; then
+    local rails_container image
+    rails_container="$(detect_service_container "$compose_dir" rails)" || return 1
+    image="$(docker inspect --format '{{.Config.Image}}' "$rails_container" 2>/dev/null)" || return 1
+    [[ "$image" == *@* ]] && return 1
+    raw="${image##*:}"
+  fi
+
+  # Only a stable release tag proves the requirement. Treat rc/beta/dev/build-suffixed
+  # tags as unknown instead of normalizing e.g. 4.17.1-rc.1 into the stable 4.17.1.
+  if [[ "$raw" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    printf '%d.%d.%d\n' "$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))"
+    return 0
+  fi
+  return 1
+}
+
+_cwpt_version_at_least() {
+  local actual="$1" minimum="$2"
+  local a_major a_minor a_patch m_major m_minor m_patch
+  IFS=. read -r a_major a_minor a_patch <<< "$actual"
+  IFS=. read -r m_major m_minor m_patch <<< "$minimum"
+  [ "$a_major" -gt "$m_major" ] ||
+    { [ "$a_major" -eq "$m_major" ] && [ "$a_minor" -gt "$m_minor" ]; } ||
+    { [ "$a_major" -eq "$m_major" ] && [ "$a_minor" -eq "$m_minor" ] && [ "$a_patch" -ge "$m_patch" ]; }
+}
+
+_cwpt_require_supported_chatwoot() {
+  local compose_dir="$1" minimum="4.17.1" actual=""
+  if ! actual="$(_cwpt_detect_chatwoot_version "$compose_dir")"; then
+    echo "install.sh: could not prove the running Chatwoot version." >&2
+    echo "  chatwoot-power-tools requires Chatwoot >= ${minimum} (campaign_recipients schema)." >&2
+    echo "  If you use an unversioned image tag, verify it and re-run with CWPT_CHATWOOT_VERSION=X.Y.Z." >&2
+    return 1
+  fi
+  if ! _cwpt_version_at_least "$actual" "$minimum"; then
+    echo "install.sh: unsupported Chatwoot ${actual}; version ${minimum} or newer is required." >&2
+    echo "  Upgrade Chatwoot first. No chatwoot-power-tools changes were made." >&2
+    return 1
+  fi
+  echo "  Chatwoot version: ${actual} (supported)"
+  return 0
+}
+
 # _cwpt_upsert_env_var <file> <KEY> <value>
 #   Non-secret config upsert: replaces an existing `^KEY=` line or appends one. Unlike
 #   provision_db's CWPT_DATABASE_URL (a secret, left alone once set since the password
@@ -162,7 +223,7 @@ _cwpt_upsert_env_var() {
   rm -f "$tmp"
 }
 
-# _cwpt_write_addons_env <compose_dir>
+# _cwpt_write_addons_env <compose_dir> <enabled_modules_csv>
 #   Writes CWPT_PUBLIC_BASE_URL (derived from Chatwoot's own FRONTEND_URL — MUST be an
 #   absolute https:// origin, or Meta can't fetch WhatsApp template media; see
 #   modules/sequences/engine/src/config.js) and CWPT_CHATWOOT_BASE_URL. CWPT_DATABASE_URL
@@ -179,6 +240,8 @@ _cwpt_upsert_env_var() {
 #   (docker unreachable at this point, container not up yet, etc) — never fatal.
 _cwpt_write_addons_env() {
   local compose_dir="$1"
+  local enabled_modules_csv="$2"
+  local managed_target="${3:-${compose_dir}/chatwoot-power-tools}"
   local env_file="${compose_dir}/.env"
   local frontend_url=""
   frontend_url="$(read_env_var "$compose_dir" FRONTEND_URL)" || frontend_url=""
@@ -207,13 +270,37 @@ _cwpt_write_addons_env() {
   # compose dir), NOT against the -f file's location — so modules copied under
   # chatwoot-power-tools/ would otherwise be looked for one level too high. An absolute
   # path sidesteps that entirely.
-  _cwpt_upsert_env_var "$env_file" CWPT_BUILD_CONTEXT "${compose_dir}/chatwoot-power-tools/modules/sequences"
-  echo "  CWPT_BUILD_CONTEXT=${compose_dir}/chatwoot-power-tools/modules/sequences"
+  _cwpt_upsert_env_var "$env_file" CWPT_BUILD_CONTEXT "${managed_target}/modules/sequences"
+  echo "  CWPT_BUILD_CONTEXT=${managed_target}/modules/sequences"
+
+  _cwpt_upsert_env_var "$env_file" CWPT_ENABLED_MODULES "$enabled_modules_csv"
+  echo "  CWPT_ENABLED_MODULES=${enabled_modules_csv}"
+
+  # Import-only must not inherit a credential from an earlier sequence/dashboard install.
+  # Keep an explicit empty value so Compose cannot fall back to stale host state; a later
+  # database-backed expansion self-heals the role password and rewrites this line.
+  if [[ ",${enabled_modules_csv}," != *",sequences,"* &&
+        ",${enabled_modules_csv}," != *",enhancements,"* ]]; then
+    _cwpt_upsert_env_var "$env_file" CWPT_DATABASE_URL ""
+    echo "  CWPT_DATABASE_URL=(disabled for import-only)"
+  fi
+
+  # Per-run identity proves the public proxy reached THIS replacement container, not an old
+  # engine that happens to share the same committed SPA build and module list.
+  local deploy_id=""
+  if ! deploy_id="$(openssl rand -hex 16 2>/dev/null)" ||
+     [[ ! "$deploy_id" =~ ^[0-9a-f]{32}$ ]]; then
+    echo "install.sh: could not generate CWPT_DEPLOY_ID" >&2
+    return 1
+  fi
+  _cwpt_upsert_env_var "$env_file" CWPT_DEPLOY_ID "$deploy_id"
+  echo "  CWPT_DEPLOY_ID=(generated)"
 
   # Flow Builder (journeys) real-time hook secret — generated once, never rotated by the
   # installer (rotating would orphan the webhook rows Chatwoot already points at the old
   # path). The path IS the secret; compose composes the full URL from it.
-  if ! grep -q '^CWPT_JOURNEY_HOOK_SECRET=' "$env_file" 2>/dev/null; then
+  if [[ ",${enabled_modules_csv}," == *",sequences,"* ]] &&
+     ! grep -q '^CWPT_JOURNEY_HOOK_SECRET=' "$env_file" 2>/dev/null; then
     local hook_secret=""
     hook_secret="$(openssl rand -hex 24 2>/dev/null)" || hook_secret=""
     if [ -n "$hook_secret" ]; then
@@ -228,7 +315,8 @@ _cwpt_write_addons_env() {
   # External Journey intake has a separate master secret from the Chatwoot event hook.
   # Keeping the purposes independent means exposing or rotating one credential cannot open
   # the other entry point. The account-specific Basic password is derived at integration time.
-  if ! grep -q '^CWPT_JOURNEY_INTAKE_SECRET=' "$env_file" 2>/dev/null; then
+  if [[ ",${enabled_modules_csv}," == *",sequences,"* ]] &&
+     ! grep -q '^CWPT_JOURNEY_INTAKE_SECRET=' "$env_file" 2>/dev/null; then
     local intake_secret=""
     intake_secret="$(openssl rand -hex 32 2>/dev/null)" || intake_secret=""
     if [ -n "$intake_secret" ]; then
@@ -259,7 +347,10 @@ _cwpt_find_nginx_conf() {
 # _cwpt_add_route <proxy_type>
 #   Dispatches to the matching lib/proxy-*.sh function; falls back to
 #   print_manual_snippet whenever auto-editing isn't possible or fails, so the operator
-#   always gets a copyable block instead of a silent gap.
+#   always gets a copyable block instead of a silent gap. Returns non-zero whenever the
+#   route was not configured automatically. The caller still proceeds to the public health
+#   check, because a manually-managed proxy may already have the route; only real public
+#   reachability decides whether the installation is complete.
 _cwpt_add_route() {
   local proxy_type="$1"
   case "$proxy_type" in
@@ -268,11 +359,14 @@ _cwpt_add_route() {
         if ! add_route_caddy "$CADDYFILE" "$UPSTREAM"; then
           echo "install.sh: could not edit ${CADDYFILE} automatically — manual step needed:" >&2
           print_manual_snippet "$proxy_type" "$UPSTREAM"
+          return 1
         fi
       else
         echo "install.sh: caddy detected but ${CADDYFILE} not found — manual step needed:" >&2
         print_manual_snippet "$proxy_type" "$UPSTREAM"
+        return 1
       fi
+      return 0
       ;;
     nginx)
       local nginx_conf=""
@@ -281,15 +375,19 @@ _cwpt_add_route() {
         if ! add_route_nginx "$nginx_conf" "$UPSTREAM"; then
           echo "install.sh: could not edit ${nginx_conf} automatically — manual step needed:" >&2
           print_manual_snippet "$proxy_type" "$UPSTREAM"
+          return 1
         fi
       else
         echo "install.sh: nginx detected but no editable server config found — manual step needed:" >&2
         print_manual_snippet "$proxy_type" "$UPSTREAM"
+        return 1
       fi
+      return 0
       ;;
     *)
       echo "install.sh: no auto-editable reverse proxy detected (${proxy_type}) — manual step needed:" >&2
       print_manual_snippet "$proxy_type" "$UPSTREAM"
+      return 1
       ;;
   esac
 }
@@ -349,25 +447,103 @@ _cwpt_remove_route() {
   esac
 }
 
-# _cwpt_verify
-#   Loopback health check against the engine (bypasses the proxy — confirms the
-#   container itself booted correctly). A non-200 is reported, never fatal on its own:
-#   the install already completed; this is a diagnostic, not a rollback trigger.
-_cwpt_verify() {
-  local code="000" i
-  # Retry ~10×/2s: the engine was just built and started; it needs a moment to boot and run
-  # its migrations before it answers 200. A single immediate curl races on a perfectly
-  # healthy install (false negative) AND never catches a genuine crash-loop.
-  for i in $(seq 1 10); do
-    code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${ENGINE_PORT}/drip-api/health" 2>/dev/null)" || code="000"
-    [ "$code" = "200" ] && break
-    sleep 2
-  done
-  if [ "$code" = "200" ]; then
-    echo "  engine health check: OK (200)"
-  else
-    echo "  engine health check: got HTTP ${code} after ~20s (expected 200) — check 'docker logs cwpt-engine'" >&2
+# _cwpt_probe_health <url>
+#   Captures the body and HTTP status in one request. A bare HTTP 200 is insufficient:
+#   when the reverse-proxy route is missing, some Chatwoot/proxy configurations answer an
+#   unknown path with the SPA's HTML shell and status 200. Only the engine's JSON health
+#   shape proves the request actually reached cwpt-engine.
+_cwpt_probe_health() {
+  local url="$1" response="" body=""
+  CWPT_PROBE_CODE="000"
+  CWPT_PROBE_BODY=""
+  if ! response="$(curl -sS --max-time 10 -w $'\n%{http_code}' "$url" 2>/dev/null)"; then
+    return 1
   fi
+  CWPT_PROBE_CODE="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  CWPT_PROBE_BODY="$body"
+  [ "$CWPT_PROBE_CODE" = "200" ] &&
+    printf '%s' "$body" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' &&
+    printf '%s' "$body" | grep -Eq '"build"[[:space:]]*:' &&
+    printf '%s' "$body" | grep -Eq '"deployment"[[:space:]]*:' &&
+    printf '%s' "$body" | grep -Eq '"modules"[[:space:]]*:[[:space:]]*\['
+}
+
+# _cwpt_verify <public_base_url> <enabled_modules_csv> <expected_deploy_id>
+#   Requires BOTH the loopback engine and the same public /chatwoot-addons route browsers
+#   use to answer 200. A running container behind a missing proxy route is not a completed
+#   product install, so any missing URL/non-200 returns non-zero and the caller prints an
+#   explicit INCOMPLETE status instead of the old false success message.
+_cwpt_verify() {
+  local public_base_url="${1:-}"
+  local enabled_modules_csv="${2:-}"
+  local expected_deploy_id="${3:-}"
+  local attempts="${CWPT_VERIFY_ATTEMPTS:-10}"
+  local sleep_seconds="${CWPT_VERIFY_SLEEP_SECONDS:-2}"
+  local engine_code="000" public_code="000" engine_ok=0 public_ok=0
+  local engine_body="" public_body="" expected_modules_json="" compact_engine_body="" i
+
+  for ((i = 1; i <= attempts; i++)); do
+    if _cwpt_probe_health "http://127.0.0.1:${ENGINE_PORT}/drip-api/health"; then
+      engine_code="$CWPT_PROBE_CODE"
+      engine_body="$CWPT_PROBE_BODY"
+      engine_ok=1
+      break
+    fi
+    engine_code="$CWPT_PROBE_CODE"
+    [ "$i" -lt "$attempts" ] && sleep "$sleep_seconds"
+  done
+  if [ "$engine_code" != "200" ]; then
+    echo "  engine health check: got HTTP ${engine_code} (expected 200) — check 'docker logs cwpt-engine'" >&2
+    return 1
+  fi
+  if [ "$engine_ok" -ne 1 ]; then
+    echo "  engine health check: HTTP 200 did not contain the cwpt-engine health response" >&2
+    return 1
+  fi
+  expected_modules_json="[\"${enabled_modules_csv//,/\",\"}\"]"
+  compact_engine_body="$(printf '%s' "$engine_body" | tr -d '[:space:]')"
+  if [ -z "$enabled_modules_csv" ] ||
+     [[ "$compact_engine_body" != *"\"modules\":${expected_modules_json}"* ]]; then
+    echo "  engine health check: running modules do not match the requested selection (${enabled_modules_csv:-missing})" >&2
+    return 1
+  fi
+  if [ -z "$expected_deploy_id" ] ||
+     [[ "$compact_engine_body" != *"\"deployment\":\"${expected_deploy_id}\""* ]]; then
+    echo "  engine health check: deployment identity does not match this install run" >&2
+    return 1
+  fi
+  echo "  engine health check: OK (200)"
+
+  if [ -z "$public_base_url" ]; then
+    echo "  public route check: CWPT_PUBLIC_BASE_URL is missing" >&2
+    return 1
+  fi
+  local public_health_url="${public_base_url%/}/drip-api/health"
+  for ((i = 1; i <= attempts; i++)); do
+    if _cwpt_probe_health "$public_health_url"; then
+      public_code="$CWPT_PROBE_CODE"
+      public_body="$CWPT_PROBE_BODY"
+      public_ok=1
+      break
+    fi
+    public_code="$CWPT_PROBE_CODE"
+    [ "$i" -lt "$attempts" ] && sleep "$sleep_seconds"
+  done
+  if [ "$public_code" != "200" ]; then
+    echo "  public route check: got HTTP ${public_code} (expected 200 at /chatwoot-addons/drip-api/health)" >&2
+    return 1
+  fi
+  if [ "$public_ok" -ne 1 ]; then
+    echo "  public route check: HTTP 200 did not contain the cwpt-engine health response" >&2
+    return 1
+  fi
+  if [ "$public_body" != "$engine_body" ]; then
+    echo "  public route check: response belongs to a stale or different cwpt-engine" >&2
+    return 1
+  fi
+  echo "  public route check: OK (200)"
+  return 0
 }
 
 # _cwpt_print_plan
@@ -407,6 +583,12 @@ _cwpt_print_plan() {
   compose_dir="$(detect_compose_dir 2>/dev/null)" || compose_dir=""
   if [ -n "$compose_dir" ]; then
     echo "Detected Chatwoot compose directory: ${compose_dir}"
+    local detected_version=""
+    if detected_version="$(_cwpt_detect_chatwoot_version "$compose_dir" 2>/dev/null)"; then
+      echo "Detected Chatwoot version: ${detected_version} (minimum: 4.17.1)"
+    else
+      echo "Detected Chatwoot version: UNKNOWN (a real install fails closed; minimum: 4.17.1)"
+    fi
   else
     echo "Chatwoot compose directory: NOT DETECTED in this environment"
     echo "  (a real run searches 'docker compose ls' + /opt/chatwoot, /root/chatwoot, /srv/chatwoot, /data/chatwoot, then aborts if still not found)"
@@ -418,13 +600,22 @@ _cwpt_print_plan() {
   echo
 
   echo "Would perform, in order:"
-  echo "  1. Provision least-privilege 'drip_engine' DB role + schema in Chatwoot's Postgres"
-  echo "  2. Copy modules/ + docker-compose.addons.yml to <compose_dir>/chatwoot-power-tools/"
-  echo "  3. Write CWPT_DATABASE_URL / CWPT_CHATWOOT_BASE_URL / CWPT_PUBLIC_BASE_URL to .env"
+  if [[ "$modules_output" == *"sequences"* || "$modules_output" == *"enhancements"* ]]; then
+    echo "  1. Provision least-privilege 'drip_engine' DB role + schema in Chatwoot's Postgres"
+  else
+    echo "  1. Skip database provisioning (import-only mode)"
+  fi
+  echo "  2. Copy only selected module artifacts + shared sidecar runtime"
+  echo "  3. Write CWPT_ENABLED_MODULES / CWPT_CHATWOOT_BASE_URL / CWPT_PUBLIC_BASE_URL to .env"
   echo "  4. docker compose up -d --build cwpt-engine"
-  echo "  5. Add the single route /chatwoot-addons/* (via ${proxy_type}) -> ${UPSTREAM}"
-  echo "  6. Inject the dashboard script (modules: $(printf '%s' "$modules_output" | tr '\n' ' '))"
-  echo "  7. Verify: engine health check + route reachability"
+  if [[ "$modules_output" == *"sequences"* || "$modules_output" == *"enhancements"* ]]; then
+    echo "  5. Finalize exact module privileges + apply owner-only migrations after the engine schema is ready"
+  else
+    echo "  5. Revoke any legacy database access (import-only desired state)"
+  fi
+  echo "  6. Add the single route /chatwoot-addons/* (via ${proxy_type}) -> ${UPSTREAM}"
+  echo "  7. Verify: loopback engine health + PUBLIC route identity/reachability (both required)"
+  echo "  8. Publish the dashboard script (modules: $(printf '%s' "$modules_output" | tr '\n' ' '))"
 }
 
 # _cwpt_do_install
@@ -443,6 +634,13 @@ _cwpt_do_install() {
   while IFS= read -r m; do
     [ -n "$m" ] && modules_arr+=("$m")
   done <<< "$modules_output"
+  local enabled_modules_csv
+  enabled_modules_csv="$(IFS=,; echo "${modules_arr[*]}")"
+  local needs_database=0
+  if [[ ",${enabled_modules_csv}," == *",sequences,"* ||
+        ",${enabled_modules_csv}," == *",enhancements,"* ]]; then
+    needs_database=1
+  fi
 
   _cwpt_preflight || exit 1
 
@@ -454,6 +652,10 @@ _cwpt_do_install() {
     exit 1
   fi
   echo "  compose dir: ${compose_dir}"
+
+  if ! _cwpt_require_supported_chatwoot "$compose_dir"; then
+    exit 1
+  fi
 
   local proxy_type="none"
   proxy_type="$(detect_reverse_proxy)" || proxy_type="none"
@@ -470,64 +672,224 @@ _cwpt_do_install() {
     esac
   fi
 
-  echo "==> Provisioning database role/schema"
-  if ! provision_db "$compose_dir"; then
-    echo "install.sh: provision_db failed" >&2
-    exit 1
+  if [ "$needs_database" -eq 1 ]; then
+    echo "==> Provisioning database role/schema"
+    if ! provision_db "$compose_dir" "$enabled_modules_csv"; then
+      echo "install.sh: provision_db failed" >&2
+      exit 1
+    fi
+  else
+    echo "==> Skipping database provisioning (import-only mode)"
   fi
 
   echo "==> Copying modules into the compose directory"
   local target="${compose_dir}/chatwoot-power-tools"
   mkdir -p "$target"
-  # Clear the previously-copied modules + compose file first, so anything DELETED or renamed
-  # between versions doesn't linger (tar-extract overwrites existing files but never removes
-  # gone ones). Critical for migrations — a stale .sql left behind would still be run by
-  # migrate.js. Scoped to these two paths only: dashboard_scripts.prev.bak (the uninstall
-  # backup) also lives under $target and must survive an update.
-  rm -rf "${target}/modules" "${target}/docker-compose.addons.yml"
-  # tar (not cp -R): excludes node_modules (the Dockerfile runs its own `npm install`
-  # inside the build, so the host's node_modules — possibly built for a different
-  # platform — is both unnecessary and slow to copy) while still copying both the
-  # modules/ directory and docker-compose.addons.yml in one shot.
-  if ! (tar --exclude='node_modules' --exclude='.preview' -C "$HERE" -cf - modules docker-compose.addons.yml \
-        | tar -C "$target" -xf -); then
-    echo "install.sh: failed to copy modules/ into ${target}" >&2
+  local target_real="" here_real="" managed_target="$target"
+  local compose_fragment="chatwoot-power-tools/docker-compose.addons.yml"
+  target_real="$(cd "$target" && pwd -P)"
+  here_real="$(cd "$HERE" && pwd -P)"
+  if [ "$target_real" = "$here_real" ] ||
+     [ -e "${target}/.git" ] ||
+     { [ -f "${target}/install.sh" ] && [ -f "${target}/README.md" ]; }; then
+    # The production checkout may itself live at the historical deployment target. Keep
+    # its tracked source immutable and put the pruned, selected runtime in a dedicated
+    # managed directory. This prevents a successful subset install from deleting tracked
+    # modules/assets from the checkout while retaining physical desired-state isolation in
+    # the image build context.
+    managed_target="${target}/.cwpt-runtime"
+    compose_fragment="chatwoot-power-tools/.cwpt-runtime/docker-compose.addons.yml"
+    echo "  source checkout detected; managed runtime: ${managed_target}"
+  fi
+  mkdir -p "$managed_target"
+  # Stage every selected source BEFORE removing the previous runtime. This ordering is
+  # load-bearing when this repository itself is checked out at $target: the selected
+  # runtime is archived before its managed destination is replaced.
+  # It also means a missing/unreadable source aborts without damaging the live copy.
+  local -a copy_paths=(docker-compose.addons.yml modules/sequences)
+  [[ ",${enabled_modules_csv}," == *",import,"* ]] && copy_paths+=(modules/smart-import)
+  [[ ",${enabled_modules_csv}," == *",enhancements,"* ]] && copy_paths+=(modules/dashboard-enhancements)
+  local staged_modules_archive=""
+  if ! staged_modules_archive="$(mktemp "${TMPDIR:-/tmp}/cwpt-modules.XXXXXX")"; then
+    echo "install.sh: could not create a temporary module archive" >&2
     exit 1
   fi
-  # No on-host merge step needed here: modules/sequences/webapp/dist/smart-import/ is
-  # already pre-merged and committed (see this file's header comment) — the tar copy
-  # above brought it along for free, and the Dockerfile's `COPY webapp/dist` picks it up
-  # regardless of which --modules were selected.
+  if ! tar --exclude='node_modules' --exclude='.preview' -C "$HERE" \
+      -cf "$staged_modules_archive" "${copy_paths[@]}"; then
+    rm -f "$staged_modules_archive"
+    echo "install.sh: failed to stage selected modules before updating ${target}" >&2
+    exit 1
+  fi
+  # Move the previous managed runtime outside its destination before extracting. This both
+  # removes stale/renamed files (a stale migration must never survive an update) and gives
+  # us a rollback source if tar/disk extraction fails. The backup must be outside $target:
+  # in the self-install layout $HERE == $target, so replacing $target/modules also replaces
+  # the repository source itself in legacy self-install layouts.
+  local previous_runtime_dir=""
+  if ! previous_runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/cwpt-runtime.XXXXXX")"; then
+    rm -f "$staged_modules_archive"
+    echo "install.sh: could not create a temporary rollback directory" >&2
+    exit 1
+  fi
+  local had_previous_modules=0 had_previous_compose=0
+  if [ -e "${managed_target}/modules" ]; then
+    if ! mv "${managed_target}/modules" "${previous_runtime_dir}/modules"; then
+      rm -f "$staged_modules_archive"
+      rmdir "$previous_runtime_dir" 2>/dev/null || true
+      echo "install.sh: could not stage the previous modules for rollback" >&2
+      exit 1
+    fi
+    had_previous_modules=1
+  fi
+  if [ -e "${managed_target}/docker-compose.addons.yml" ]; then
+    if ! mv "${managed_target}/docker-compose.addons.yml" "${previous_runtime_dir}/docker-compose.addons.yml"; then
+      if [ "$had_previous_modules" -eq 1 ]; then
+        mv "${previous_runtime_dir}/modules" "${managed_target}/modules" 2>/dev/null || true
+      fi
+      rm -f "$staged_modules_archive"
+      rmdir "$previous_runtime_dir" 2>/dev/null || true
+      echo "install.sh: could not stage the previous compose file for rollback" >&2
+      exit 1
+    fi
+    had_previous_compose=1
+  fi
+  # Extract the already-staged archive. node_modules was excluded above because the image
+  # installs its own Linux dependencies; host dependencies are unnecessary and unsafe to
+  # copy across platforms.
+  if ! tar -C "$managed_target" -xf "$staged_modules_archive"; then
+    rm -f "$staged_modules_archive"
+    # Remove only partially-extracted managed paths, then restore the exact previous
+    # runtime. Never touch checkout/docs/.git or the dashboard backup in $target.
+    rm -rf "${managed_target}/modules" "${managed_target}/docker-compose.addons.yml"
+    local rollback_failed=0
+    if [ "$had_previous_modules" -eq 1 ] &&
+       ! mv "${previous_runtime_dir}/modules" "${managed_target}/modules"; then
+      rollback_failed=1
+    fi
+    if [ "$had_previous_compose" -eq 1 ] &&
+       ! mv "${previous_runtime_dir}/docker-compose.addons.yml" "${managed_target}/docker-compose.addons.yml"; then
+      rollback_failed=1
+    fi
+    if [ "$rollback_failed" -eq 1 ]; then
+      echo "install.sh: extraction failed and the previous runtime could not be fully restored; backup preserved at ${previous_runtime_dir}" >&2
+    else
+      rmdir "$previous_runtime_dir" 2>/dev/null || true
+      echo "install.sh: failed to extract the replacement; previous runtime restored" >&2
+    fi
+    exit 1
+  fi
+  rm -f "$staged_modules_archive"
+  rm -rf "$previous_runtime_dir"
+  # smart-import is pre-merged under the shared runtime for Docker-context reasons. Remove
+  # that copy when import is not selected, or a guessed static URL would still deploy it.
+  if [[ ",${enabled_modules_csv}," != *",import,"* ]]; then
+    rm -rf "${managed_target}/modules/sequences/webapp/dist/smart-import"
+  fi
+  printf '%s\n' "${modules_arr[@]}" > "${managed_target}/enabled-modules.txt"
 
   echo "==> Writing addons environment variables"
-  _cwpt_write_addons_env "$compose_dir"
+  _cwpt_write_addons_env "$compose_dir" "$enabled_modules_csv" "$managed_target"
 
   echo "==> Building and starting cwpt-engine"
   local project=""
   project="$(_cwpt_detect_compose_project "$compose_dir")"
-  if ! (cd "$compose_dir" && docker compose -f docker-compose.yml -f chatwoot-power-tools/docker-compose.addons.yml -p "$project" up -d --build cwpt-engine); then
+  if ! (cd "$compose_dir" && docker compose -f docker-compose.yml -f "$compose_fragment" -p "$project" up -d --build cwpt-engine); then
     echo "install.sh: docker compose up failed for cwpt-engine" >&2
     exit 1
   fi
 
-  echo "==> Adding the /chatwoot-addons/* route"
-  _cwpt_add_route "$proxy_type"
-
-  echo "==> Injecting the dashboard script"
-  if ! inject_dashboard_script "$compose_dir" "$ADDONS_BASE" "${modules_arr[@]}"; then
-    echo "install.sh: inject_dashboard_script failed" >&2
+  echo "==> Finalizing module-scoped database privileges"
+  if ! finalize_db_module_privileges "$compose_dir" "$enabled_modules_csv"; then
+    echo "install.sh: database privilege finalization failed — installation is INCOMPLETE" >&2
     exit 1
   fi
+  if [ "$needs_database" -eq 1 ]; then
+    echo "==> Applying owner-only database migrations"
+    if ! apply_owner_migrations "$compose_dir" "$enabled_modules_csv"; then
+      echo "install.sh: owner migrations failed — installation is INCOMPLETE" >&2
+      exit 1
+    fi
+  fi
 
-  echo "==> Verifying installation"
-  _cwpt_verify
+  echo "==> Adding the /chatwoot-addons/* route"
+  local route_auto_configured=1
+  if ! _cwpt_add_route "$proxy_type"; then
+    route_auto_configured=0
+  fi
+
+  # Verify the replacement backend before publishing UI that points at it. In particular,
+  # a stale public proxy target must leave the previously-installed dashboard block intact,
+  # not strand users on new UI backed by the wrong engine.
+  echo "==> Verifying engine and public route before publishing dashboard UI"
+  local public_base_url=""
+  public_base_url="$(read_env_var "$compose_dir" CWPT_PUBLIC_BASE_URL)" || public_base_url=""
+  local expected_deploy_id=""
+  expected_deploy_id="$(read_env_var "$compose_dir" CWPT_DEPLOY_ID)" || expected_deploy_id=""
+  if ! _cwpt_verify "$public_base_url" "$enabled_modules_csv" "$expected_deploy_id"; then
+    echo >&2
+    echo "chatwoot-power-tools installation is INCOMPLETE: the engine or its public route is not reachable." >&2
+    echo "Apply the printed reverse-proxy route, then re-run install.sh; it is idempotent." >&2
+    exit 1
+  fi
+  if [ "$route_auto_configured" -eq 0 ]; then
+    echo "  public route was already reachable through externally-managed proxy configuration"
+  fi
+
+  echo "==> Publishing the dashboard script"
+  if ! inject_dashboard_script "$compose_dir" "$ADDONS_BASE" "${modules_arr[@]}"; then
+    echo "install.sh: inject_dashboard_script failed — installation is INCOMPLETE" >&2
+    exit 1
+  fi
 
   echo
   echo "chatwoot-power-tools installed. Refresh Chatwoot in your browser — the new entries should appear."
 }
 
+# _cwpt_stop_engine_for_uninstall <compose_dir> <project> <managed_target> <compose_fragment>
+#   Stop/remove the exact fixed-name sidecar and prove it is absent. Compose is preferred,
+#   but a missing/broken fragment falls back to Docker's exact-name lookup. Never report a
+#   completed uninstall while a background engine can still deliver sequence messages.
+_cwpt_stop_engine_for_uninstall() {
+  local compose_dir="$1" project="$2" managed_target="$3" compose_fragment="$4"
+  local compose_removed=0
+  if [ -f "${managed_target}/docker-compose.addons.yml" ]; then
+    if (cd "$compose_dir" && docker compose -f docker-compose.yml -f "$compose_fragment" -p "$project" rm -sf cwpt-engine) >/dev/null 2>&1; then
+      compose_removed=1
+    else
+      echo "  compose removal failed; checking the exact cwpt-engine container directly" >&2
+    fi
+  else
+    echo "  compose fragment missing; checking the exact cwpt-engine container directly" >&2
+  fi
+
+  local remaining=""
+  if ! remaining="$(docker ps -a --filter 'name=^/cwpt-engine$' --format '{{.Names}}' 2>/dev/null)"; then
+    echo "install.sh: could not determine whether cwpt-engine still exists" >&2
+    return 1
+  fi
+  if printf '%s\n' "$remaining" | grep -Fxq 'cwpt-engine'; then
+    if ! docker rm -f cwpt-engine >/dev/null 2>&1; then
+      echo "install.sh: could not stop/remove the remaining cwpt-engine container" >&2
+      return 1
+    fi
+  elif [ "$compose_removed" -eq 0 ]; then
+    echo "  no exact cwpt-engine container found (nothing to stop)"
+  fi
+
+  if ! remaining="$(docker ps -a --filter 'name=^/cwpt-engine$' --format '{{.Names}}' 2>/dev/null)"; then
+    echo "install.sh: could not verify cwpt-engine removal" >&2
+    return 1
+  fi
+  if printf '%s\n' "$remaining" | grep -Fxq 'cwpt-engine'; then
+    echo "install.sh: cwpt-engine still exists after removal attempt" >&2
+    return 1
+  fi
+  echo "  cwpt-engine absent"
+}
+
 # _cwpt_do_uninstall
-#   Reverses steps 2-6 of _cwpt_do_install. Always leaves the drip_engine role/schema in
+#   Removes the sidecar, route, injected UI and copied artifacts. Always leaves the
+#   drip_engine role/schema in
 #   place (a schema DROP is destructive and irreversible — the operator decides that).
 _cwpt_do_uninstall() {
   _cwpt_preflight || exit 1
@@ -553,10 +915,36 @@ _cwpt_do_uninstall() {
   local target="${compose_dir}/chatwoot-power-tools"
   local project=""
   project="$(_cwpt_detect_compose_project "$compose_dir")"
+  local managed_target="$target"
+  local compose_fragment="chatwoot-power-tools/docker-compose.addons.yml"
+  if [ -f "${target}/.cwpt-runtime/docker-compose.addons.yml" ]; then
+    managed_target="${target}/.cwpt-runtime"
+    compose_fragment="chatwoot-power-tools/.cwpt-runtime/docker-compose.addons.yml"
+  fi
+
+  echo "==> Validating the dashboard script before stopping the engine"
+  # Validate the shared mutable value before stopping anything. A malformed/unreadable
+  # DASHBOARD_SCRIPTS value leaves the entire deployment intact. A later compare-and-set
+  # conflict can still leave the already-stopped engine down, but can never leave a hidden
+  # background sender running after uninstall reported success.
+  if ! verify_dashboard_script "$compose_dir"; then
+    echo "chatwoot-power-tools removal is INCOMPLETE: DASHBOARD_SCRIPTS could not be safely validated." >&2
+    echo "No engine, route, or copied files were removed. Resolve the reported conflict and retry." >&2
+    exit 1
+  fi
 
   echo "==> Stopping and removing the cwpt-engine container"
-  if [ -f "${target}/docker-compose.addons.yml" ]; then
-    (cd "$compose_dir" && docker compose -f docker-compose.yml -f chatwoot-power-tools/docker-compose.addons.yml -p "$project" rm -sf cwpt-engine) >/dev/null 2>&1 || true
+  if ! _cwpt_stop_engine_for_uninstall "$compose_dir" "$project" "$managed_target" "$compose_fragment"; then
+    echo "chatwoot-power-tools removal is INCOMPLETE: cwpt-engine may still be running." >&2
+    echo "The dashboard script, route, and copied files were left in place." >&2
+    exit 1
+  fi
+
+  echo "==> Removing chatwoot-power-tools' block from the dashboard script"
+  if ! remove_dashboard_script "$compose_dir"; then
+    echo "chatwoot-power-tools removal is INCOMPLETE: cwpt-engine is stopped, but DASHBOARD_SCRIPTS was left untouched." >&2
+    echo "The route and copied files were left in place. Resolve the reported conflict and retry." >&2
+    exit 1
   fi
 
   echo "==> Removing the /chatwoot-addons/* route"
@@ -564,16 +952,35 @@ _cwpt_do_uninstall() {
   proxy_type="$(detect_reverse_proxy)" || proxy_type="none"
   _cwpt_remove_route "$proxy_type"
 
-  echo "==> Removing chatwoot-power-tools' block from the dashboard script"
-  # remove_dashboard_script (lib/inject.sh) strips ONLY our own CWPT:START/END block —
-  # DASHBOARD_SCRIPTS may hold operator content unrelated to chatwoot-power-tools, so this
-  # is never a blind `InstallationConfig#destroy` of the whole value (see lib/inject.sh's
-  # header comment). A best-effort backup of the pre-removal value is always written to
-  # <compose_dir>/chatwoot-power-tools/dashboard_scripts.prev.bak first.
-  remove_dashboard_script "$compose_dir" || echo "  WARNING: could not clear DASHBOARD_SCRIPTS automatically" >&2
-
   echo "==> Removing copied files"
-  rm -rf "$target"
+  local target_real="" here_real=""
+  target_real="$(cd "$target" 2>/dev/null && pwd -P)" || target_real=""
+  here_real="$(cd "$HERE" 2>/dev/null && pwd -P)" || here_real=""
+  local target_is_checkout=0
+  if { [ -n "$target_real" ] && [ "$target_real" = "$here_real" ]; } ||
+     [ -e "${target}/.git" ] ||
+     { [ -f "${target}/install.sh" ] && [ -f "${target}/README.md" ]; }; then
+    target_is_checkout=1
+  fi
+  if [ "$target_is_checkout" -eq 1 ]; then
+    # Production may keep the Git checkout exactly at the deployment target. In that
+    # layout modules/, docker-compose.addons.yml, install.sh, docs and .git are source,
+    # not disposable copies. Removing them would destroy the operator's checkout. The
+    # container/route/UI are already gone, so remove only installer state and preserve the
+    # checkout for a future reinstall/update.
+    rm -rf "${target}/.cwpt-runtime"
+    rm -f "${target}/enabled-modules.txt"
+    echo "  source checkout preserved at ${target}"
+  elif [ -d "$target" ]; then
+    # Never recursively delete the whole target: an operator may keep a checkout or other
+    # files there even when install.sh was invoked elsewhere. Remove only paths this
+    # installer owns. Preserve dashboard_scripts.prev.bak as a recovery record.
+    rm -rf "${target}/modules" "${target}/.cwpt-runtime"
+    rm -f "${target}/docker-compose.addons.yml" "${target}/enabled-modules.txt"
+    if ! rmdir "$target" 2>/dev/null; then
+      echo "  preserved non-managed files and/or dashboard_scripts.prev.bak in ${target}"
+    fi
+  fi
 
   echo
   echo "chatwoot-power-tools removed."

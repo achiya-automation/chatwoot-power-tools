@@ -1,8 +1,27 @@
+const ALL_MODULES = ['import', 'sequences', 'enhancements'];
+
+export function parseEnabledModules(raw) {
+  const values = String(raw || ALL_MODULES.join(','))
+    .split(',')
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean);
+  const unique = [...new Set(values)];
+  if (!unique.length) throw new Error('CWPT_ENABLED_MODULES must select at least one module');
+  const unknown = unique.filter(value => !ALL_MODULES.includes(value));
+  if (unknown.length) throw new Error(`unknown CWPT_ENABLED_MODULES: ${unknown.join(',')}`);
+  return unique;
+}
+
 export function loadConfig(env = process.env) {
-  if (!env.DATABASE_URL) throw new Error('DATABASE_URL required');
+  const enabledModules = parseEnabledModules(env.CWPT_ENABLED_MODULES);
+  const databaseFeaturesEnabled = enabledModules.some(name => name !== 'import');
+  if (databaseFeaturesEnabled && !env.DATABASE_URL) throw new Error('DATABASE_URL required');
   if (!env.CHATWOOT_BASE_URL) throw new Error('CHATWOOT_BASE_URL required');
   return {
-    databaseUrl: env.DATABASE_URL,
+    databaseUrl: env.DATABASE_URL || '',
+    enabledModules,
+    databaseFeaturesEnabled,
+    deployId: String(env.CWPT_DEPLOY_ID || ''),
     chatwootBaseUrl: env.CHATWOOT_BASE_URL,
     port: Number(env.PORT || 3100),
     reconcileIntervalMs: Number(env.RECONCILE_INTERVAL || 60000),

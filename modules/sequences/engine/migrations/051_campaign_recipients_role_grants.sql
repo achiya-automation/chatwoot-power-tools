@@ -2,13 +2,15 @@
 -- כל שאילתות הסקירה/הדוח במנוע קוראות את public.campaign_recipients כשקיימת —
 -- בלי ה-GRANT הזה הפאנל נופל על permission denied ברגע שקמפיין ראשון רץ בצינור החדש.
 --
--- קובץ בשם *role_grants* מדולג בכוונה ע"י מיגרציות המנוע (migrate.js — המנוע רץ
--- כ-drip_engine ואינו בעלים של טבלאות public). מורץ ידנית ע"י בעלים/superuser:
---   docker exec -i chatwoot-postgres-1 psql -U chatwoot -d chatwoot \
---     < modules/sequences/engine/migrations/051_campaign_recipients_role_grants.sql
+-- המנוע רץ כ-drip_engine ואינו בעלים של טבלאות public, לכן migrate.js מדווח על הקובץ
+-- כ-pending. install.sh ו-sync-servers.sh מחילים אותו כבעלים ורושמים אותו ב-ledger;
+-- אם טבלת 4.17 חסרה, המיגרציה נכשלת ולא נרשמת כהצלחה.
 DO $$
 BEGIN
+  IF to_regclass('public.campaign_recipients') IS NULL THEN
+    RAISE EXCEPTION 'Chatwoot schema is missing public.campaign_recipients (requires Chatwoot >= 4.17.1 with migrations complete)';
+  END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'drip_engine') THEN
-    GRANT SELECT ON public.campaign_recipients TO drip_engine;
+    EXECUTE 'GRANT SELECT ON public.campaign_recipients TO drip_engine';
   END IF;
 END $$;

@@ -12,6 +12,8 @@
 #                                                            MOCK_COMPOSE_PS_EMPTY=1)
 #   inspect --format {{.Name}} <id>                      -> /MOCK_RAILS_CONTAINER or
 #                                                            /MOCK_POSTGRES_CONTAINER
+#   inspect --format {{.Config.Image}} <container>       -> MOCK_RAILS_IMAGE (defaults to
+#                                                            supported v4.17.1)
 #   ps --format {{.Names}}                               -> MOCK_DOCKER_PS_NAMES (newline
 #                                                            list) or a small default
 #   ps --format {{.Image}}                               -> MOCK_DOCKER_PS_IMAGES (newline
@@ -30,6 +32,8 @@
 #   cp <src> <container>:<dest>                           -> no-op success
 #   compose ... up -d --build cwpt-engine                -> echoes MOCK_COMPOSE_UP + args
 #   compose ... rm -sf cwpt-engine                       -> no-op success
+#   ps -a --filter name=^/cwpt-engine$ --format ...      -> exact container state file
+#   rm -f cwpt-engine                                     -> removes exact container state
 #
 # Failure-injection knobs (all default to success/0, used to verify install.sh's `set -e
 # -o pipefail` never turns a lib function's graceful fallback into a hard process abort):
@@ -63,6 +67,10 @@ case "$all" in
     esac
     exit 0
     ;;
+  "inspect --format {{.Config.Image}} "*)
+    echo "${MOCK_RAILS_IMAGE:-chatwoot/chatwoot:v4.17.1}"
+    exit 0
+    ;;
   "inspect --format "*)
     id="${all##* }"
     if [ "$id" = "${MOCK_CID_RAILS:-cid_rails_1}" ]; then
@@ -88,7 +96,19 @@ case "$all" in
     fi
     exit "${MOCK_DOCKER_PS_IMAGE_EXIT:-0}"
     ;;
+  "ps -a --filter name=^/cwpt-engine$ --format {{.Names}}")
+    if [ -n "${MOCK_CWPT_CONTAINER_STATE_FILE:-}" ] &&
+       [ -f "$MOCK_CWPT_CONTAINER_STATE_FILE" ]; then
+      echo "cwpt-engine"
+    fi
+    exit "${MOCK_DOCKER_PS_ALL_EXIT:-0}"
+    ;;
   "exec -i "*"psql"*)
+    if echo "$all" | grep -q "SELECT 1 FROM drip.schema_migrations WHERE version="; then
+      [ "${MOCK_ENGINE_MIGRATIONS_READY:-1}" = "1" ] && echo "1"
+      cat >/dev/null 2>&1 || true
+      exit "${MOCK_PSQL_MIGRATION_READY_EXIT:-0}"
+    fi
     if echo "$all" | grep -q "SELECT 1 FROM pg_roles"; then
       [ "${MOCK_ROLE_EXISTS:-0}" = "1" ] && echo "1"
       cat >/dev/null 2>&1 || true
@@ -104,8 +124,13 @@ case "$all" in
       cat >/dev/null 2>&1 || true
       exit "${MOCK_PSQL_VERIFY_EXIT:-0}"
     fi
-    # DDL/grants piped on stdin — consume silently, simulate a successful psql run.
-    cat >/dev/null 2>&1 || true
+    # DDL/grants piped on stdin — consume silently, or capture for grant-scope tests.
+    if [ -n "${MOCK_PSQL_CAPTURE:-}" ]; then
+      printf '%s\n' "$all" >> "$MOCK_PSQL_CAPTURE"
+      cat >> "$MOCK_PSQL_CAPTURE" 2>/dev/null || true
+    else
+      cat >/dev/null 2>&1 || true
+    fi
     exit "${MOCK_PSQL_EXIT:-0}"
     ;;
   "exec "*"rails runner"*"&.value"*)
@@ -117,12 +142,33 @@ case "$all" in
     if [ "${MOCK_FETCH_DASHBOARD_EXIT:-0}" != "0" ]; then
       exit "${MOCK_FETCH_DASHBOARD_EXIT}"
     fi
-    printf '%s' "${MOCK_EXISTING_DASHBOARD_SCRIPTS:-}"
+    if [ -n "${MOCK_DASHBOARD_STATE_FILE:-}" ] && [ -f "$MOCK_DASHBOARD_STATE_FILE" ]; then
+      cat "$MOCK_DASHBOARD_STATE_FILE"
+    else
+      printf '%s' "${MOCK_EXISTING_DASHBOARD_SCRIPTS:-}"
+    fi
     exit 0
     ;;
   "exec "*"rails runner"*)
     echo "MOCK_EXEC ${all}"
-    exit "${MOCK_RAILS_RUNNER_EXIT:-0}"
+    status="${MOCK_RAILS_RUNNER_EXIT:-0}"
+    if [ "$status" = "0" ] && [ "${MOCK_DASHBOARD_CONCURRENT_CHANGE:-0}" = "1" ] &&
+       echo "$all" | grep -q 'Digest::SHA256.hexdigest'; then
+      if [ -n "${MOCK_DASHBOARD_STATE_FILE:-}" ]; then
+        printf '%s' "${MOCK_CONCURRENT_DASHBOARD_SCRIPTS:-<script>concurrent();</script>}" > "$MOCK_DASHBOARD_STATE_FILE"
+      fi
+      echo "DASHBOARD_SCRIPTS changed concurrently" >&2
+      exit 1
+    fi
+    if [ "$status" = "0" ] && [ -n "${MOCK_DASHBOARD_STATE_FILE:-}" ]; then
+      if echo "$all" | grep -Eq 'c&?\.destroy|c\.destroy if c'; then
+        : > "$MOCK_DASHBOARD_STATE_FILE"
+      elif [ "${MOCK_DASHBOARD_WRITE_NOOP:-0}" != "1" ] &&
+           [ -n "${MOCK_DASHBOARD_STAGED_FILE:-}" ] && [ -f "$MOCK_DASHBOARD_STAGED_FILE" ]; then
+        cp "$MOCK_DASHBOARD_STAGED_FILE" "$MOCK_DASHBOARD_STATE_FILE"
+      fi
+    fi
+    exit "$status"
     ;;
   "exec "*"rm -f"*)
     exit 0
@@ -133,15 +179,33 @@ case "$all" in
     if [ -n "${MOCK_DOCKER_CP_CAPTURE:-}" ] && [ -f "$2" ]; then
       cp "$2" "${MOCK_DOCKER_CP_CAPTURE}" 2>/dev/null || true
     fi
+    if [ -n "${MOCK_DASHBOARD_STAGED_FILE:-}" ] && [ -f "$2" ]; then
+      cp "$2" "$MOCK_DASHBOARD_STAGED_FILE" 2>/dev/null || true
+    fi
     exit "${MOCK_DOCKER_CP_EXIT:-0}"
     ;;
   *" up -d --build cwpt-engine")
     echo "MOCK_COMPOSE_UP ${all}"
-    exit "${MOCK_COMPOSE_UP_EXIT:-0}"
+    status="${MOCK_COMPOSE_UP_EXIT:-0}"
+    if [ "$status" = "0" ] && [ -n "${MOCK_CWPT_CONTAINER_STATE_FILE:-}" ]; then
+      : > "$MOCK_CWPT_CONTAINER_STATE_FILE"
+    fi
+    exit "$status"
     ;;
   *" rm -sf cwpt-engine")
     echo "MOCK_COMPOSE_RM ${all}"
-    exit "${MOCK_COMPOSE_RM_EXIT:-0}"
+    status="${MOCK_COMPOSE_RM_EXIT:-0}"
+    if [ "$status" = "0" ] && [ -n "${MOCK_CWPT_CONTAINER_STATE_FILE:-}" ]; then
+      rm -f "$MOCK_CWPT_CONTAINER_STATE_FILE"
+    fi
+    exit "$status"
+    ;;
+  "rm -f cwpt-engine")
+    status="${MOCK_DOCKER_RM_EXIT:-0}"
+    if [ "$status" = "0" ] && [ -n "${MOCK_CWPT_CONTAINER_STATE_FILE:-}" ]; then
+      rm -f "$MOCK_CWPT_CONTAINER_STATE_FILE"
+    fi
+    exit "$status"
     ;;
   "compose version"*)
     echo "Docker Compose version v2.99.9 (mock)"

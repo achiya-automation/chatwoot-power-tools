@@ -19,7 +19,9 @@ import { fetchHebcal, refreshCalendar, loadWindows } from './calendar.js';
 import * as compliance from './compliance.js';
 
 const config = loadConfig();
-const pool = getPool(config);
+const sequencesEnabled = config.enabledModules.includes('sequences');
+const dataFeaturesEnabled = sequencesEnabled || config.enabledModules.includes('enhancements');
+const pool = dataFeaturesEnabled ? getPool(config) : null;
 
 // ── Run migrations on startup (with DB-ready retry) ───────────────────────
 // The engine can start before Postgres is accepting connections — e.g. a full-stack reboot,
@@ -38,7 +40,14 @@ async function withDbRetry(fn, tries = 30, delayMs = 2000) {
     }
   }
 }
-await withDbRetry(() => runMigrations(pool));
+if (dataFeaturesEnabled) {
+  await withDbRetry(async () => {
+    const { pendingOwnerMigrations } = await runMigrations(pool, config.enabledModules);
+    if (pendingOwnerMigrations.length) {
+      throw new Error(`owner migrations pending: ${pendingOwnerMigrations.join(', ')}`);
+    }
+  });
+}
 
 // ── Shabbat/yom-tov calendar (self-refreshing from Hebcal, Jerusalem) ─────
 // Held in memory; refreshed at most once/day. A failed refresh keeps the
@@ -56,14 +65,16 @@ async function refreshCalendarIfDue(now) {
     console.error('[drip] calendar refresh failed (keeping existing):', e.message);
   }
 }
-await refreshCalendarIfDue(new Date());
-if (!windows.length) { try { windows = await loadWindows(pool); } catch { /* empty on first boot */ } }
+if (sequencesEnabled) {
+  await refreshCalendarIfDue(new Date());
+  if (!windows.length) { try { windows = await loadWindows(pool); } catch { /* empty on first boot */ } }
+}
 
 // ── Start HTTP server ─────────────────────────────────────────────────────
 // Listen on 0.0.0.0 INSIDE the container so the docker port mapping reaches it.
 // Host-side exposure is limited to 127.0.0.1 by the override's port mapping
 // ("127.0.0.1:3100:3100") — so the engine is still loopback-only from the host.
-const server = createApp(config).listen(config.port, '0.0.0.0', () =>
+const server = createApp({ ...config, pool }).listen(config.port, '0.0.0.0', () =>
   console.log(`drip-engine listening on :${config.port}`)
 );
 
@@ -264,7 +275,10 @@ async function tick() {
 // ⚠️ נעילת ריצה כפולה — ראה loop.js. טיק אחד יכול להימשך יותר מהמרווח (חשבון רב, או
 // קריאה שתקועה מול מטא), ובלי הנעילה טיק חדש נערם מעליו: כל אחד תופס חיבורים מבריכה
 // של 5, עד שגם הפאנל מפסיק להגיב.
-const dripLoop = startLoop(config.reconcileIntervalMs, '[drip]', tick);
+const idleLoop = { isRunning: () => false };
+const dripLoop = sequencesEnabled
+  ? startLoop(config.reconcileIntervalMs, '[drip]', tick)
+  : idleLoop;
 
 // ── תצפית על דירוג האיכות של כל המספרים ──────────────────────────────────
 // כל שעה, ומיד בעלייה. סורק גם מספרים שהמנוע לא שולח מהם — שם בדיוק התגלה מספר
@@ -276,8 +290,10 @@ const runQualityWatch = () =>
       if (alerts) console.log(`[quality-watch] ${checked} numbers checked, ${alerts} alert(s) sent`);
     })
     .catch((e) => console.error('[quality-watch] sweep failed:', e.message));
-runQualityWatch();
-setInterval(runQualityWatch, QUALITY_WATCH_MS);
+if (sequencesEnabled) {
+  runQualityWatch();
+  setInterval(runQualityWatch, QUALITY_WATCH_MS);
+}
 
 // ── כיבוי מסודר ───────────────────────────────────────────────────────────
 // docker stop / פריסה מחדש שולחים SIGTERM, ו-Node יוצא מיד. בלי זה אפשר להיקטע
@@ -297,7 +313,7 @@ async function shutdown(signal) {
     server.close();
     const deadline = Date.now() + 7000;
     while (dripLoop.isRunning() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
-    await pool.end().catch(() => {});
+    if (pool) await pool.end().catch(() => {});
   } finally {
     clearTimeout(hardExit);
     process.exit(0);
@@ -317,5 +333,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // 2 שניות, וסבב שמחכה ל-connect בבריכה תפוסה חי כ-40 שניות (10ש' לכל שאילתה) —
 // כלומר עד 20 סבבים במקביל שכולם עומדים בתור לאותה בריכה. ראה loop.js.
 const PRESENCE_INTERVAL_MS = Number(process.env.PRESENCE_INTERVAL_MS || 2000);
-startLoop(PRESENCE_INTERVAL_MS, '[presence]',
-  () => tickPresence({ query, log: (m) => console.log(m) }));
+if (sequencesEnabled) {
+  startLoop(PRESENCE_INTERVAL_MS, '[presence]',
+    () => tickPresence({ query, log: (m) => console.log(m) }));
+}

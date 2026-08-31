@@ -125,12 +125,10 @@ EOF
 
 @test "_cwpt_content_hash's own internal pipeline never aborts a set -e caller that guards its call" {
   # Points shasum at a directory (guaranteed to fail — "Is a directory") to force a real
-  # non-zero exit from inside _cwpt_content_hash's pipeline. Note this test guards the CALL
-  # (`|| true`) itself, same as inject_dashboard_script does internally — it documents
-  # _cwpt_content_hash's failure behavior in isolation, it does not by itself prove
-  # inject_dashboard_script's own internal `ver=... || true` guard is load-bearing (that
-  # would require the real committed smart-import bundle file to be unhashable, which
-  # isn't practical to construct without touching a real repo file).
+  # non-zero exit from inside _cwpt_content_hash's pipeline. This test guards the CALL
+  # (`|| true`) itself and documents the helper's failure behavior in isolation. The
+  # injection regression suite separately verifies that inject_dashboard_script treats
+  # the same failure as fatal instead of publishing an unverified bundle.
   run bash -c "
     set -euo pipefail
     export PATH='${MOCKS}:/usr/bin:/bin'
@@ -146,6 +144,8 @@ EOF
   run bash -c "
     set -euo pipefail
     export PATH='${MOCKS}:/usr/bin:/bin'
+    export MOCK_DASHBOARD_STATE_FILE='${BATS_TEST_TMPDIR}/dashboard.state'
+    export MOCK_DASHBOARD_STAGED_FILE='${BATS_TEST_TMPDIR}/dashboard.staged'
     source '${REPO}/lib/inject.sh'
     inject_dashboard_script /opt/chatwoot /chatwoot-addons import
     echo 'SENTINEL_REACHED'
@@ -155,11 +155,9 @@ EOF
   [[ "$output" == *"SENTINEL_REACHED"* ]]
 }
 
-@test "inject_dashboard_script (bare call) survives set -e when reading the PREVIOUS DASHBOARD_SCRIPTS value itself fails" {
-  # _cwpt_fetch_dashboard_scripts's docker exec can genuinely fail (rails container mid-
-  # restart, etc) — inject_dashboard_script guards that one call site itself
-  # (`|| existing=""`), so it must fall through to treating DASHBOARD_SCRIPTS as unknown/
-  # empty (append-only) rather than aborting the whole injection, even called bare.
+@test "inject_dashboard_script (bare call) fails closed under set -e when reading the previous value fails" {
+  # A failed read is not the same thing as an empty InstallationConfig. The safe behavior
+  # is a controlled non-zero exit before any write, which set -e then propagates.
   run bash -c "
     set -euo pipefail
     export PATH='${MOCKS}:/usr/bin:/bin'
@@ -168,16 +166,20 @@ EOF
     inject_dashboard_script /opt/chatwoot /chatwoot-addons import
     echo 'SENTINEL_REACHED'
   " </dev/null
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"dashboard_script_injected"* ]]
-  [[ "$output" == *"SENTINEL_REACHED"* ]]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite"* ]]
+  [[ "$output" != *"SENTINEL_REACHED"* ]]
 }
 
 @test "remove_dashboard_script (bare call) survives set -e end to end (block removal)" {
+  STATE_FILE="$BATS_TEST_TMPDIR/remove-dashboard.state"
+  STAGED_FILE="$BATS_TEST_TMPDIR/remove-dashboard.staged"
+  printf '<script>before();</script>\n<!-- CWPT:START -->\nours\n<!-- CWPT:END -->' > "$STATE_FILE"
   run bash -c "
     set -euo pipefail
     export PATH='${MOCKS}:/usr/bin:/bin'
-    export MOCK_EXISTING_DASHBOARD_SCRIPTS=\"\$(printf '<script>before();</script>\n<!-- CWPT:START -->\nours\n<!-- CWPT:END -->')\"
+    export MOCK_DASHBOARD_STATE_FILE='${STATE_FILE}'
+    export MOCK_DASHBOARD_STAGED_FILE='${STAGED_FILE}'
     source '${REPO}/lib/inject.sh'
     remove_dashboard_script /opt/chatwoot
     echo 'SENTINEL_REACHED'

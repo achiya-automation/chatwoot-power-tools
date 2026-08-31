@@ -17,7 +17,7 @@ setup() {
 
 @test "detect_compose_dir finds the project via docker compose ls" {
   mkdir -p "$BATS_TEST_TMPDIR/opt/chatwoot"
-  echo "image: chatwoot/chatwoot:v4.15.1" > "$BATS_TEST_TMPDIR/opt/chatwoot/docker-compose.yml"
+  echo "image: chatwoot/chatwoot:v4.17.1" > "$BATS_TEST_TMPDIR/opt/chatwoot/docker-compose.yml"
   export MOCK_COMPOSE_DIR="$BATS_TEST_TMPDIR/opt/chatwoot"
   run detect_compose_dir
   [ "$status" -eq 0 ]
@@ -26,7 +26,7 @@ setup() {
 
 @test "detect_compose_dir picks the chatwoot project among several unrelated ones" {
   mkdir -p "$BATS_TEST_TMPDIR/opt/chatwoot" "$BATS_TEST_TMPDIR/opt/n8n"
-  echo "image: chatwoot/chatwoot:v4.15.1" > "$BATS_TEST_TMPDIR/opt/chatwoot/docker-compose.yml"
+  echo "image: chatwoot/chatwoot:v4.17.1" > "$BATS_TEST_TMPDIR/opt/chatwoot/docker-compose.yml"
   echo "image: n8nio/n8n:latest" > "$BATS_TEST_TMPDIR/opt/n8n/docker-compose.yml"
   export MOCK_COMPOSE_LS_JSON="[{\"Name\":\"n8n\",\"Status\":\"running(1)\",\"ConfigFiles\":\"$BATS_TEST_TMPDIR/opt/n8n/docker-compose.yml\"},{\"Name\":\"chatwoot\",\"Status\":\"running(4)\",\"ConfigFiles\":\"$BATS_TEST_TMPDIR/opt/chatwoot/docker-compose.yml\"}]"
   run detect_compose_dir
