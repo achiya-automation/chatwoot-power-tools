@@ -377,7 +377,7 @@ SmartImportServer::DEFINE = proc do
 
       deliver_summary(account, locale, state, counts, total, log, label)
     rescue StandardError => e
-      Rails.logger.error("SmartImportJob #{job_id}: #{e.class} #{e.message}")
+      Rails.logger.error("SmartImportJob #{job_id}: #{e.class}")
       begin
         SmartImportServer.write(@progress_key,
                                 { 'state' => 'error', 'error' => e.message.to_s[0, 300], 'email' => @user_email },

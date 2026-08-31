@@ -169,6 +169,7 @@ class UnassignRemovesParticipantTest < Minitest::Test
     listener = run_listener(event)
 
     assert_equal 1, listener.super_calls.size
-    assert_match(/db exploded/, Rails.logger.warnings.last)
+    assert_match(/RuntimeError/, Rails.logger.warnings.last)
+    refute_match(/db exploded/, Rails.logger.warnings.last)
   end
 end

@@ -60,8 +60,7 @@ module WhatsappCampaignGraft417
     create_campaign_conversation_and_message(recipient.contact, source_id, template_params) if source_id.present?
     source_id
   rescue StandardError => e
-    Rails.logger.error "Failed to send WhatsApp template message to #{to}: #{e.message}"
-    Rails.logger.error "Backtrace: #{e.backtrace.first(5).join('\n')}"
+    Rails.logger.error "WhatsApp campaign delivery failed for recipient #{recipient.id}: #{e.class}"
     recipient.mark_failed!(message: e.message)
     nil
   end
@@ -347,14 +346,14 @@ Rails.application.config.after_initialize do
           Redis::Alfred.setex(cache_key, media_id, 25.days) if media_id.present?
           media_id
         rescue StandardError => e
-          Rails.logger.error "Carousel media upload failed for #{handle_url}: #{e.message}"
+          Rails.logger.error "Carousel media upload failed: #{e.class}"
           nil
         end
 
         def upload_carousel_media(handle_url, media_type)
           download = HTTParty.get(handle_url, timeout: 30)
           unless download.success?
-            Rails.logger.error "Carousel media download failed (#{download.code}) for #{handle_url}"
+            Rails.logger.error "Carousel media download failed (#{download.code})"
             return nil
           end
 
@@ -401,7 +400,7 @@ Rails.application.config.after_initialize do
         def stable_log_name(url)
           URI.parse(url).path.split('/').last
         rescue StandardError
-          url.to_s.first(60)
+          'carousel-media'
         end
 
         def create_campaign_conversation_and_message(contact, whatsapp_message_id, template_params)
@@ -434,7 +433,8 @@ Rails.application.config.after_initialize do
               campaign_id: campaign.id
             )
             unless conversation.persisted?
-              Rails.logger.error "Campaign #{campaign.id}: Failed to create conversation: #{conversation.errors.full_messages.join(', ')}"
+              fields = conversation.errors.attribute_names.uniq.join(',')
+              Rails.logger.error "Campaign #{campaign.id}: Failed to create conversation (fields=#{fields})"
               return
             end
           end
@@ -463,7 +463,8 @@ Rails.application.config.after_initialize do
           if message.persisted?
             Rails.logger.info "Campaign #{campaign.id}: Created message #{message.id} in conversation #{conversation.id} for contact #{contact.id}"
           else
-            Rails.logger.error "Campaign #{campaign.id}: Failed to create message: #{message.errors.full_messages.join(', ')}"
+            fields = message.errors.attribute_names.uniq.join(',')
+            Rails.logger.error "Campaign #{campaign.id}: Failed to create message (fields=#{fields})"
           end
         rescue StandardError => e
           Rails.logger.error "Campaign #{campaign.id}: Conversation creation failed for contact #{contact.id}: #{e.class}"
@@ -496,11 +497,11 @@ Rails.application.config.after_initialize do
                                                  target.name.to_s.match?(CAMPAIGN_PLACEHOLDER_NAME)
           return if target.save
 
-          Rails.logger.warn "Campaign #{campaign.id}: identity restore rejected for contact " \
-                            "#{target.id}: #{target.errors.full_messages.join(', ')}"
+          fields = target.errors.attribute_names.uniq.join(',')
+          Rails.logger.warn "Campaign #{campaign.id}: identity restore rejected for contact #{target.id} (fields=#{fields})"
         rescue StandardError => e
           Rails.logger.warn "Campaign #{campaign.id}: identity restore failed for contact " \
-                            "#{contact_inbox.contact_id}: #{e.message}"
+                            "#{contact_inbox.contact_id}: #{e.class}"
         end
 
         def assign_campaign_conversation(conversation)
@@ -554,7 +555,7 @@ Rails.application.config.after_initialize do
       Rails.logger.info '[CUSTOM] WhatsApp campaign conversation patch loaded successfully (v4.17 enterprise-graft)'
     end
   rescue StandardError => e
-    Rails.logger.error "[CUSTOM] WhatsApp campaign patch failed to load: #{e.class}: #{e.message}"
+    Rails.logger.error "[CUSTOM] WhatsApp campaign patch failed to load: #{e.class}"
   end
 end
 
@@ -583,7 +584,7 @@ class LegacyCampaignAnalytics417
 
     deliveries.any?
   rescue StandardError => e
-    Rails.logger.error("[CUSTOM] Legacy campaign analytics availability failed: #{e.class}: #{e.message}")
+    Rails.logger.error("[CUSTOM] Legacy campaign analytics availability failed: #{e.class}")
     false
   end
 
