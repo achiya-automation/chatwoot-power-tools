@@ -109,8 +109,10 @@ irreversible and the operator should make that call explicitly.
 - Reads all configuration from environment variables only
   (`modules/sequences/engine/src/config.js`): `DATABASE_URL`, `CHATWOOT_BASE_URL`,
   `PUBLIC_BASE_URL`, `PORT`, `RECONCILE_INTERVAL`, `MEDIA_DIR`, plus a few tunable safety
-  caps (`MAX_SENDS_PER_TICK`, `MAX_DELIVERY_RETRIES`, `DELIVERY_RETRY_HOURS`,
-  `MASTER_ACCOUNT_ID`). There is no hardcoded domain or fallback anywhere in this path —
+  caps (`MAX_SENDS_PER_TICK`, `MAX_DELIVERY_RETRIES`, `DELIVERY_RETRY_HOURS`).
+  Cross-account authority comes only from Chatwoot's native `SuperAdmin` user type; an
+  administrator of account 1 is not treated as a platform administrator. There is no
+  hardcoded domain or fallback anywhere in this path —
   every deployment supplies its own values via `docker-compose.addons.yml`'s `CWPT_*`
   variables, written by `install.sh`.
 - Is reachable from the host only on loopback (`127.0.0.1:3100`) — the reverse-proxy route
