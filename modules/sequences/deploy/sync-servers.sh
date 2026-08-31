@@ -52,13 +52,20 @@ set -euo pipefail
 # nothing tracks one today, and it would be a repo problem, visible in review.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# Pin one immutable commit for the whole run. Reading symbolic HEAD repeatedly permits a
+# concurrent commit to produce a mixed deployment (archive from one commit, initializers
+# from the next). Every git read below uses this object id; require_pinned_head aborts if
+# the checkout moves before a server is changed.
+DEPLOY_COMMIT=""
+DEPLOY_ID=""
 # כל קובצי ה-.rb שמחויבים ב-HEAD מועמדים לפריסה — initializer חדש בריפו מצטרף מעצמו, וקובץ
 # שקיים רק על הדיסק אינו מועמד כלל. נכתבים בפועל רק קבצים שחסרים בשרת או שגרסתם שם ישנה של
 # הברנץ' הזה; גרסה מברנץ' אחר מדולגת (known_in_ref). הנתיב יחסי-לריפו בכוונה — כל הגישה
 # לקבצים כאן היא דרך git, לא דרך הדיסק.
 PATCH_REL_DIR="modules/sequences/deploy/chatwoot-initializers"
 PATCH_DEST_DIR="/opt/chatwoot/custom-initializers"
-SERVERS=(chatwoot chatwoot_admon)
+ALLOWED_SERVERS=(chatwoot chatwoot_admon)
+SERVERS=("${ALLOWED_SERVERS[@]}")
 
 CHECK_ONLY=0
 FORCE=0
@@ -71,22 +78,71 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --check) CHECK_ONLY=1; shift ;;
     --force) FORCE=1; shift ;;
-    --server) ONLY_SERVER="$2"; shift 2 ;;
+    --server)
+      [[ $# -ge 2 ]] || { echo "--server requires a value" >&2; exit 2; }
+      ONLY_SERVER="$2"; shift 2 ;;
     -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[[ -n "$ONLY_SERVER" ]] && SERVERS=("$ONLY_SERVER")
+if [[ -n "$ONLY_SERVER" ]]; then
+  case "$ONLY_SERVER" in
+    chatwoot|chatwoot_admon) SERVERS=("$ONLY_SERVER") ;;
+    *) echo "unknown server: $ONLY_SERVER (allowed: chatwoot, chatwoot_admon)" >&2; exit 2 ;;
+  esac
+fi
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m  ⚠ %s\033[0m\n' "$*"; }
 ok() { printf '\033[32m  ✓ %s\033[0m\n' "$*"; }
 die() { printf '\033[31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
-remote_md5() { ssh "$1" "sudo md5sum '$2' 2>/dev/null | awk '{print \$1}'"; }
+remote_md5() { ssh -n "$1" "sudo md5sum '$2' 2>/dev/null | awk '{print \$1}'"; }
+
+init_deploy_commit() {
+  DEPLOY_COMMIT="$(git -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}')" \
+    || die "cannot resolve repository HEAD"
+  [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+    || die "unexpected git object id: $DEPLOY_COMMIT"
+  # Timestamp prevents a long-lived backup from colliding when the OS later reuses a PID
+  # for another deployment of the same commit.
+  DEPLOY_ID="${DEPLOY_COMMIT:0:12}-$(date -u +%Y%m%d%H%M%S)-$$"
+}
+
+# One deployment runs at a time inside this process. These globals let the top-level EXIT
+# trap clean local and remote transport files even when scp/ssh is interrupted halfway.
+# Remote removal is allowed only for a path returned by our tightly-scoped mktemp pattern.
+LOCAL_DEPLOY_TMP=""
+REMOTE_DEPLOY_SERVER=""
+REMOTE_DEPLOY_TMP=""
+
+cleanup_deploy_temps() {
+  local status=$?
+  if [[ -n "$REMOTE_DEPLOY_TMP" \
+        && "$REMOTE_DEPLOY_TMP" =~ ^/tmp/cwpt-sync\.[A-Za-z0-9]+$ \
+        && ( "$REMOTE_DEPLOY_SERVER" == chatwoot || "$REMOTE_DEPLOY_SERVER" == chatwoot_admon ) ]]; then
+    ssh "$REMOTE_DEPLOY_SERVER" "docker exec chatwoot-rails-1 rm -f -- '/tmp/cwpt-patch-$DEPLOY_ID.rb' >/dev/null 2>&1 || true; \
+      rm -rf -- '$REMOTE_DEPLOY_TMP'" >/dev/null 2>&1 || true
+  fi
+  REMOTE_DEPLOY_SERVER=""
+  REMOTE_DEPLOY_TMP=""
+  if [[ -n "$LOCAL_DEPLOY_TMP" ]]; then
+    rm -f -- "$LOCAL_DEPLOY_TMP" 2>/dev/null || true
+  fi
+  LOCAL_DEPLOY_TMP=""
+  return "$status"
+}
+
+require_pinned_head() {
+  local current
+  current="$(git -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}')" \
+    || die "cannot resolve repository HEAD"
+  [[ "$current" == "$DEPLOY_COMMIT" ]] \
+    || die "HEAD moved during deployment ($DEPLOY_COMMIT -> $current); start again"
+}
 
 # md5 of a repo-relative path AS COMMITTED. Every "does the server match git?" comparison
-# goes through this, so a green --check means the server matches HEAD — not "matches
+# goes through this, so a green --check means the server matches the HEAD pinned at start — not "matches
 # whatever happens to be on my disk right now". There is deliberately no working-tree
 # equivalent left in this file: one existed, and it is what let the tree reach production.
 # Missing in HEAD is fatal by design — silently comparing against an empty blob is how you
@@ -94,8 +150,8 @@ remote_md5() { ssh "$1" "sudo md5sum '$2' 2>/dev/null | awk '{print \$1}'"; }
 # (pipefail is what makes the failing git show propagate through the md5 pipe.)
 head_md5() {
   local out
-  out="$(cd "$REPO_ROOT" && git show "HEAD:$1" 2>/dev/null | md5_stdin)" \
-    || die "$1 is not committed in HEAD — commit it, or it cannot be deployed"
+  out="$(cd "$REPO_ROOT" && git show "$DEPLOY_COMMIT:$1" 2>/dev/null | md5_stdin)" \
+    || die "$1 is not committed in $DEPLOY_COMMIT — commit it, or it cannot be deployed"
   printf '%s' "$out"
 }
 
@@ -176,7 +232,7 @@ check_drift() {
       warn "Rails patch $base missing on $server — will be installed"
       behind=1; patch_ok=0; DEPLOY_PATCHES+="$base"$'\n'
     elif [[ "$want" != "$have" ]]; then
-      if known_in_ref HEAD "$rel_patch" "$have"; then
+      if known_in_ref "$DEPLOY_COMMIT" "$rel_patch" "$have"; then
         warn "Rails patch $base on $server is an older version of this branch — will be updated"
         behind=1; patch_ok=0; DEPLOY_PATCHES+="$base"$'\n'
       elif known_in_ref --all "$rel_patch" "$have"; then
@@ -192,7 +248,7 @@ check_drift() {
         fi
       else
         warn "Rails patch $base on $server matches NO commit — edited in place, and this is the only copy"
-        warn "  review before overwriting:  ssh $server 'sudo cat $dest' | diff - <(git show HEAD:$rel_patch)"
+        warn "  review before overwriting:  ssh $server 'sudo cat $dest' | diff - <(git show $DEPLOY_COMMIT:$rel_patch)"
         blocking=1; patch_ok=0
       fi
     fi
@@ -206,7 +262,7 @@ check_drift() {
       warn "  add $dest:$mount_target:ro to the sidekiq volumes before deploying"
       blocking=1; patch_ok=0
     fi
-  done < <(cd "$REPO_ROOT" && git ls-tree -r --name-only HEAD -- "$PATCH_REL_DIR" | grep '\.rb$')
+  done < <(cd "$REPO_ROOT" && git ls-tree -r --name-only "$DEPLOY_COMMIT" -- "$PATCH_REL_DIR" | grep '\.rb$')
   [[ $patch_ok -eq 1 ]] && ok "Rails patches match git"
 
   # Engine + webapp ship as one tar — all-or-nothing — so an other-branch version here
@@ -215,7 +271,7 @@ check_drift() {
     want="$(head_md5 "modules/sequences/engine/src/$f")"
     have="$(remote_md5 "$server" "$remote_src/$f")"
     [[ "$want" == "$have" ]] && continue
-    if [[ -z "$have" ]] || known_in_ref HEAD "modules/sequences/engine/src/$f" "$have"; then
+    if [[ -z "$have" ]] || known_in_ref "$DEPLOY_COMMIT" "modules/sequences/engine/src/$f" "$have"; then
       behind=1
     elif known_in_ref --all "modules/sequences/engine/src/$f" "$have"; then
       warn "engine/src/$f on $server was deployed from ANOTHER branch — merge it into this branch first (or --force)"
@@ -234,12 +290,37 @@ check_drift() {
   want="$(head_md5 "modules/sequences/webapp/dist/index.html")"
   have="$(ssh "$server" "docker exec $container md5sum /app/webapp-dist/index.html 2>/dev/null" | awk '{print $1}')"
   if [[ -n "$have" && "$want" != "$have" ]]; then
-    if ! known_in_ref HEAD "modules/sequences/webapp/dist/index.html" "$have" \
+    if ! known_in_ref "$DEPLOY_COMMIT" "modules/sequences/webapp/dist/index.html" "$have" \
        && known_in_ref --all "modules/sequences/webapp/dist/index.html" "$have"; then
       warn "webapp dist on $server was deployed from ANOTHER branch — merge it into this branch first (or --force)"
       blocking=1
     else
       behind=1
+    fi
+  fi
+
+  # The modular server consumes this file at rebuild time. Treat it as deployed state,
+  # not as an incidental transport file: unknown/server-only edits block, an older version
+  # of this branch is updated, and a sibling branch is never silently replaced.
+  if [[ "$layout" == modular ]]; then
+    local compose_rel="docker-compose.addons.yml"
+    local compose_dest="/opt/chatwoot/chatwoot-power-tools/docker-compose.addons.yml"
+    want="$(head_md5 "$compose_rel")"
+    have="$(remote_md5 "$server" "$compose_dest")"
+    if [[ -z "$have" ]]; then
+      warn "docker-compose.addons.yml missing on $server — will be installed"
+      behind=1
+    elif [[ "$want" != "$have" ]]; then
+      if known_in_ref "$DEPLOY_COMMIT" "$compose_rel" "$have"; then
+        warn "docker-compose.addons.yml on $server is older than the pinned commit — will be updated"
+        behind=1
+      elif known_in_ref --all "$compose_rel" "$have"; then
+        warn "docker-compose.addons.yml on $server comes from ANOTHER branch — merge it first (or --force)"
+        blocking=1
+      else
+        warn "docker-compose.addons.yml on $server matches no commit — edited in place"
+        blocking=1
+      fi
     fi
   fi
 
@@ -255,27 +336,200 @@ check_drift() {
   return 0
 }
 
+archive_has_member() {
+  # Read the full listing instead of grep -q: under pipefail an early grep exit can SIGPIPE
+  # tar on the real (large) modular archive and turn a valid payload into a false failure.
+  tar -tzf "$1" | awk -v want="$2" '$0 == want { found=1 } END { exit !found }'
+}
+
+build_deploy_archive() {
+  local layout="$1" archive="$2"
+  case "$layout" in
+    modular)
+      git -C "$REPO_ROOT" archive --format=tar.gz -o "$archive" "$DEPLOY_COMMIT" \
+        modules docker-compose.addons.yml
+      archive_has_member "$archive" 'modules/sequences/engine/src/campaigns.js' \
+        || die "committed modular archive has no sequences engine"
+      archive_has_member "$archive" 'modules/sequences/webapp/dist/index.html' \
+        || die "committed modular archive has no webapp build"
+      archive_has_member "$archive" 'docker-compose.addons.yml' \
+        || die "committed modular archive has no docker-compose.addons.yml"
+      ;;
+    flat)
+      git -C "$REPO_ROOT" archive --format=tar.gz -o "$archive" \
+        "$DEPLOY_COMMIT:modules/sequences" engine/src engine/migrations webapp/dist
+      archive_has_member "$archive" 'engine/src/campaigns.js' \
+        || die "committed flat archive has no sequences engine"
+      archive_has_member "$archive" 'webapp/dist/index.html' \
+        || die "committed flat archive has no webapp build"
+      ;;
+    *) die "refusing unknown deployment layout: $layout" ;;
+  esac
+
+  # git archive cannot emit working-tree junk, but a mistakenly committed AppleDouble file
+  # is still a repository error and must not enter an image.
+  if tar -tzf "$archive" | awk -F/ '$NF ~ /^\._/ { found=1 } END { exit !found }'; then
+    die "committed archive contains AppleDouble files (._*)"
+  fi
+}
+
+prepare_remote_tmp() {
+  local server="$1" candidate
+  candidate="$(ssh "$server" 'mktemp -d /tmp/cwpt-sync.XXXXXXXX')" \
+    || die "$server: could not create a remote staging directory"
+  [[ "$candidate" =~ ^/tmp/cwpt-sync\.[A-Za-z0-9]+$ ]] \
+    || die "$server returned an unsafe staging path: $candidate"
+  REMOTE_DEPLOY_SERVER="$server"
+  REMOTE_DEPLOY_TMP="$candidate"
+}
+
+apply_remote_payload() {
+  local server="$1" layout="$2" archive="$3"
+  # The remote script accepts only a validated temporary archive, a hex/numeric deployment
+  # id and one of two known layouts. All live and backup paths are hardcoded below; no
+  # caller-controlled path can reach rm/mv. Existing state is MOVED into a durable backup
+  # before replacement. Any error during the swap restores it and removes staging.
+  ssh "$server" "sudo bash -s -- '$archive' '$DEPLOY_ID' '$layout'" <<'CWPT_REMOTE_APPLY'
+set -Eeuo pipefail
+
+archive="$1"
+deploy_id="$2"
+layout="$3"
+[[ "$archive" =~ ^/tmp/cwpt-sync\.[A-Za-z0-9]+/payload\.tgz$ ]] || {
+  echo "unsafe archive path" >&2; exit 2;
+}
+[[ "$deploy_id" =~ ^[0-9a-f]{12}-[0-9]{14}-[0-9]+$ ]] || {
+  echo "unsafe deployment id" >&2; exit 2;
+}
+[[ "$layout" == modular || "$layout" == flat ]] || {
+  echo "unknown layout" >&2; exit 2;
+}
+
+stage="/opt/chatwoot/.cwpt-stage-${deploy_id}"
+backup="/opt/chatwoot/backups/cwpt-deploy-${deploy_id}"
+[[ ! -e "$stage" && ! -L "$stage" ]] || { echo "staging path already exists" >&2; exit 2; }
+[[ ! -e "$backup" && ! -L "$backup" ]] || { echo "backup path already exists" >&2; exit 2; }
+
+declare -a targets staged names types touched
+if [[ "$layout" == modular ]]; then
+  target_root="/opt/chatwoot/chatwoot-power-tools"
+  [[ -d "$target_root" && ! -L "$target_root" ]] || {
+    echo "modular target root is missing or unsafe" >&2; exit 2;
+  }
+  targets=("$target_root/modules" "$target_root/docker-compose.addons.yml")
+  staged=("$stage/modules" "$stage/docker-compose.addons.yml")
+  names=(modules docker-compose.addons.yml)
+  types=(dir file)
+else
+  target_root="/opt/chatwoot"
+  [[ -d "$target_root/engine" && ! -L "$target_root/engine" \
+     && -d "$target_root/webapp" && ! -L "$target_root/webapp" ]] || {
+    echo "flat target roots are missing or unsafe" >&2; exit 2;
+  }
+  targets=("$target_root/engine/src" "$target_root/engine/migrations" "$target_root/webapp/dist")
+  staged=("$stage/engine/src" "$stage/engine/migrations" "$stage/webapp/dist")
+  names=(engine-src engine-migrations webapp-dist)
+  types=(dir dir dir)
+fi
+touched=()
+
+committed=0
+rollback() {
+  local status=$? i old
+  trap - EXIT HUP INT TERM
+  set +e
+  if [[ $committed -eq 0 ]]; then
+    for ((i=${#targets[@]}-1; i>=0; i--)); do
+      old="$backup/${names[$i]}"
+      if [[ -e "$old" || -L "$old" ]]; then
+        rm -rf -- "${targets[$i]}"
+        mv -- "$old" "${targets[$i]}"
+      elif [[ "${touched[$i]:-0}" == 1 ]]; then
+        rm -rf -- "${targets[$i]}"
+      fi
+    done
+    rm -f -- "$backup/DEPLOYMENT"
+    rmdir "$backup" 2>/dev/null || true
+  fi
+  rm -rf -- "$stage"
+  exit "$status"
+}
+trap rollback EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+tar -tzf "$archive" >/dev/null
+mkdir -m 700 "$stage"
+tar -C "$stage" -xzf "$archive"
+
+if [[ "$layout" == modular ]]; then
+  [[ -d "$stage/modules/sequences/engine/src" && ! -L "$stage/modules" \
+     && -f "$stage/modules/sequences/engine/src/campaigns.js" \
+     && -f "$stage/modules/sequences/webapp/dist/index.html" \
+     && -f "$stage/docker-compose.addons.yml" && ! -L "$stage/docker-compose.addons.yml" ]] || {
+    echo "modular payload is incomplete" >&2; exit 1;
+  }
+  # Validate the exact staged compose file with the real base file and .env, without
+  # printing expanded values. No live file has moved yet if this fails.
+  (cd /opt/chatwoot && docker compose -f docker-compose.yml \
+    -f "$stage/docker-compose.addons.yml" -p chatwoot config --quiet)
+else
+  [[ -d "$stage/engine/src" && ! -L "$stage/engine/src" \
+     && -d "$stage/engine/migrations" && ! -L "$stage/engine/migrations" \
+     && -d "$stage/webapp/dist" && ! -L "$stage/webapp/dist" \
+     && -f "$stage/engine/src/campaigns.js" \
+     && -f "$stage/webapp/dist/index.html" ]] || {
+    echo "flat payload is incomplete" >&2; exit 1;
+  }
+fi
+
+mkdir -p -m 700 /opt/chatwoot/backups
+mkdir -m 700 "$backup"
+printf 'commit=%s\nlayout=%s\n' "${deploy_id%%-*}" "$layout" > "$backup/DEPLOYMENT"
+
+for ((i=0; i<${#targets[@]}; i++)); do
+  [[ ! -L "${targets[$i]}" ]] || { echo "refusing symlink target: ${targets[$i]}" >&2; exit 2; }
+  if [[ -e "${targets[$i]}" ]]; then
+    if [[ "${types[$i]}" == dir ]]; then
+      [[ -d "${targets[$i]}" ]] || { echo "expected directory: ${targets[$i]}" >&2; exit 2; }
+    else
+      [[ -f "${targets[$i]}" ]] || { echo "expected regular file: ${targets[$i]}" >&2; exit 2; }
+    fi
+    mv -- "${targets[$i]}" "$backup/${names[$i]}"
+  fi
+  touched[$i]=1
+  mv -- "${staged[$i]}" "${targets[$i]}"
+done
+
+committed=1
+echo "  backup: $backup"
+CWPT_REMOTE_APPLY
+}
+
 deploy_engine() {
   local server="$1" layout="$2"
-  local tgz; tgz="$(mktemp -t cwpt).tgz"
+  require_pinned_head
+  case "$server" in chatwoot|chatwoot_admon) ;; *) die "refusing unknown server: $server" ;; esac
+  case "$layout" in modular|flat) ;; *) die "refusing unknown deployment layout: $layout" ;; esac
 
-  # git archive, not tar: the archive is built from HEAD's tree, so nothing uncommitted and
-  # nothing .gitignored can enter it. That also retires the old --exclude list — node_modules,
-  # .preview and smart-import/dist are ignored files, absent from HEAD by construction.
-  # Member paths are unchanged, so the remote extraction below still lands where it did.
-  if [[ "$layout" == modular ]]; then
-    git -C "$REPO_ROOT" archive --format=tar.gz -o "$tgz" HEAD modules docker-compose.addons.yml
-    scp -q "$tgz" "$server:/tmp/cwpt-sync.tgz"
-    ssh "$server" "sudo rm -rf /opt/chatwoot/chatwoot-power-tools/modules /opt/chatwoot/chatwoot-power-tools/docker-compose.addons.yml \
-      && sudo tar -C /opt/chatwoot/chatwoot-power-tools -xzf /tmp/cwpt-sync.tgz modules docker-compose.addons.yml 2>/dev/null; rm -f /tmp/cwpt-sync.tgz"
-  else
-    git -C "$REPO_ROOT" archive --format=tar.gz -o "$tgz" HEAD:modules/sequences engine/src engine/migrations webapp/dist
-    scp -q "$tgz" "$server:/tmp/cwpt-sync.tgz"
-    ssh "$server" "sudo rm -rf /opt/chatwoot/engine/src /opt/chatwoot/webapp/dist \
-      && sudo tar -C /opt/chatwoot -xzf /tmp/cwpt-sync.tgz 2>/dev/null; rm -f /tmp/cwpt-sync.tgz"
+  LOCAL_DEPLOY_TMP="$(mktemp "${TMPDIR:-/tmp}/cwpt-sync.XXXXXX")" \
+    || die "could not create local deployment archive"
+  if ! build_deploy_archive "$layout" "$LOCAL_DEPLOY_TMP"; then
+    cleanup_deploy_temps
+    die "could not build committed deployment archive"
   fi
-  rm -f "$tgz"
-  ok "engine + webapp copied from HEAD ($layout)"
+  prepare_remote_tmp "$server"
+  if ! scp -q "$LOCAL_DEPLOY_TMP" "$server:$REMOTE_DEPLOY_TMP/payload.tgz"; then
+    cleanup_deploy_temps
+    die "$server: payload upload failed"
+  fi
+  if ! apply_remote_payload "$server" "$layout" "$REMOTE_DEPLOY_TMP/payload.tgz"; then
+    cleanup_deploy_temps
+    die "$server: staged deployment failed; live state was restored"
+  fi
+  cleanup_deploy_temps
+  ok "engine + webapp copied from $DEPLOY_COMMIT with backup ($layout)"
 }
 
 deploy_patch() {
@@ -285,46 +539,124 @@ deploy_patch() {
     ok "Rails initializers already match — nothing written"
     return 0
   fi
-  # Same rule as the engine tar: the bytes come from HEAD, never off the disk. Materialised
-  # into a temp file because scp needs a path, not a stream.
-  local staged; staged="$(mktemp -t cwpt-patch)"
-  trap 'rm -f "$staged"' RETURN
+  require_pinned_head
+  case "$server" in chatwoot|chatwoot_admon) ;; *) die "refusing unknown server: $server" ;; esac
+
+  # Same rule as the engine tar: the bytes come from the pinned commit, never off disk.
+  # One validated host staging directory is reused for this server and removed by the
+  # EXIT trap on every success/failure path.
+  LOCAL_DEPLOY_TMP="$(mktemp "${TMPDIR:-/tmp}/cwpt-patch.XXXXXX")" \
+    || die "could not create initializer staging file"
+  prepare_remote_tmp "$server"
   while IFS= read -r base; do
     [[ -z "$base" ]] && continue
+    [[ "$base" =~ ^[A-Za-z0-9_]+\.rb$ ]] \
+      || die "refusing unsafe initializer name: $base"
     dest="$PATCH_DEST_DIR/$base"
-    git -C "$REPO_ROOT" show "HEAD:$PATCH_REL_DIR/$base" > "$staged" \
-      || die "$base vanished from HEAD between check and deploy — nothing installed"
-    scp -q "$staged" "$server:/tmp/cwpt-patch.rb"
+    git -C "$REPO_ROOT" show "$DEPLOY_COMMIT:$PATCH_REL_DIR/$base" > "$LOCAL_DEPLOY_TMP" \
+      || die "$base is absent from pinned commit $DEPLOY_COMMIT — nothing installed"
+    scp -q "$LOCAL_DEPLOY_TMP" "$server:$REMOTE_DEPLOY_TMP/$base" \
+      || die "$server: upload failed for $base"
     # Syntax-check inside the real Rails image before it can break boot.
-    ssh -n "$server" "docker cp /tmp/cwpt-patch.rb chatwoot-rails-1:/tmp/c.rb >/dev/null && docker exec chatwoot-rails-1 ruby -c /tmp/c.rb >/dev/null" \
+    ssh -n "$server" "docker cp '$REMOTE_DEPLOY_TMP/$base' 'chatwoot-rails-1:/tmp/cwpt-patch-$DEPLOY_ID.rb' >/dev/null \
+      && docker exec chatwoot-rails-1 ruby -c '/tmp/cwpt-patch-$DEPLOY_ID.rb' >/dev/null" \
       || die "Ruby syntax check failed on $server ($base) — nothing installed"
-    ssh -n "$server" "sudo cp -n $dest ${dest}.bak-\$(date +%Y%m%d%H%M) 2>/dev/null; \
-      sudo install -o root -g root -m 644 /tmp/cwpt-patch.rb $dest && rm -f /tmp/cwpt-patch.rb"
+    # Copy in place (not install/mv) so an existing Docker single-file bind mount keeps
+    # seeing the new bytes even before containers are recreated. The pre-change file is
+    # copied to the same durable backup set as engine/webapp; a failed write restores it.
+    ssh "$server" "sudo bash -s -- '$REMOTE_DEPLOY_TMP/$base' '$DEPLOY_ID' '$base'" <<'CWPT_REMOTE_PATCH'
+set -Eeuo pipefail
+src="$1"
+deploy_id="$2"
+base="$3"
+[[ "$src" =~ ^/tmp/cwpt-sync\.[A-Za-z0-9]+/[A-Za-z0-9_]+\.rb$ ]] || exit 2
+[[ "$deploy_id" =~ ^[0-9a-f]{12}-[0-9]{14}-[0-9]+$ ]] || exit 2
+[[ "$base" =~ ^[A-Za-z0-9_]+\.rb$ ]] || exit 2
+dest="/opt/chatwoot/custom-initializers/$base"
+backup_dir="/opt/chatwoot/backups/cwpt-deploy-${deploy_id}/initializers"
+backup="$backup_dir/$base"
+[[ ! -L "$dest" ]] || { echo "refusing initializer symlink" >&2; exit 2; }
+mkdir -p -m 700 "$backup_dir"
+had_old=0
+if [[ -f "$dest" ]]; then
+  cp -a -- "$dest" "$backup"
+  had_old=1
+elif [[ -e "$dest" ]]; then
+  echo "initializer target is not a regular file" >&2
+  exit 2
+fi
+committed=0
+rollback() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  set +e
+  if [[ $committed -eq 0 ]]; then
+    if [[ $had_old -eq 1 ]]; then cp -- "$backup" "$dest"; else rm -f -- "$dest"; fi
+  fi
+  exit "$status"
+}
+trap rollback EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+cp -- "$src" "$dest"
+chown root:root "$dest"
+chmod 0644 "$dest"
+cmp -s -- "$src" "$dest"
+committed=1
+CWPT_REMOTE_PATCH
   done <<< "$DEPLOY_PATCHES"
+  cleanup_deploy_temps
   ok "Rails initializers installed: $(printf '%s' "$DEPLOY_PATCHES" | tr '\n' ' ')"
 }
 
 rebuild_engine() {
   local server="$1" layout="$2"
+  case "$server" in chatwoot|chatwoot_admon) ;; *) die "refusing unknown server: $server" ;; esac
+  case "$layout" in modular|flat) ;; *) die "refusing unknown deployment layout: $layout" ;; esac
   local container; container="$(engine_container "$layout")"
   if [[ "$layout" == modular ]]; then
     # Both -f files are mandatory: cwpt-engine is defined in the addons file, and without it
     # compose silently ignores the service and reports success.
-    ssh "$server" "cd /opt/chatwoot && sudo docker compose -f docker-compose.yml -f chatwoot-power-tools/docker-compose.addons.yml -p chatwoot up -d --build $container" >/dev/null 2>&1
+    local want_compose have_compose
+    want_compose="$(head_md5 docker-compose.addons.yml)"
+    have_compose="$(remote_md5 "$server" /opt/chatwoot/chatwoot-power-tools/docker-compose.addons.yml)"
+    [[ "$want_compose" == "$have_compose" ]] \
+      || die "$server: refusing build with docker-compose.addons.yml different from $DEPLOY_COMMIT"
+    ssh "$server" "cd /opt/chatwoot \
+      && sudo docker compose -f docker-compose.yml -f chatwoot-power-tools/docker-compose.addons.yml -p chatwoot config --quiet \
+      && sudo docker compose -f docker-compose.yml -f chatwoot-power-tools/docker-compose.addons.yml -p chatwoot up -d --build --no-deps $container" \
+      >/dev/null 2>&1 || die "$server: $container rebuild failed"
   else
-    ssh "$server" "cd /opt/chatwoot && sudo docker compose up -d --build $container" >/dev/null 2>&1
+    ssh "$server" "cd /opt/chatwoot \
+      && sudo docker compose config --quiet \
+      && sudo docker compose up -d --build --no-deps $container" \
+      >/dev/null 2>&1 || die "$server: $container rebuild failed"
   fi
   ok "$container rebuilt"
 }
 
-restart_rails() {
+ensure_no_running_campaigns() {
   local server="$1"
-  # A campaign mid-flight would lose the rest of its audience to the restart.
   local running
   running="$(ssh "$server" "docker exec chatwoot-postgres-1 sh -c \"psql -U \\\$POSTGRES_USER -d chatwoot -Atc 'SELECT count(*) FROM campaigns WHERE campaign_status=2;'\"" 2>/dev/null | tr -d '[:space:]')"
-  [[ "$running" == "0" ]] || die "$server has $running campaign(s) mid-run — refusing to restart Rails"
-  ssh "$server" "sudo docker restart chatwoot-sidekiq-1 chatwoot-rails-1" >/dev/null 2>&1
-  ok "rails + sidekiq restarted"
+  [[ "$running" =~ ^[0-9]+$ ]] \
+    || die "$server: could not prove that no campaign is mid-run"
+  [[ "$running" == "0" ]] || die "$server has $running campaign(s) mid-run — refusing deployment"
+}
+
+restart_rails() {
+  local server="$1"
+  # Re-check immediately before the interruption. force-recreate is intentional: Docker
+  # restart keeps single-file bind mounts pinned to the old inode when a previously missing
+  # initializer was installed. Compose also validates the actual server configuration
+  # before either container is touched.
+  ensure_no_running_campaigns "$server"
+  ssh "$server" "cd /opt/chatwoot \
+    && sudo docker compose -p chatwoot config --quiet \
+    && sudo docker compose -p chatwoot up -d --force-recreate --no-deps rails sidekiq" \
+    >/dev/null 2>&1 || die "$server: Rails/Sidekiq recreate failed"
+  ok "rails + sidekiq recreated"
 }
 
 wait_healthy() {
@@ -345,15 +677,27 @@ verify() {
   [[ "$want" == "$have" ]] || die "$server runs different engine code than HEAD ($have vs $want)"
   ok "running engine matches git"
 
+  want="$(head_md5 "modules/sequences/webapp/dist/index.html")"
+  have="$(ssh "$server" "docker exec $container md5sum /app/webapp-dist/index.html 2>/dev/null" | awk '{print $1}')"
+  [[ "$want" == "$have" ]] \
+    || die "$server runs a webapp build different from $DEPLOY_COMMIT"
+  if [[ "$layout" == modular ]]; then
+    want="$(head_md5 docker-compose.addons.yml)"
+    have="$(remote_md5 "$server" /opt/chatwoot/chatwoot-power-tools/docker-compose.addons.yml)"
+    [[ "$want" == "$have" ]] \
+      || die "$server has docker-compose.addons.yml different from $DEPLOY_COMMIT"
+  fi
+  ok "webapp + compose state match pinned commit"
+
   while IFS= read -r rel_patch; do
     [[ -z "$rel_patch" ]] && continue
     base="${rel_patch##*/}"
     want="$(head_md5 "$rel_patch")"
     for initializer_container in chatwoot-rails-1 chatwoot-sidekiq-1; do
-      have="$(ssh "$server" "docker exec $initializer_container md5sum /app/config/initializers/$base 2>/dev/null" | awk '{print $1}')"
+      have="$(ssh -n "$server" "docker exec $initializer_container md5sum /app/config/initializers/$base 2>/dev/null" | awk '{print $1}')"
       [[ "$want" == "$have" ]] || die "$server: $base is not mounted from HEAD in $initializer_container"
     done
-  done < <(cd "$REPO_ROOT" && git ls-tree -r --name-only HEAD -- "$PATCH_REL_DIR" | grep '\.rb$')
+  done < <(cd "$REPO_ROOT" && git ls-tree -r --name-only "$DEPLOY_COMMIT" -- "$PATCH_REL_DIR" | grep '\.rb$')
   ok "all repository initializers mounted in Rails + Sidekiq"
 
   # 4.17 enterprise-graft (native-first, 20.8.26): the prepend itself is the proof; the
@@ -370,37 +714,83 @@ verify() {
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────
+trap cleanup_deploy_temps EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+init_deploy_commit
+require_pinned_head
 [[ $CHECK_ONLY -eq 0 ]] && require_clean_tree
 
 FAILED=0
-for server in "${SERVERS[@]}"; do
-  say "$server"
+PREFLIGHT_FAILED=0
+SERVER_LAYOUTS=()
+SERVER_PATCH_SETS=()
+
+# Phase 1 is read-only across EVERY selected server. A blocker on the second server must
+# not be discovered after the first one was already changed; that used to leave the pair
+# split across versions. Preserve each server's initializer plan for phase 2 because
+# check_drift deliberately builds it per layout/server.
+for ((server_index=0; server_index<${#SERVERS[@]}; server_index++)); do
+  server="${SERVERS[$server_index]}"
+  say "$server · preflight"
+  require_pinned_head
   layout="$(detect_layout "$server")"
-  [[ "$layout" == unknown ]] && die "$server: no recognizable addon install"
+  case "$layout" in
+    modular|flat) ;;
+    *) die "$server: no recognizable addon install (reported: $layout)" ;;
+  esac
   echo "  layout: $layout · container: $(engine_container "$layout")"
 
   set +e; check_drift "$server" "$layout"; drift_state=$?; set -e
-  # 0 = in sync · 1 = behind git (normal, deploy fixes it) · 2 = edited on the server
-  # 3 = only other-branch files differ — nothing this branch may deploy
-  if [[ $drift_state -eq 2 ]]; then
-    FAILED=1
-    if [[ $FORCE -eq 0 ]]; then
-      warn "skipping $server — re-run with --force to overwrite, after reviewing the diff above"
-      continue
-    fi
-    warn "--force given: overwriting a server-only edit"
-  fi
-  if [[ $drift_state -eq 3 ]]; then
-    FAILED=1
-    [[ $CHECK_ONLY -eq 1 ]] && continue
-    warn "skipping $server — only other-branch files differ; merge that branch here first (or --force)"
-    continue
-  fi
-  if [[ $CHECK_ONLY -eq 1 ]]; then
-    [[ $drift_state -eq 1 ]] && FAILED=1
-    continue
-  fi
+  SERVER_LAYOUTS[$server_index]="$layout"
+  SERVER_PATCH_SETS[$server_index]="$DEPLOY_PATCHES"
 
+  # 0 = in sync · 1 = behind pinned commit · 2 = edited/other-branch server state
+  # 3 = only other-branch initializer files differ; nothing this branch may deploy.
+  case "$drift_state" in
+    0) ;;
+    1) [[ $CHECK_ONLY -eq 1 ]] && FAILED=1 ;;
+    2)
+      if [[ $FORCE -eq 1 && $CHECK_ONLY -eq 0 ]]; then
+        warn "--force given: this server's reviewed drift will be overwritten"
+      else
+        FAILED=1; PREFLIGHT_FAILED=1
+        warn "blocked — review the diff and merge it, or explicitly re-run with --force"
+      fi
+      ;;
+    3)
+      FAILED=1; PREFLIGHT_FAILED=1
+      warn "blocked — merge the other branch into this commit before deployment"
+      ;;
+    *) die "$server: unexpected drift result $drift_state" ;;
+  esac
+
+  if [[ $CHECK_ONLY -eq 0 ]]; then
+    # Still read-only; proving this for all servers before phase 2 prevents a campaign on
+    # server B from being discovered only after server A was already restarted.
+    ensure_no_running_campaigns "$server"
+  fi
+done
+
+if [[ $CHECK_ONLY -eq 1 ]]; then
+  if [[ $FAILED -eq 0 ]]; then say "All servers match $DEPLOY_COMMIT"
+  else say "Drift found — see warnings above"
+  fi
+  exit "$FAILED"
+fi
+[[ $PREFLIGHT_FAILED -eq 0 ]] \
+  || die "preflight failed; no selected server was changed"
+
+# Phase 2 mutates one server at a time, using only the immutable commit and the exact plan
+# captured above. The campaign guard is repeated immediately before each copy/restart.
+for ((server_index=0; server_index<${#SERVERS[@]}; server_index++)); do
+  server="${SERVERS[$server_index]}"
+  layout="${SERVER_LAYOUTS[$server_index]}"
+  DEPLOY_PATCHES="${SERVER_PATCH_SETS[$server_index]}"
+  say "$server · deploy $DEPLOY_COMMIT"
+  require_pinned_head
+  ensure_no_running_campaigns "$server"
   deploy_engine "$server" "$layout"
   deploy_patch "$server"
   rebuild_engine "$server" "$layout"
@@ -413,9 +803,5 @@ for server in "${SERVERS[@]}"; do
   verify "$server" "$layout"
 done
 
-if [[ $CHECK_ONLY -eq 1 ]]; then
-  [[ $FAILED -eq 0 ]] && say "All servers match git" || say "Drift found — see warnings above"
-else
-  say "Done"
-fi
-exit $FAILED
+say "Done · $DEPLOY_COMMIT"
+exit 0
