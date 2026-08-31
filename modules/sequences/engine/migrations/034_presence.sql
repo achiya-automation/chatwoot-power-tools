@@ -16,11 +16,12 @@
 CREATE TABLE IF NOT EXISTS drip.presence_settings (
   account_id       integer     NOT NULL,
   inbox_id         integer     NOT NULL, -- 0 = ברירת המחדל של החשבון
-  read_receipts    boolean     NOT NULL DEFAULT true,
+  -- fail-closed: הפעלה רק דרך הדשבורד, ורק אחרי חיבור בוט לתיבה/שיחה.
+  read_receipts    boolean     NOT NULL DEFAULT false,
   -- off   = לא להציג "מקליד" בכלל
-  -- agent = רק כשנציג אנושי מקליד בפועל ב-Chatwoot (ברירת מחדל)
+  -- agent = רק כשנציג אנושי מקליד בפועל ב-Chatwoot (הפעלה מפורשת)
   -- auto  = מיד אחרי הקריאה, לתיבה שבוט עונה בה
-  typing_mode      text        NOT NULL DEFAULT 'agent',
+  typing_mode      text        NOT NULL DEFAULT 'off',
   -- השהיות בשניות. בלעדיהן ✓✓ נדלק ברגע ההודעה ומסגיר בוט מיידית.
   read_delay_min   numeric(4,1) NOT NULL DEFAULT 2,
   read_delay_max   numeric(4,1) NOT NULL DEFAULT 5,

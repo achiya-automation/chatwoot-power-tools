@@ -132,6 +132,15 @@ provision_db() {
 GRANT USAGE ON SCHEMA public TO drip_engine;
 GRANT SELECT ON public.conversations, public.messages, public.contacts,
                 public.inboxes, public.contact_inboxes, public.channel_whatsapp TO drip_engine;
+-- Presence is allowed only when a conversation-level bot is assigned or an active inbox bot
+-- exists. Older Chatwoot releases without this table stay installable; supported 4.16+
+-- releases grant the engine the one additional read-only table required by that proof.
+DO $$
+BEGIN
+  IF to_regclass('public.agent_bot_inboxes') IS NOT NULL THEN
+    GRANT SELECT ON public.agent_bot_inboxes TO drip_engine;
+  END IF;
+END $$;
 -- accounts — friendly names for the dashboard account switcher (super-admin manages many).
 GRANT SELECT ON public.accounts TO drip_engine;
 -- active_storage_* — read the Chatwoot account's own attachment storage (storage_usage).

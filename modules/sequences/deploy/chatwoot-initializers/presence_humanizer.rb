@@ -7,7 +7,7 @@
 #    כך שבוט איטי לא נענש פעמיים. המימוש: SendReplyJob מתוזמן מחדש עם wait —
 #    אף worker לא נחסם.
 #
-# 2. ממסר הקלדת נציג (typing_mode='agent' — ברירת המחדל):
+# 2. ממסר הקלדת נציג (typing_mode='agent' — הפעלה מפורשת, ורק בשיחת בוט):
 #    כשנציג אנושי מקליד ב-Chatwoot, הלקוח בוואטסאפ רואה "מקליד…". נתפס מאירוע
 #    CONVERSATION_TYPING_ON של ה-dispatcher (בתוך התהליך — SafeFetch חוסם כל
 #    webhook לשירות פנימי, ולכן זה יושב כאן ולא במנוע). ממודד ל-20 שניות לשיחה;
@@ -31,7 +31,9 @@ module PresenceHumanizer
   HOLD_FLAG = 'presence_hold_done'.freeze
 
   DEFAULTS = {
-    'typing_mode' => 'agent',
+    # חייב להיות זהה לברירת המחדל של engine/src/presence.js. ברירת מחדל פעילה
+    # כאן עקפה את המנוע וגרמה לחשבון/תיבה חדשים לשלוח status=read בלי שבוט חובר.
+    'typing_mode' => 'off',
     'read_delay_min' => 2.0, 'read_delay_max' => 5.0,
     'typing_delay_min' => 2.0, 'typing_delay_max' => 4.0,
   }.freeze
@@ -56,6 +58,19 @@ module PresenceHumanizer
 
     def cloud_whatsapp?(inbox)
       inbox&.channel_type == 'Channel::Whatsapp' && inbox.channel.try(:provider) == 'whatsapp_cloud'
+    end
+
+    # אותו מודל בעלות של engine/src/presence.js: שיחה מוקצית לבוט, או בוט פעיל
+    # ברמת התיבה. הקצאה לאדם תמיד גוברת. `status=0` הוא enum active בכל גרסאות
+    # Chatwoot הנתמכות; משתמשים בעמודה הוותיקה כדי להישאר תואמים ל-4.16 ול-4.17+.
+    def bot_connected?(conversation)
+      return false if conversation.assignee_id.present?
+      return true if conversation.assignee_agent_bot_id.present?
+
+      AgentBotInbox.where(inbox_id: conversation.inbox_id, status: 0).exists?
+    rescue StandardError => e
+      Rails.logger.error "[presence] bot ownership check failed: #{e.class}: #{e.message}"
+      false
     end
 
     # כמה שניות להחזיק את ההודעה. 0 ⇒ לשלוח מיד.
@@ -94,6 +109,9 @@ module PresenceHumanizer
 
       s = settings_for(conversation.account_id, conversation.inbox_id)
       return unless s && s['typing_mode'] != 'off'
+      # גם payload של "מקליד" כולל status=read. לכן opt-in מסוג auto או agent
+      # אינו רשאי לעקוף את שער הבעלות ולסמן שיחה רגילה כנקראה.
+      return unless bot_connected?(conversation)
 
       now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       @typing_mutex.synchronize do

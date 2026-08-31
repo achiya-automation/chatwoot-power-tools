@@ -43,6 +43,7 @@ export async function setupDb(pool) {
   await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS contact_inbox_id int');
   await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS inbox_id int');
   await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS campaign_id int');
+  await pool.query('ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS assignee_agent_bot_id int');
   await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS source_id text');
   await pool.query('ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS private boolean DEFAULT false');
   // journeys: convState מסנן הודעות של נציג אנושי (sender_type='User') — כמו ב-Chatwoot האמיתי.
@@ -54,6 +55,8 @@ export async function setupDb(pool) {
   await pool.query("ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS settings jsonb DEFAULT '{}'::jsonb");
   await pool.query(`CREATE TABLE IF NOT EXISTS public.inboxes (
     id int PRIMARY KEY, account_id int, name text, channel_type text, channel_id int)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.agent_bot_inboxes (
+    id int PRIMARY KEY, inbox_id int, agent_bot_id int, status int DEFAULT 0)`);
   // keep in lockstep with modules/sequences/engine/test/reads.test.js
   await pool.query(`CREATE TABLE IF NOT EXISTS public.channel_whatsapp (
     id int PRIMARY KEY, phone_number text, provider text DEFAULT 'whatsapp_cloud',
