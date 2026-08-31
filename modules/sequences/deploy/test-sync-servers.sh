@@ -28,6 +28,7 @@ mkdir -p "$REPO/modules/sequences/engine/src" \
          "$REPO/modules/sequences/engine/migrations" \
          "$REPO/modules/sequences/webapp/dist" \
          "$REPO/modules/sequences/deploy/chatwoot-initializers" \
+         "$REPO/modules/sequences/deploy/chatwoot-initializers/test" \
          "$REPO/modules/smart-import/dist"
 cd "$REPO"
 git init -q . && git config user.email t@t && git config user.name t
@@ -37,6 +38,7 @@ echo 'COMMITTED' > modules/sequences/engine/src/campaignCsv.js
 echo 'SELECT 1;' > modules/sequences/engine/migrations/001_init.sql
 echo 'COMMITTED' > modules/sequences/webapp/dist/index.html
 echo '# committed initializer' > modules/sequences/deploy/chatwoot-initializers/patch_a.rb
+echo '# committed test, never an initializer' > modules/sequences/deploy/chatwoot-initializers/test/patch_a_test.rb
 echo 'modules/smart-import/dist/' > .gitignore
 echo 'addons' > docker-compose.addons.yml
 git add -A && git commit -qm init
@@ -89,8 +91,8 @@ check "modular: .gitignored build output never reaches the wire" "absent" \
 
 echo
 echo "initializers are enumerated from HEAD"
-listed="$(cd "$REPO" && git ls-tree -r --name-only HEAD -- "$PATCH_REL_DIR" | grep '\.rb$' | xargs -n1 basename | sort | tr '\n' ' ')"
-check "uncommitted patch_b.rb is not a deploy candidate" "patch_a.rb " "$listed"
+listed="$(head_initializer_paths | xargs -n1 basename | sort | tr '\n' ' ')"
+check "only committed root-level initializers are deploy candidates" "patch_a.rb " "$listed"
 
 echo
 echo "clean-tree guard covers the whole deploy scope"
