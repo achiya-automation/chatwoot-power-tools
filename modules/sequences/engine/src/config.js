@@ -40,10 +40,6 @@ export function loadConfig(env = process.env) {
     // Webhook that turns "Meta answered about a new lead" into a WhatsApp ping to the operator.
     // The URL's path IS the secret (n8n webhook, no credential). Empty = alerts off.
     notifyWebhookUrl: String(env.NOTIFY_WEBHOOK_URL || ''),
-    // The "master" Chatwoot account whose administrators are super-admins of the drip
-    // dashboard: they can pick and manage ANY drip-managed account. Everyone else is
-    // limited to the accounts they're a member of (tenant isolation in the auth gate).
-    masterAccountId: Number(env.MASTER_ACCOUNT_ID || 1),
     webappDist: env.WEBAPP_DIST || '/app/webapp-dist',
     // Uploaded media: stored on a persistent volume, served PUBLICLY at <publicBase>/media/<file>
     // so Meta can fetch it (the rest of the addons route is auth-gated; /media is the one

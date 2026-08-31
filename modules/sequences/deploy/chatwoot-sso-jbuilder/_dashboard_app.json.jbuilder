@@ -36,30 +36,41 @@ json.title resource.title
 
 json.content(
   begin
-    secret = ENV.fetch('DRIP_SSO_SECRET', nil)
-    origin = ENV.fetch('DRIP_PANEL_ORIGIN', nil)
-    user   = Current.user
+    secret          = ENV.fetch('DRIP_SSO_SECRET', nil)
+    origin          = ENV.fetch('DRIP_PANEL_ORIGIN', nil)
+    user            = Current.user
+    current_account = Current.account
 
-    if secret.blank? || origin.blank? || user.blank?
+    if secret.blank? || origin.blank? || user.blank? || current_account.blank?
       resource.content
     else
+      panel_uri = URI.parse(origin)
+      panel_path = panel_uri.path.to_s.sub(%r{/+\z}, '')
+
       resource.content.map do |item|
         url = item.is_a?(Hash) ? (item['url'] || item[:url]) : nil
-        # Only our own panel is ever handed an identity. Everything else passes through untouched.
-        next item unless url.is_a?(String) && url.start_with?(origin)
+        next item unless url.is_a?(String)
 
-        account_id = begin
-          Rack::Utils.parse_query(URI.parse(url).query)['account_id'].presence&.to_i
-        rescue URI::InvalidURIError
-          nil
-        end
-        account_id ||= Current.account&.id
-        next item unless account_id
+        # String-prefix checks accept lookalike hosts (`panel.example.evil`) and sibling paths
+        # (`/drip-evil`). Parse both URLs and require an exact origin plus a real path boundary.
+        target_uri = URI.parse(url)
+        same_origin = target_uri.scheme == panel_uri.scheme &&
+                      target_uri.host == panel_uri.host &&
+                      target_uri.port == panel_uri.port
+        target_path = target_uri.path.to_s
+        within_panel = panel_path.empty? || panel_path == '/' ||
+                       target_path == panel_path || target_path.start_with?("#{panel_path}/")
+        next item unless same_origin && within_panel
+
+        # The URL is stored on a DashboardApp record and may contain a caller-controlled
+        # account_id. Never sign that query value. This authenticated request already has the
+        # authoritative tenant in Current.account, so the claim always names that tenant only.
+        account_id = current_account.id
 
         claims = {
           u: user.id,
           a: account_id,
-          exp: ((Time.current + 7.days).to_f * 1000).to_i, # ms — the app caches this URL until relaunch
+          exp: ((Time.current + 15.minutes).to_f * 1000).to_i,
           jti: SecureRandom.uuid                           # the single-use id the engine burns
         }
         payload = Base64.urlsafe_encode64(claims.to_json, padding: false)

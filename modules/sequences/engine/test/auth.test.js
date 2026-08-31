@@ -19,7 +19,9 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAuthenticated, authGate, resolveUserAccess, canAccessAccount } from '../src/auth.js';
+import {
+  isAuthenticated, authGate, resolveUserAccess, resolveMobileAccess, canAccessAccount,
+} from '../src/auth.js';
 import { sign, newJti, TICKET, SESSION } from '../src/sso.js';
 import { createApp } from '../src/api.js';
 
@@ -260,6 +262,12 @@ const ssoGate = (over = {}) => {
     fetchImpl: async () => ({ status: 401 }),   // Chatwoot would REJECT — the ticket must stand alone
     ssoSecret: SSO_SECRET,
     pool,
+    mobileAccessLookup: async (claims) => ({
+      ok: true,
+      userId: Number(claims.u),
+      accounts: [{ id: Number(claims.a), role: 'agent' }],
+      isSuperAdmin: false,
+    }),
     publicBase: 'https://cw.example.com/drip',
     ...over,
   });
@@ -289,6 +297,46 @@ test('the session cookie it minted is then accepted on its own (no ticket, no Ch
   assert.equal(r.passed, true);
   assert.equal(r.access.userId, 42);
   assert.equal(chatwootCalls, 0, 'we signed it ourselves — no need to ask Rails');
+});
+
+test('a removed mobile user loses access on the next membership check', async () => {
+  let isMember = true;
+  const gate = ssoGate({
+    mobileAccessTtlMs: 0,
+    mobileAccessLookup: async (claims) => isMember ? {
+      ok: true,
+      userId: Number(claims.u),
+      accounts: [{ id: Number(claims.a), role: 'agent' }],
+      isSuperAdmin: false,
+    } : null,
+  });
+  const session = sign(SESSION, { u: 42, a: 7, exp: Date.now() + 60_000 }, SSO_SECRET);
+
+  const beforeRemoval = await runGate(
+    gate, { cookie: `drip_session=${session}` }, { account_id: '7' }
+  );
+  assert.equal(beforeRemoval.passed, true);
+
+  isMember = false;
+  const afterRemoval = await runGate(
+    gate, { cookie: `drip_session=${session}` }, { account_id: '7' }
+  );
+  assert.equal(afterRemoval.passed, false);
+  assert.equal(afterRemoval.status, 401, 'a signed cookie is not a permanent membership grant');
+});
+
+test('resolveMobileAccess reads the current role and fails closed without membership', async () => {
+  const administrator = await resolveMobileAccess({
+    query: async () => ({ rows: [{ role: 'administrator' }] }),
+  }, { u: 42, a: 7 });
+  assert.equal(administrator.accounts[0].role, 'administrator');
+
+  const removed = await resolveMobileAccess({ query: async () => ({ rows: [] }) }, { u: 42, a: 7 });
+  assert.equal(removed, null);
+  const unavailable = await resolveMobileAccess({
+    query: async () => { throw new Error('down'); },
+  }, { u: 42, a: 7 });
+  assert.equal(unavailable, null);
 });
 
 test('a fresh ticket replaces a valid session cookie when the user switches accounts', async () => {
@@ -344,7 +392,7 @@ test('a stale mobile session falls back to the Chatwoot browser session for anot
       profileCalls += 1;
       return {
         status: 200,
-        json: async () => ({ id: 1, accounts: [{ id: 1, role: 'administrator' }] }),
+        json: async () => ({ id: 1, type: 'SuperAdmin', accounts: [] }),
       };
     },
   });
@@ -517,47 +565,45 @@ test('authGate never caches a rejection — each failed cookie is re-verified', 
 });
 
 // ───────────────────── resolveUserAccess + per-account authorization ──────────
-// The profile carries accounts:[{id, role}]. A super-admin is an administrator of the
-// MASTER account; everyone else is limited to the accounts they belong to.
+// The profile carries accounts:[{id, role}]. Cross-account access is granted only when
+// Chatwoot itself identifies the verified profile as its native SuperAdmin STI type.
 
 const profileFetch = (profile) => async () => ({ status: 200, json: async () => profile });
 
-test('resolveUserAccess flags super-admin (administrator of the master account)', async () => {
+test('resolveUserAccess flags Chatwoot native SuperAdmin', async () => {
   const access = await resolveUserAccess(
     sessionCookie(), BASE,
-    profileFetch({ id: 1, accounts: [{ id: 1, role: 'administrator' }, { id: 5, role: 'agent' }] }),
-    1
+    profileFetch({ id: 1, type: 'SuperAdmin', accounts: [{ id: 1, role: 'administrator' }] })
   );
   assert.equal(access.ok, true);
   assert.equal(access.isSuperAdmin, true);
-  assert.deepEqual(access.accounts.map((a) => a.id), [1, 5]);
+  assert.deepEqual(access.accounts.map((a) => a.id), [1]);
 });
 
-test('resolveUserAccess: administrator of a NON-master account is not a super-admin', async () => {
+test('resolveUserAccess: an ordinary account administrator is not a platform super-admin', async () => {
   const access = await resolveUserAccess(
     sessionCookie(), BASE,
-    profileFetch({ id: 48, accounts: [{ id: 7, role: 'administrator' }] }),
-    1
+    profileFetch({ id: 48, accounts: [{ id: 7, role: 'administrator' }] })
   );
   assert.equal(access.isSuperAdmin, false);
   assert.deepEqual(access.accounts.map((a) => a.id), [7]);
 });
 
-test('resolveUserAccess: an AGENT of the master account is not a super-admin', async () => {
+test('resolveUserAccess: administrator of account 1 is not a platform super-admin', async () => {
   const access = await resolveUserAccess(
-    sessionCookie(), BASE, profileFetch({ id: 9, accounts: [{ id: 1, role: 'agent' }] }), 1
+    sessionCookie(), BASE, profileFetch({ id: 9, accounts: [{ id: 1, role: 'administrator' }] })
   );
   assert.equal(access.isSuperAdmin, false);
 });
 
 test('resolveUserAccess returns null when there is no session / Chatwoot rejects / is down', async () => {
-  assert.equal(await resolveUserAccess('', BASE, profileFetch({}), 1), null);
-  assert.equal(await resolveUserAccess(sessionCookie(), BASE, async () => ({ status: 401 }), 1), null);
-  assert.equal(await resolveUserAccess(sessionCookie(), BASE, async () => { throw new Error('down'); }, 1), null);
+  assert.equal(await resolveUserAccess('', BASE, profileFetch({})), null);
+  assert.equal(await resolveUserAccess(sessionCookie(), BASE, async () => ({ status: 401 })), null);
+  assert.equal(await resolveUserAccess(sessionCookie(), BASE, async () => { throw new Error('down'); }), null);
 });
 
 test('resolveUserAccess tolerates a 200 with an unreadable body (valid session, no accounts)', async () => {
-  const access = await resolveUserAccess(sessionCookie(), BASE, async () => ({ status: 200 }), 1);
+  const access = await resolveUserAccess(sessionCookie(), BASE, async () => ({ status: 200 }));
   assert.equal(access.ok, true);
   assert.deepEqual(access.accounts, []);
   assert.equal(access.isSuperAdmin, false);
@@ -593,13 +639,23 @@ test('authGate: a member PASSES for their own account', async () => {
   assert.equal(r.passed, true);
 });
 
-test('authGate: a super-admin PASSES for any account (the cross-account manager case)', async () => {
+test('authGate: administrator of account 1 is FORBIDDEN from a foreign account', async () => {
   const gate = authGate({
     chatwootBaseUrl: BASE, masterAccountId: 1,
     fetchImpl: profileFetch({ id: 1, accounts: [{ id: 1, role: 'administrator' }] }),
   });
   const r = await runGate(gate, { cookie: sessionCookie() }, { account_id: '7' });
-  assert.equal(r.passed, true, 'super-admin manages account 7 without being a member');
+  assert.equal(r.status, 403);
+  assert.equal(r.passed, false, 'tenant administrator must never inherit platform authority');
+});
+
+test('authGate: native Chatwoot SuperAdmin PASSES for any account', async () => {
+  const gate = authGate({
+    chatwootBaseUrl: BASE,
+    fetchImpl: profileFetch({ id: 1, type: 'SuperAdmin', accounts: [] }),
+  });
+  const r = await runGate(gate, { cookie: sessionCookie() }, { account_id: '7' });
+  assert.equal(r.passed, true, 'Chatwoot itself grants platform-wide authority');
 });
 
 test('authGate coalesces a concurrent burst (one dashboard load, same cookie) into ONE Chatwoot call', async () => {

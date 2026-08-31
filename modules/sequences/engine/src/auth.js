@@ -79,21 +79,20 @@ export async function isAuthenticated(cookieHeader, baseUrl, fetchImpl = globalT
   }
 }
 
-const MASTER_DEFAULT = 1;
-
 /**
- * resolveUserAccess(cookieHeader, baseUrl, fetchImpl, masterAccountId)
+ * resolveUserAccess(cookieHeader, baseUrl, fetchImpl)
  *   → Promise<{ ok, userId, accounts:[{id,role}], isSuperAdmin } | null>
  *
  * Like isAuthenticated, but also reads the user's accounts + roles out of the Chatwoot
  * profile so the gate can authorize PER ACCOUNT (tenant isolation) and the dashboard can
- * offer an account picker. A super-admin is an *administrator of the master account* — they
- * may reach any drip-managed account; everyone else is limited to accounts they belong to.
+ * offer an account picker. Cross-account access is reserved for Chatwoot's native
+ * `SuperAdmin` user type. An administrator of an ordinary account — including account 1 —
+ * is still only an administrator of accounts they actually belong to.
  * Returns null when there's no parseable session, Chatwoot rejects it, or Chatwoot is
  * unreachable (fail closed). fetchImpl is injectable for tests.
  */
 export async function resolveUserAccess(
-  cookieHeader, baseUrl, fetchImpl = globalThis.fetch, masterAccountId = MASTER_DEFAULT
+  cookieHeader, baseUrl, fetchImpl = globalThis.fetch
 ) {
   const headers = sessionAuthHeaders(cookieHeader);
   if (!headers) return null;
@@ -109,9 +108,10 @@ export async function resolveUserAccess(
           .filter((a) => a && a.id != null)
           .map((a) => ({ id: Number(a.id), role: String(a.role || '') }))
       : [];
-    const isSuperAdmin = accounts.some(
-      (a) => a.id === Number(masterAccountId) && a.role === 'administrator'
-    );
+    // `type` is emitted by Chatwoot's own profile Jbuilder from the STI user model.
+    // Never infer platform authority from a tenant role: every installation has an account 1,
+    // and its administrator is not automatically entitled to every other tenant.
+    const isSuperAdmin = body.type === 'SuperAdmin';
     return { ok: true, userId: body.id ?? null, accounts, isSuperAdmin };
   } catch {
     // Chatwoot unreachable → fail closed (deny). Better a locked-out admin than an open panel.
@@ -131,6 +131,40 @@ export function canAccessAccount(access, accountId) {
   if (!id) return true;
   if (access.isSuperAdmin) return true;
   return access.accounts.some((a) => a.id === id);
+}
+
+/**
+ * resolveMobileAccess(pool, claims) → the user's CURRENT account membership or null.
+ *
+ * A signed mobile cookie proves what Chatwoot asserted when it minted the short-lived ticket;
+ * it must not turn that one assertion into months of access after an agent is removed. Re-check
+ * the authoritative account_users row and recover the current role before accepting the cookie.
+ */
+export async function resolveMobileAccess(pool, claims) {
+  const userId = Number(claims?.u);
+  const accountId = Number(claims?.a);
+  if (!pool || !Number.isInteger(userId) || userId <= 0 ||
+      !Number.isInteger(accountId) || accountId <= 0) return null;
+
+  try {
+    const result = await pool.query(
+      `SELECT CASE WHEN role = 1 THEN 'administrator' ELSE 'agent' END AS role
+         FROM public.account_users
+        WHERE user_id = $1 AND account_id = $2
+        LIMIT 1`,
+      [userId, accountId]
+    );
+    const row = result.rows?.[0];
+    if (!row) return null;
+    return {
+      ok: true,
+      userId,
+      accounts: [{ id: accountId, role: String(row.role || 'agent') }],
+      isSuperAdmin: false,
+    };
+  } catch {
+    return null; // membership cannot be proven → fail closed
+  }
 }
 
 /**
@@ -207,11 +241,11 @@ function isNavigation(req) {
  * Two layers: (1) the session must be a valid logged-in Chatwoot user, and (2) the request's
  * ?account_id (when present) must be one the user is authorized for. Stashes the resolved
  * access on req.dripAccess so handlers (e.g. the `accounts` picker) can reuse it.
- * config.fetchImpl is injectable for tests; config.masterAccountId sets the super-admin account.
+ * config.fetchImpl is injectable for tests. Platform-superadmin status comes only from the
+ * verified Chatwoot profile; there is no configurable tenant that silently grants it.
  */
 export function authGate(config) {
   const fetchImpl = config.fetchImpl || globalThis.fetch;
-  const master = config.masterAccountId || MASTER_DEFAULT;
   const TTL_MS = 30_000;
 
   // ── the mobile door (see src/sso.js) ───────────────────────────────────────
@@ -223,7 +257,7 @@ export function authGate(config) {
   const cookiePath = (() => {
     try { return new URL(config.publicBase).pathname.replace(/\/+$/, '') || '/'; } catch { return '/'; }
   })();
-  const SESSION_MS = 60 * 24 * 60 * 60 * 1000;   // 60d — matches Chatwoot's own token_lifespan
+  const SESSION_MS = 8 * 60 * 60 * 1000;
 
   // Turn ticket/session claims into the same shape resolveUserAccess() returns, so everything
   // downstream (tenant isolation, the accounts picker) is identical whichever door was used.
@@ -243,6 +277,30 @@ export function authGate(config) {
   // separately (a burst that overloads Rails and slows every call). Instead the first verify
   // runs and the rest await its result.
   const inflight = new Map();
+  // A removal/role change takes effect within this short window, while a dashboard burst still
+  // collapses to one local Postgres lookup. Tests may set it to zero to exercise revocation.
+  const mobileAccessTtlMs = Number.isFinite(config.mobileAccessTtlMs)
+    ? Math.max(0, Number(config.mobileAccessTtlMs))
+    : 30_000;
+  const mobileAccessCache = new Map();
+  const lookupMobileAccess = config.mobileAccessLookup ||
+    ((claims) => resolveMobileAccess(config.pool, claims));
+
+  const currentMobileAccess = async (claims) => {
+    if (!claims) return null;
+    const key = `${claims.u}:${claims.a}`;
+    const hit = mobileAccessCache.get(key);
+    if (hit && hit.expiry > Date.now()) return hit.access;
+
+    let access = null;
+    try { access = await lookupMobileAccess(claims); } catch { access = null; }
+    if (access?.ok) {
+      mobileAccessCache.set(key, { access, expiry: Date.now() + mobileAccessTtlMs });
+      return access;
+    }
+    mobileAccessCache.delete(key);
+    return null;
+  };
 
   // An auth failure must NEVER be cacheable.
   //
@@ -269,13 +327,13 @@ export function authGate(config) {
   };
 
   // Our own session cookie — minted after a ticket was accepted, then presented on every later
-  // request. We signed it, so it needs no Chatwoot round-trip.
-  const sessionFromCookie = (cookie) => {
+  // request. Its signature proves provenance; currentMobileAccess() separately proves that the
+  // user still belongs to the account today.
+  const claimsFromSessionCookie = (cookie) => {
     if (!ssoSecret || !cookie) return null;
     const part = cookie.split(';').map((s) => s.trim()).find((s) => s.startsWith('drip_session='));
     if (!part) return null;
-    const claims = verify(SESSION, part.slice('drip_session='.length), ssoSecret);
-    return claims ? accessFromClaims(claims) : null;
+    return verify(SESSION, part.slice('drip_session='.length), ssoSecret);
   };
 
   // Inspect a URL ticket without consuming it. The gate first decides which mobile credential
@@ -291,6 +349,8 @@ export function authGate(config) {
   // subsequent fetch() calls authenticate normally.
   const sessionFromTicket = async (claims, res) => {
     if (!claims) return null;
+    const access = await currentMobileAccess(claims);
+    if (!access) return null;
     // Express 4 does not catch a rejected async middleware promise. A ticket-store outage must
     // fail closed here while still allowing an already-valid cookie/browser session to continue.
     let spent = false;
@@ -305,7 +365,7 @@ export function authGate(config) {
       path: cookiePath,        // scoped to the panel — not sent to Chatwoot
       maxAge: SESSION_MS,
     });
-    return accessFromClaims(claims);
+    return access;
   };
 
   return async function gate(req, res, next) {
@@ -327,7 +387,8 @@ export function authGate(config) {
     // were meant to be: the cookie-less WebView, an expired Chatwoot token, a Chatwoot outage.
     const ticketClaims = claimsFromTicket(req);
     const ticketCandidate = ticketClaims ? accessFromClaims(ticketClaims) : null;
-    const cookieAccess = sessionFromCookie(cookie);
+    const cookieClaims = claimsFromSessionCookie(cookie);
+    const cookieCandidate = cookieClaims ? accessFromClaims(cookieClaims) : null;
 
     let access = null;
     if (sessionAuthHeaders(cookie)) {
@@ -338,7 +399,7 @@ export function authGate(config) {
       } else if (inflight.has(key)) {
         access = await inflight.get(key);                    // a verify is already running → join it
       } else {
-        const p = resolveUserAccess(cookie, config.chatwootBaseUrl, fetchImpl, master);
+        const p = resolveUserAccess(cookie, config.chatwootBaseUrl, fetchImpl);
         inflight.set(key, p);
         try { access = await p; } finally { inflight.delete(key); }
         if (access && access.ok) cache.set(key, { access, expiry: Date.now() + TTL_MS });
@@ -364,9 +425,12 @@ export function authGate(config) {
       }
     }
 
-    if (cookieAccess && (!acc || canAccessAccount(cookieAccess, acc))) {
-      req.dripAccess = cookieAccess;
-      return next();
+    if (cookieCandidate && (!acc || canAccessAccount(cookieCandidate, acc))) {
+      const cookieAccess = await currentMobileAccess(cookieClaims);
+      if (cookieAccess) {
+        req.dripAccess = cookieAccess;
+        return next();
+      }
     }
 
     // 403 only when a credential is genuinely about someone else's account — a sign-in page
@@ -376,7 +440,7 @@ export function authGate(config) {
     const wrongAccount = Boolean(acc && (
       (access && access.ok && !canAccessAccount(access, acc)) ||
       (ticketCandidate && !canAccessAccount(ticketCandidate, acc)) ||
-      (cookieAccess && !canAccessAccount(cookieAccess, acc))
+      (cookieCandidate && !canAccessAccount(cookieCandidate, acc))
     ));
     return wrongAccount
       ? deny(req, res, 403, 'forbidden')
