@@ -40,6 +40,7 @@ jobs:
           psql -h localhost -U postgres -d drip_test <<'SQL'
           CREATE TABLE IF NOT EXISTS public.conversations (
             id int PRIMARY KEY, display_id int, account_id int, contact_id int,
+            inbox_id int, assignee_id int, assignee_agent_bot_id int,
             custom_attributes jsonb DEFAULT '{}'::jsonb, cached_label_list text);
           CREATE TABLE IF NOT EXISTS public.contacts (
             id int PRIMARY KEY, account_id int, name text, phone_number text, email text,
@@ -60,6 +61,8 @@ jobs:
             message_templates jsonb DEFAULT '{}'::jsonb,
             message_templates_last_updated timestamp);
           CREATE TABLE IF NOT EXISTS public.accounts (id int PRIMARY KEY, name text);
+          CREATE TABLE IF NOT EXISTS public.agent_bot_inboxes (
+            id int PRIMARY KEY, inbox_id int, agent_bot_id int, status int DEFAULT 0);
           CREATE TABLE IF NOT EXISTS public.campaigns (
             id int PRIMARY KEY, display_id int, account_id int, inbox_id int,
             title text, message text, campaign_type int, campaign_status int,
@@ -82,6 +85,17 @@ jobs:
         env:
           DATABASE_URL_TEST: postgres://postgres:test@localhost:5432/drip_test
         run: npm test
+
+  presence-initializer:
+    name: presence initializer (ruby minitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4.4'
+      - name: Run presence initializer tests
+        run: ruby modules/sequences/deploy/chatwoot-initializers/test/presence_humanizer_test.rb
 
   webapp:
     name: sequences webapp (node --test)
