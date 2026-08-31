@@ -168,6 +168,8 @@ provision_db() {
 GRANT USAGE ON SCHEMA public TO drip_engine;
 GRANT SELECT ON public.conversations, public.messages, public.contacts,
                 public.inboxes, public.contact_inboxes, public.channel_whatsapp TO drip_engine;
+-- Re-check signed mobile tickets/cookies against the user's current Chatwoot membership.
+GRANT SELECT ON public.account_users TO drip_engine;
 -- Presence is allowed only when a conversation-level bot is assigned or an active inbox bot
 -- exists. Older Chatwoot releases without this table stay installable; supported 4.16+
 -- releases grant the engine the one additional read-only table required by that proof.
@@ -206,6 +208,8 @@ GRANT USAGE ON SCHEMA public TO drip_engine;
 GRANT SELECT ON public.conversations, public.messages, public.contacts,
                 public.inboxes, public.contact_inboxes, public.channel_whatsapp,
                 public.campaigns, public.labels, public.tags, public.taggings TO drip_engine;
+-- Dashboard-only still serves the mobile WebView and must re-check current membership too.
+GRANT SELECT ON public.account_users TO drip_engine;
 SQL
     then
       echo "provision_db: dashboard enhancement grants failed" >&2
@@ -280,7 +284,8 @@ BEGIN
      WHERE version IN ('024_auto_onboard_role_grants.sql',
                        '033_journeys_role_grants.sql',
                        '051_campaign_recipients_role_grants.sql',
-                       '053_presence_role_grants.sql');
+                       '053_presence_role_grants.sql',
+                       '054_mobile_access_role_grants.sql');
   END IF;
 END $$;
 SQL
@@ -313,7 +318,9 @@ BEGIN
     EXECUTE 'REVOKE EXECUTE ON FUNCTION drip.ensure_journey_webhook(integer,text) FROM drip_engine';
   END IF;
 END $$;
--- Deleting these markers makes a later expansion wait until the functions are re-granted.
+-- Deleting these sequence-only markers makes a later expansion wait until the functions and
+-- presence read are re-granted. Keep 051 and 054: dashboard-only still needs campaign
+-- recipients and the current account membership check used by mobile authentication.
 DO $$
 BEGIN
   IF to_regclass('drip.schema_migrations') IS NOT NULL THEN
@@ -368,7 +375,8 @@ apply_owner_migrations() {
     [ -n "$migration" ] || continue
     filename="$(basename "$migration")"
     if [[ ",${enabled_modules_csv}," == *",sequences,"* ]] ||
-       { [[ ",${enabled_modules_csv}," == *",enhancements,"* ]] && [[ "$filename" == 051_* ]]; }; then
+       { [[ ",${enabled_modules_csv}," == *",enhancements,"* ]] &&
+         { [[ "$filename" == 051_* ]] || [[ "$filename" == 054_* ]]; }; }; then
       owner_migrations+=("$migration")
     fi
   done < <(find "$migrations_dir" -maxdepth 1 -type f -name '*_role_grants.sql' -print | LC_ALL=C sort)

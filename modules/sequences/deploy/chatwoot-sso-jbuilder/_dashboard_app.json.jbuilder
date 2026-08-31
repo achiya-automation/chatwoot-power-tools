@@ -83,7 +83,7 @@ json.content(
       end
     end
   rescue StandardError => e
-    Rails.logger.warn("[drip-sso] ticket minting skipped: #{e.class}: #{e.message}")
+    Rails.logger.warn("[drip-sso] ticket minting skipped: #{e.class}")
     resource.content
   end
 )

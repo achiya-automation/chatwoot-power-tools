@@ -4,6 +4,7 @@ require 'logger'
 require 'minitest/autorun'
 require 'openssl'
 require 'securerandom'
+require 'stringio'
 require 'uri'
 
 class Object
@@ -31,8 +32,12 @@ module Current
 end
 
 module Rails
-  def self.logger
-    @logger ||= Logger.new(File::NULL)
+  class << self
+    attr_writer :logger
+
+    def logger
+      @logger ||= Logger.new(File::NULL)
+    end
   end
 end
 
@@ -62,6 +67,8 @@ class SsoJbuilderSecurityTest < Minitest::Test
     ENV['DRIP_PANEL_ORIGIN'] = 'https://panel.example/drip'
     Current.user = FakeIdentity.new(id: 42)
     Current.account = FakeIdentity.new(id: 7)
+    @log_output = StringIO.new
+    Rails.logger = Logger.new(@log_output)
   end
 
   def teardown
@@ -69,6 +76,7 @@ class SsoJbuilderSecurityTest < Minitest::Test
     ENV.delete('DRIP_PANEL_ORIGIN')
     Current.user = nil
     Current.account = nil
+    Rails.logger = Logger.new(File::NULL)
   end
 
   def render(*urls)
@@ -116,5 +124,16 @@ class SsoJbuilderSecurityTest < Minitest::Test
 
     assert_operator claims.fetch('exp'), :>, before
     assert_operator claims.fetch('exp'), :<=, before + (16 * 60 * 1000)
+  end
+
+  def test_parse_error_does_not_log_url_or_query_values
+    original = 'https://panel.example/drip/%ZZ?access_token=fake-secret-marker'
+
+    assert_equal original, render(original).first.fetch('url')
+
+    log = @log_output.string
+    assert_includes log, '[drip-sso] ticket minting skipped: URI::InvalidURIError'
+    refute_includes log, 'access_token'
+    refute_includes log, 'fake-secret-marker'
   end
 end

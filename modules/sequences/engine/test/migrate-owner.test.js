@@ -7,6 +7,7 @@ const OWNER_FILES = [
   '033_journeys_role_grants.sql',
   '051_campaign_recipients_role_grants.sql',
   '053_presence_role_grants.sql',
+  '054_mobile_access_role_grants.sql',
 ];
 
 function fakePool(doneOwnerFiles = []) {
@@ -65,8 +66,11 @@ test('recorded owner-only migrations produce no pending warning', async () => {
   assert.deepEqual(warnings, []);
 });
 
-test('dashboard-only migration plan excludes sequence schema and owner functions', async () => {
-  const { pool, calls } = fakePool(['051_campaign_recipients_role_grants.sql']);
+test('dashboard-only migration plan keeps campaign and mobile-access grants but excludes sequence owners', async () => {
+  const { pool, calls } = fakePool([
+    '051_campaign_recipients_role_grants.sql',
+    '054_mobile_access_role_grants.sql',
+  ]);
   const result = await runMigrations(pool, ['enhancements']);
   assert.deepEqual(result.pendingOwnerMigrations, []);
 
@@ -85,6 +89,7 @@ test('dashboard-only migration plan excludes sequence schema and owner functions
   ]);
   assert.deepEqual(checked.filter(name => name.endsWith('_role_grants.sql')), [
     '051_campaign_recipients_role_grants.sql',
+    '054_mobile_access_role_grants.sql',
   ]);
   assert.ok(!checked.includes('001_drip_schema.sql'));
   assert.ok(!checked.includes('024_auto_onboard_role_grants.sql'));

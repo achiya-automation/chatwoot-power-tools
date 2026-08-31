@@ -1,146 +1,199 @@
 #!/usr/bin/env bash
-# Atomically-ish replace the managed engine files from a pre-uploaded archive.
-# Runs as root on the Chatwoot host. Extraction and required-path validation happen in a
-# sibling staging directory before any live path moves. If any later move fails, the exact
-# previous paths are restored; a failed restore preserves its backup for manual recovery.
-set -euo pipefail
+# Replace the complete managed Chatwoot Power Tools payload while preserving an exact,
+# durable backup. sync-servers.sh streams this committed file to the remote root shell;
+# the regression suite executes this same file against an isolated temporary root.
+set -Eeuo pipefail
 
-mode="${1:-}"
-runtime_root="${2:-}"
-archive="${3:-}"
+archive="${1:-}"
+deploy_id="${2:-}"
+layout="${3:-}"
+base_root="${4:-/opt/chatwoot}"
 
-case "$mode" in
-  modular)
-    managed_paths=(modules docker-compose.addons.yml)
-    required_paths=(
-      modules/sequences/engine/src/index.js
-      modules/sequences/engine/Dockerfile
-      modules/sequences/engine/migrations
-      modules/sequences/webapp/dist/index.html
-      modules/sequences/webapp/dist/smart-import/import-tool.js
-      modules/smart-import/inject/import-button.js
-      modules/dashboard-enhancements/parts/campaign-modal.js
-      docker-compose.addons.yml
-    )
-    ;;
-  flat)
-    managed_paths=(engine/src engine/migrations webapp/dist)
-    required_paths=(engine/src/index.js engine/migrations webapp/dist/index.html)
-    ;;
-  *) echo "remote-swap-runtime: mode must be modular or flat" >&2; exit 2 ;;
+[[ "$deploy_id" =~ ^[0-9a-f]{12}-[0-9]{14}-[0-9]+$ ]] || {
+  echo "remote-swap-runtime: unsafe deployment id" >&2; exit 2;
+}
+case "$layout" in flat|modular|modular-managed) ;; *)
+  echo "remote-swap-runtime: unknown layout" >&2; exit 2 ;;
 esac
-case "$runtime_root" in
-  ""|/) echo "remote-swap-runtime: unsafe runtime root" >&2; exit 2 ;;
-esac
-[ -f "$archive" ] || { echo "remote-swap-runtime: archive not found" >&2; exit 1; }
-mkdir -p "$runtime_root"
+[[ "$base_root" == /* && "$base_root" != / \
+   && "$base_root" != *$'\n'* && "$base_root" != *$'\t'* \
+   && -d "$base_root" && ! -L "$base_root" ]] || {
+  echo "remote-swap-runtime: unsafe base root" >&2; exit 2;
+}
+if [[ "$base_root" == /opt/chatwoot ]]; then
+  [[ "$archive" =~ ^/tmp/cwpt-sync\.[A-Za-z0-9]+/payload\.tgz$ ]] || {
+    echo "remote-swap-runtime: unsafe archive path" >&2; exit 2;
+  }
+else
+  [[ "${CWPT_REMOTE_SWAP_TEST_MODE:-0}" == 1 && "$archive" == "$base_root"/* ]] || {
+    echo "remote-swap-runtime: alternate root is test-only" >&2; exit 2;
+  }
+fi
+[[ -f "$archive" && ! -L "$archive" ]] || {
+  echo "remote-swap-runtime: archive not found or unsafe" >&2; exit 1;
+}
 
-stage_dir="$(mktemp -d "${runtime_root}/.cwpt-sync-stage.XXXXXX")"
-backup_dir="$(mktemp -d "${runtime_root}/.cwpt-sync-backup.XXXXXX")"
-preserve_backup=0
-swap_started=0
-install_started=0
+stage="$base_root/.cwpt-stage-${deploy_id}"
+backup="$base_root/backups/cwpt-deploy-${deploy_id}"
+[[ ! -e "$stage" && ! -L "$stage" ]] || {
+  echo "remote-swap-runtime: staging path already exists" >&2; exit 2;
+}
+[[ ! -e "$backup" && ! -L "$backup" ]] || {
+  echo "remote-swap-runtime: backup path already exists" >&2; exit 2;
+}
 
-cleanup() {
-  local status=$?
+declare -a targets staged names types touched
+target_root_created=0
+if [[ "$layout" == modular || "$layout" == modular-managed ]]; then
+  checkout_root="$base_root/chatwoot-power-tools"
+  [[ -d "$checkout_root" && ! -L "$checkout_root" ]] || {
+    echo "remote-swap-runtime: modular checkout root is missing or unsafe" >&2; exit 2;
+  }
+  if [[ "$layout" == modular-managed ]]; then
+    target_root="$checkout_root/.cwpt-runtime"
+    if [[ -e "$target_root" || -L "$target_root" ]]; then
+      [[ -d "$target_root" && ! -L "$target_root" ]] || {
+        echo "remote-swap-runtime: managed runtime root is unsafe" >&2; exit 2;
+      }
+    fi
+  else
+    target_root="$checkout_root"
+  fi
+  targets=("$target_root/modules" "$target_root/docker-compose.addons.yml")
+  staged=("$stage/modules" "$stage/docker-compose.addons.yml")
+  names=(modules docker-compose.addons.yml)
+  types=(dir file)
+else
+  target_root="$base_root"
+  [[ -d "$target_root/engine" && ! -L "$target_root/engine" \
+     && -d "$target_root/webapp" && ! -L "$target_root/webapp" ]] || {
+    echo "remote-swap-runtime: flat target roots are missing or unsafe" >&2; exit 2;
+  }
+  targets=("$target_root/engine/src" "$target_root/engine/migrations" "$target_root/webapp/dist")
+  staged=("$stage/engine/src" "$stage/engine/migrations" "$stage/webapp/dist")
+  names=(engine-src engine-migrations webapp-dist)
+  types=(dir dir dir)
+fi
+touched=()
+
+committed=0
+rollback() {
+  local status=$? i old rollback_failed=0
   trap - EXIT HUP INT TERM
   set +e
-  if [ "$status" -ne 0 ] && [ "$swap_started" -eq 1 ]; then
-    rollback_previous
+  if [[ $committed -eq 0 ]]; then
+    for ((i=${#targets[@]}-1; i>=0; i--)); do
+      old="$backup/${names[$i]}"
+      if [[ -e "$old" || -L "$old" ]]; then
+        if ! rm -rf -- "${targets[$i]}"; then
+          rollback_failed=1
+          continue
+        fi
+        if [[ "${CWPT_REMOTE_SWAP_TEST_MODE:-0}" == 1 \
+              && "${CWPT_SWAP_FAIL_ROLLBACK_MOVE:-0}" == 1 ]]; then
+          rollback_failed=1
+          continue
+        fi
+        mv -- "$old" "${targets[$i]}" || rollback_failed=1
+      elif [[ "${touched[$i]:-0}" == 1 ]]; then
+        rm -rf -- "${targets[$i]}" || rollback_failed=1
+      fi
+    done
+    if [[ $rollback_failed -eq 0 ]]; then
+      rm -f -- "$backup/DEPLOYMENT"
+      rmdir "$backup" 2>/dev/null || true
+      if [[ $target_root_created -eq 1 ]]; then
+        rmdir "$target_root" 2>/dev/null || true
+      fi
+    else
+      echo "remote-swap-runtime: rollback incomplete; backup preserved at $backup" >&2
+    fi
   fi
-  rm -f "$archive"
-  rm -rf "$stage_dir"
-  if [ "$status" -eq 0 ] || [ "$preserve_backup" -eq 0 ]; then
-    rm -rf "$backup_dir"
-  else
-    echo "remote-swap-runtime: rollback incomplete; backup preserved at ${backup_dir}" >&2
-  fi
+  rm -rf -- "$stage" || {
+    echo "remote-swap-runtime: could not remove staging path $stage" >&2
+    [[ $status -ne 0 ]] || status=1
+  }
   exit "$status"
 }
-trap cleanup EXIT
+trap rollback EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-rollback_previous() {
-  local rel="" failed=0
-  if [ "$install_started" -eq 1 ]; then
-    for rel in "${managed_paths[@]}"; do
-      rm -rf "${runtime_root:?}/${rel}" || failed=1
-    done
-  fi
-  # The backup tree itself is the ledger. This closes the failure window between moving
-  # an old path and recording it in a separate file: as soon as mv succeeds, its presence
-  # here is enough for EXIT cleanup to restore it.
-  for rel in "${managed_paths[@]}"; do
-    [ -e "${backup_dir}/${rel}" ] || continue
-    if ! mkdir -p "${runtime_root}/$(dirname "$rel")" ||
-       ! mv "${backup_dir}/${rel}" "${runtime_root}/${rel}"; then
-      failed=1
-    fi
-  done
-  if [ "$failed" -eq 0 ]; then
-    preserve_backup=0
-    swap_started=0
-    return 0
-  fi
-  preserve_backup=1
-  return 1
-}
-
-on_signal() {
-  exit 130
-}
-trap on_signal HUP INT TERM
-
-# Validate the gzip/tar stream and extract completely before moving a live byte.
-tar -tzf "$archive" >/dev/null
-tar -C "$stage_dir" -xzf "$archive"
-for rel in "${required_paths[@]}"; do
-  [ -e "${stage_dir}/${rel}" ] || {
-    echo "remote-swap-runtime: archive missing required path ${rel}" >&2
-    exit 1
-  }
+# Reject traversal and non-regular archive entries even if this helper is invoked outside
+# the normal git-archive path. Committed manifests independently reject symlinks/gitlinks.
+tar -tzf "$archive" | while IFS= read -r member; do
+  [[ "$member" =~ ^[A-Za-z0-9_./@+-]+$ \
+     && "$member" != /* && "$member" != ".." && "$member" != ../* \
+     && "$member" != */../* && "$member" != */.. ]] || exit 3
 done
-
-# Move the old runtime into a same-filesystem backup. A same-filesystem mv is atomic for
-# each managed path and avoids copying large web assets during the outage window.
-preserve_backup=1
-swap_started=1
-for rel in "${managed_paths[@]}"; do
-  if [ -e "${runtime_root}/${rel}" ]; then
-    mkdir -p "${backup_dir}/$(dirname "$rel")"
-    if ! mv "${runtime_root}/${rel}" "${backup_dir}/${rel}"; then
-      rollback_previous || true
-      echo "remote-swap-runtime: could not stage previous ${rel}" >&2
-      exit 1
-    fi
-  fi
-done
-
-# Deterministic failure injection used only by the local Bats rollback regression. The
-# fleet script invokes this under sudo without preserving caller environment variables.
-install_started=1
-if [ "${CWPT_SWAP_FAIL_AFTER_BACKUP:-0}" = "1" ]; then
-  rollback_previous || true
-  echo "remote-swap-runtime: injected failure after backup" >&2
-  exit 97
+if tar -tvzf "$archive" | awk 'substr($1,1,1) != "-" && substr($1,1,1) != "d" { bad=1 } END { exit !bad }'; then
+  echo "remote-swap-runtime: archive contains a symlink or special entry" >&2
+  exit 3
 fi
 
-installed_count=0
-for rel in "${managed_paths[@]}"; do
-  mkdir -p "${runtime_root}/$(dirname "$rel")"
-  if ! mv "${stage_dir}/${rel}" "${runtime_root}/${rel}"; then
-    rollback_previous || true
-    echo "remote-swap-runtime: failed to install ${rel}; previous runtime restored" >&2
-    exit 1
+mkdir -m 700 "$stage"
+tar -C "$stage" -xzf "$archive"
+
+if [[ "$layout" == modular || "$layout" == modular-managed ]]; then
+  [[ -d "$stage/modules/sequences/engine/src" && ! -L "$stage/modules" \
+     && -f "$stage/modules/sequences/engine/src/index.js" \
+     && -f "$stage/modules/sequences/engine/src/campaigns.js" \
+     && -d "$stage/modules/sequences/engine/migrations" \
+     && -f "$stage/modules/sequences/webapp/dist/index.html" \
+     && -f "$stage/docker-compose.addons.yml" && ! -L "$stage/docker-compose.addons.yml" ]] || {
+    echo "remote-swap-runtime: modular payload is incomplete" >&2; exit 1;
+  }
+  if [[ "$base_root" == /opt/chatwoot ]]; then
+    (cd "$base_root" && docker compose -f docker-compose.yml \
+      -f "$stage/docker-compose.addons.yml" -p chatwoot config --quiet)
   fi
-  installed_count=$((installed_count + 1))
-  # Unlike the explicit failure hook above, this deliberately falls through set -e so the
-  # EXIT trap itself proves it can recover an unexpected mid-install failure.
-  if [ "${CWPT_SWAP_FAIL_UNHANDLED_DURING_INSTALL:-0}" = "1" ] &&
-     [ "$installed_count" -eq 1 ]; then
+else
+  [[ -d "$stage/engine/src" && ! -L "$stage/engine/src" \
+     && -f "$stage/engine/src/index.js" \
+     && -f "$stage/engine/src/campaigns.js" \
+     && -d "$stage/engine/migrations" && ! -L "$stage/engine/migrations" \
+     && -d "$stage/webapp/dist" && ! -L "$stage/webapp/dist" \
+     && -f "$stage/webapp/dist/index.html" ]] || {
+    echo "remote-swap-runtime: flat payload is incomplete" >&2; exit 1;
+  }
+fi
+
+[[ ! -L "$base_root/backups" \
+   && ( ! -e "$base_root/backups" || -d "$base_root/backups" ) ]] || {
+  echo "remote-swap-runtime: backup root is unsafe" >&2; exit 2;
+}
+install -d -m 700 "$base_root/backups"
+mkdir -m 700 "$backup"
+printf 'commit=%s\nlayout=%s\n' "${deploy_id%%-*}" "$layout" > "$backup/DEPLOYMENT"
+
+if [[ "$layout" == modular-managed && ! -d "$target_root" ]]; then
+  mkdir -m 755 "$target_root"
+  target_root_created=1
+fi
+
+for ((i=0; i<${#targets[@]}; i++)); do
+  [[ ! -L "${targets[$i]}" ]] || {
+    echo "remote-swap-runtime: refusing symlink target" >&2; exit 2;
+  }
+  if [[ -e "${targets[$i]}" ]]; then
+    if [[ "${types[$i]}" == dir ]]; then
+      [[ -d "${targets[$i]}" ]] || {
+        echo "remote-swap-runtime: expected directory" >&2; exit 2;
+      }
+    else
+      [[ -f "${targets[$i]}" ]] || {
+        echo "remote-swap-runtime: expected regular file" >&2; exit 2;
+      }
+    fi
+    mv -- "${targets[$i]}" "$backup/${names[$i]}"
+  fi
+  touched[$i]=1
+  mv -- "${staged[$i]}" "${targets[$i]}"
+  if [[ "${CWPT_SWAP_FAIL_UNHANDLED_DURING_INSTALL:-0}" == 1 && $i -eq 0 ]]; then
     false
   fi
 done
 
-preserve_backup=0
-swap_started=0
-echo "remote_runtime_swapped"
+committed=1
+echo "  backup: $backup"
