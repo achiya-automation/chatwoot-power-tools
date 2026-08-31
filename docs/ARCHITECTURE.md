@@ -2,16 +2,21 @@
 
 chatwoot-power-tools is a **sidecar** for a self-hosted Chatwoot Docker Compose deployment.
 `install.sh` runs directly on the Chatwoot host, detects the running environment, and adds
-one container, one database role/schema, one reverse-proxy route, and one dashboard-script
-entry — all removable with `install.sh --uninstall`.
+one container, one reverse-proxy route, and one dashboard-script entry. Modules that need
+database access also add one least-privilege role and the `drip` schema; an import-only
+installation does not. `install.sh --uninstall` removes the runtime, proxy route and dashboard
+entry; the database role, schema and data are intentionally retained for recovery and require
+an explicit manual removal.
 
 There is no separate backend service, no external database, and no telemetry. Everything
-lives inside your own Chatwoot stack. The only outbound network calls the running system
-makes are to your own Chatwoot instance's API (`modules/sequences/engine/src/chatwoot.js`
-— Chatwoot itself then relays template sends to Meta's WhatsApp Cloud API, the same way it
-already does for any WhatsApp Cloud API channel; the engine never talks to Meta directly)
-and to the public Hebcal API (Jewish holiday dates, used to skip Shabbat/holidays in
-sequences — see `modules/sequences/engine/src/calendar.js`).
+lives inside your own Chatwoot stack. Depending on the enabled modules and explicit settings,
+the running system can call: your own Chatwoot API (`engine/src/chatwoot.js`); Meta's Graph
+API directly for WhatsApp template management/media, number/template health reads and
+presence operations (`meta.js`, `templates.js`, `presence.js`). Normal campaign/template
+sends go through Chatwoot; only the explicitly enabled MM Lite experiment sends its test
+arm directly to Graph before recording the message in Chatwoot. The other possible outbound
+calls are the public Hebcal API for Jewish holiday dates (`calendar.js`) and only the
+notification or Journey webhook destinations that an administrator explicitly configures.
 
 ## Repository layout
 
@@ -36,7 +41,7 @@ modules/
                                   owns its own migrations under engine/migrations/ instead
     inject/                     — dashboard-script part: sidebar "Sequences" nav
   dashboard-enhancements/
-    parts/                      — dashboard-script parts: campaign modal/stats, native i18n, WAHA controls
+    parts/                      — dashboard-script parts: campaign modal/stats and native i18n
 test/                            — bats tests for install.sh + lib/ (mocked docker/psql)
 ```
 

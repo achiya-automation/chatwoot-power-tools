@@ -16,6 +16,7 @@ make_full_modular_payload() {
            "$payload/modules/smart-import/inject" \
            "$payload/modules/dashboard-enhancements/parts"
   echo index > "$payload/modules/sequences/engine/src/index.js"
+  echo campaigns > "$payload/modules/sequences/engine/src/campaigns.js"
   echo dockerfile > "$payload/modules/sequences/engine/Dockerfile"
   echo migration > "$payload/modules/sequences/engine/migrations/001.sql"
   echo webapp > "$payload/modules/sequences/webapp/dist/index.html"
@@ -23,6 +24,15 @@ make_full_modular_payload() {
   echo import-inject > "$payload/modules/smart-import/inject/import-button.js"
   echo dashboard > "$payload/modules/dashboard-enhancements/parts/campaign-modal.js"
   echo compose > "$payload/docker-compose.addons.yml"
+}
+
+make_full_flat_payload() {
+  local payload="$1"
+  mkdir -p "$payload/engine/src" "$payload/engine/migrations" "$payload/webapp/dist"
+  echo index > "$payload/engine/src/index.js"
+  echo campaigns > "$payload/engine/src/campaigns.js"
+  echo migration > "$payload/engine/migrations/001.sql"
+  echo webapp > "$payload/webapp/dist/index.html"
 }
 
 @test "sync deploy resolves owner migrations for flat, legacy modular and managed modular layouts" {
@@ -83,9 +93,11 @@ make_full_modular_payload() {
 }
 
 @test "remote runtime EXIT trap restores the exact previous runtime on an unhandled mid-install failure" {
-  root="$BATS_TEST_TMPDIR/runtime"
+  base="$BATS_TEST_TMPDIR/chatwoot"
+  root="$base/chatwoot-power-tools"
   payload="$BATS_TEST_TMPDIR/payload"
-  archive="$BATS_TEST_TMPDIR/runtime.tgz"
+  archive="$base/runtime.tgz"
+  mkdir -p "$base"
   mkdir -p "$root/modules/old"
   make_full_modular_payload "$payload"
   mkdir -p "$payload/modules/new"
@@ -95,7 +107,9 @@ make_full_modular_payload() {
   echo new-compose > "$payload/docker-compose.addons.yml"
   tar -C "$payload" -czf "$archive" modules docker-compose.addons.yml
 
-  CWPT_SWAP_FAIL_UNHANDLED_DURING_INSTALL=1 run bash "$REPO/modules/sequences/deploy/remote-swap-runtime.sh" modular "$root" "$archive"
+  CWPT_REMOTE_SWAP_TEST_MODE=1 CWPT_SWAP_FAIL_UNHANDLED_DURING_INSTALL=1 \
+    run bash "$REPO/modules/sequences/deploy/remote-swap-runtime.sh" \
+      "$archive" 0123456789ab-20260831000000-123 modular "$base"
 
   [ "$status" -ne 0 ]
   [ "$(cat "$root/modules/old/sentinel")" = "old-runtime" ]
@@ -103,10 +117,11 @@ make_full_modular_payload() {
   [ ! -e "$root/modules/new" ]
 }
 
-@test "remote runtime swap validates then installs a complete managed archive" {
-  root="$BATS_TEST_TMPDIR/runtime"
+@test "an incomplete rollback preserves its ledger and backup instead of claiming success" {
+  base="$BATS_TEST_TMPDIR/chatwoot"
+  root="$base/chatwoot-power-tools"
   payload="$BATS_TEST_TMPDIR/payload"
-  archive="$BATS_TEST_TMPDIR/runtime.tgz"
+  archive="$base/runtime.tgz"
   mkdir -p "$root/modules/old"
   make_full_modular_payload "$payload"
   mkdir -p "$payload/modules/new"
@@ -116,13 +131,60 @@ make_full_modular_payload() {
   echo new-compose > "$payload/docker-compose.addons.yml"
   tar -C "$payload" -czf "$archive" modules docker-compose.addons.yml
 
-  run bash "$REPO/modules/sequences/deploy/remote-swap-runtime.sh" modular "$root" "$archive"
+  CWPT_REMOTE_SWAP_TEST_MODE=1 CWPT_SWAP_FAIL_UNHANDLED_DURING_INSTALL=1 \
+    CWPT_SWAP_FAIL_ROLLBACK_MOVE=1 \
+    run bash "$REPO/modules/sequences/deploy/remote-swap-runtime.sh" \
+      "$archive" 0123456789ab-20260831000000-125 modular "$base"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"rollback incomplete; backup preserved"* ]]
+  backup="$base/backups/cwpt-deploy-0123456789ab-20260831000000-125"
+  [ "$(cat "$backup/modules/old/sentinel")" = "old-runtime" ]
+  [ -f "$backup/DEPLOYMENT" ]
+}
+
+@test "remote runtime refuses a symlinked backup root before moving live paths" {
+  base="$BATS_TEST_TMPDIR/chatwoot"
+  payload="$BATS_TEST_TMPDIR/payload"
+  archive="$base/runtime.tgz"
+  mkdir -p "$base/engine/src" "$base/engine/migrations" "$base/webapp/dist" \
+    "$BATS_TEST_TMPDIR/outside"
+  echo old-runtime > "$base/engine/src/sentinel"
+  make_full_flat_payload "$payload"
+  tar -C "$payload" -czf "$archive" engine webapp
+  ln -s "$BATS_TEST_TMPDIR/outside" "$base/backups"
+
+  CWPT_REMOTE_SWAP_TEST_MODE=1 run bash \
+    "$REPO/modules/sequences/deploy/remote-swap-runtime.sh" \
+    "$archive" 0123456789ab-20260831000000-126 flat "$base"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"backup root is unsafe"* ]]
+  [ "$(cat "$base/engine/src/sentinel")" = "old-runtime" ]
+  [ -z "$(find "$BATS_TEST_TMPDIR/outside" -mindepth 1 -print -quit)" ]
+}
+
+@test "the production remote helper validates then installs a complete flat archive" {
+  base="$BATS_TEST_TMPDIR/chatwoot"
+  root="$base"
+  payload="$BATS_TEST_TMPDIR/payload"
+  archive="$base/runtime.tgz"
+  mkdir -p "$root/engine/src" "$root/engine/migrations" "$root/webapp/dist"
+  make_full_flat_payload "$payload"
+  echo old-runtime > "$root/engine/src/sentinel"
+  echo new-runtime > "$payload/engine/src/sentinel"
+  tar -C "$payload" -czf "$archive" engine webapp
+
+  CWPT_REMOTE_SWAP_TEST_MODE=1 run bash \
+    "$REPO/modules/sequences/deploy/remote-swap-runtime.sh" \
+    "$archive" 0123456789ab-20260831000000-124 flat "$base"
 
   [ "$status" -eq 0 ]
-  [ "$(cat "$root/modules/new/sentinel")" = "new-runtime" ]
-  [ "$(cat "$root/docker-compose.addons.yml")" = "new-compose" ]
-  [ ! -e "$root/modules/old" ]
-  [ -z "$(find "$root" -maxdepth 1 -name '.cwpt-sync-*' -print -quit)" ]
+  [ "$(cat "$root/engine/src/sentinel")" = "new-runtime" ]
+  backup="$root/backups/cwpt-deploy-0123456789ab-20260831000000-124"
+  [ "$(cat "$backup/engine-src/sentinel")" = "old-runtime" ]
+  [ -f "$backup/DEPLOYMENT" ]
+  [ -z "$(find "$root" -maxdepth 1 -name '.cwpt-stage-*' -print -quit)" ]
 }
 
 @test "sync deploy applies owner migrations before rebuilding the engine" {

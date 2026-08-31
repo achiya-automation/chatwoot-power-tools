@@ -30,7 +30,7 @@ mkdir -p "$REPO/modules/sequences/engine/src" \
          "$REPO/modules/sequences/deploy/chatwoot-initializers" \
          "$REPO/modules/sequences/deploy/chatwoot-initializers/test" \
          "$REPO/modules/smart-import/dist"
-cd "$REPO"
+cd "$REPO" || exit 1
 git init -q . && git config user.email t@t && git config user.name t
 
 echo 'COMMITTED' > modules/sequences/engine/src/campaigns.js
@@ -56,7 +56,6 @@ source "$TMP/lib.sh"
 set +e
 REPO_ROOT="$REPO"
 DEPLOY_COMMIT="$(git -C "$REPO" rev-parse HEAD)"
-DEPLOY_ID="${DEPLOY_COMMIT:0:12}-20260831000000-$$"
 
 md5_of_string() { printf '%s\n' "$1" | md5_stdin; }
 
@@ -98,20 +97,19 @@ echo
 echo "clean-tree guard covers the whole deploy scope"
 # Second repo, otherwise the first one's dirty modules/ would mask a yml-only miss.
 REPO2="$TMP/repo2"
-mkdir -p "$REPO2/modules/sequences" && cd "$REPO2"
+mkdir -p "$REPO2/modules/sequences"
+cd "$REPO2" || exit 1
 git init -q . && git config user.email t@t && git config user.name t
 echo 'x' > modules/sequences/keep.js && echo 'addons' > docker-compose.addons.yml
 git add -A && git commit -qm init
 echo 'edited-but-not-committed' > docker-compose.addons.yml   # only the yml is dirty
 
-REPO_ROOT="$REPO2"; FORCE=0
+export REPO_ROOT="$REPO2" FORCE=0
 DEPLOY_COMMIT="$(git -C "$REPO2" rev-parse HEAD)"
+export DEPLOY_COMMIT
 ( require_clean_tree >/dev/null 2>&1 )
 check "a dirty docker-compose.addons.yml alone still stops the deploy" "stopped" \
   "$([[ $? -ne 0 ]] && echo stopped || echo "slipped through")"
-REPO_ROOT="$REPO"
-DEPLOY_COMMIT="$(git -C "$REPO" rev-parse HEAD)"
-
 echo
 if [[ $FAIL -eq 0 ]]; then printf '\033[32m%d passed\033[0m\n' "$PASS"; exit 0
 else printf '\033[31m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"; exit 1; fi

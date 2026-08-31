@@ -217,6 +217,7 @@ EOF
   [[ "$output" == *"owner_migration_applied:024_auto_onboard_role_grants.sql"* ]]
   [[ "$output" == *"owner_migration_applied:033_journeys_role_grants.sql"* ]]
   [[ "$output" == *"owner_migration_applied:051_campaign_recipients_role_grants.sql"* ]]
+  [[ "$output" == *"owner_migration_applied:054_mobile_access_role_grants.sql"* ]]
   [[ "$output" == *"dashboard_script_injected"* || "$output" == *"MOCK_EXEC"* ]]
   [[ "$output" == *"engine health check: OK"* ]]
   [[ "$output" == *"public route check: OK"* ]]
@@ -794,6 +795,7 @@ EOF
   grep -q 'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public' "$MOCK_PSQL_CAPTURE"
   grep -q 'REVOKE EXECUTE ON FUNCTION drip.ensure_account_bot(integer)' "$MOCK_PSQL_CAPTURE"
   grep -q '051_campaign_recipients_role_grants.sql' "$MOCK_PSQL_CAPTURE"
+  grep -q '054_mobile_access_role_grants.sql' "$MOCK_PSQL_CAPTURE"
 }
 
 @test "a fresh import-only install can expand to sequences and receives the new role credential" {
@@ -845,6 +847,7 @@ EOF
   [ "$status" -eq 0 ]
   grep -q '^CWPT_ENABLED_MODULES=enhancements$' "$DIR/.env"
   [[ "$output" == *"owner_migration_applied:051_campaign_recipients_role_grants.sql"* ]]
+  [[ "$output" == *"owner_migration_applied:054_mobile_access_role_grants.sql"* ]]
   [[ "$output" != *"024_auto_onboard"* ]]
   [[ "$output" != *"033_journeys"* ]]
   [ -d "$DIR/chatwoot-power-tools/modules/dashboard-enhancements" ]

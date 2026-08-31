@@ -129,12 +129,15 @@ make_scratch_repo() {
 }
 
 @test "live directories are moved to a scoped backup before staged state replaces them" {
-  backup_line="$(grep -n 'mv -- "${targets\[\$i\]}" "\$backup/' "$SCRIPT" | cut -d: -f1)"
-  replace_line="$(grep -n 'mv -- "${staged\[\$i\]}" "${targets\[\$i\]}"' "$SCRIPT" | cut -d: -f1)"
+  helper="$REPO/modules/sequences/deploy/remote-swap-runtime.sh"
+  backup_line="$(grep -n 'mv -- "${targets\[\$i\]}" "\$backup/' "$helper" | cut -d: -f1)"
+  replace_line="$(grep -n 'mv -- "${staged\[\$i\]}" "${targets\[\$i\]}"' "$helper" | cut -d: -f1)"
   [ -n "$backup_line" ]
   [ -n "$replace_line" ]
   [ "$backup_line" -lt "$replace_line" ]
-  grep -Fq 'backup="/opt/chatwoot/backups/cwpt-deploy-${deploy_id}"' "$SCRIPT"
-  ! grep -Fq 'sudo rm -rf /opt/chatwoot/engine/src' "$SCRIPT"
-  ! grep -Fq 'sudo rm -rf /opt/chatwoot/chatwoot-power-tools/modules' "$SCRIPT"
+  grep -Fq 'backup="$base_root/backups/cwpt-deploy-${deploy_id}"' "$helper"
+  grep -Fq '$DEPLOY_COMMIT:modules/sequences/deploy/remote-swap-runtime.sh' "$SCRIPT"
+  ! grep -Fq 'CWPT_REMOTE_APPLY' "$SCRIPT"
+  ! grep -Fq 'sudo rm -rf /opt/chatwoot/engine/src' "$helper"
+  ! grep -Fq 'sudo rm -rf /opt/chatwoot/chatwoot-power-tools/modules' "$helper"
 }

@@ -104,6 +104,14 @@ die() { printf '\033[31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 remote_md5() { ssh -n "$1" "sudo md5sum '$2' 2>/dev/null | awk '{print \$1}'"; }
 
+sha256_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
 init_deploy_commit() {
   DEPLOY_COMMIT="$(git -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}')" \
     || die "cannot resolve repository HEAD"
@@ -158,6 +166,214 @@ head_md5() {
   out="$(cd "$REPO_ROOT" && git show "$DEPLOY_COMMIT:$1" 2>/dev/null | md5_stdin)" \
     || die "$1 is not committed in $DEPLOY_COMMIT — commit it, or it cannot be deployed"
   printf '%s' "$out"
+}
+
+# A deploy swaps complete directories, so two sentinel files cannot prove that the rest of
+# the tree is safe to overwrite. These manifests cover every regular file in the exact
+# managed payload. Paths are validated and sorted; symlinks/special files fail closed.
+payload_manifest_script() {
+  cat <<'CWPT_PAYLOAD_MANIFEST'
+set -Eeuo pipefail
+layout="$1"
+root="$2"
+case "$layout" in flat|modular|modular-managed) ;; *) exit 2 ;; esac
+[[ "$root" == /* && "$root" != *$'\n'* && "$root" != *$'\t'* ]] || exit 2
+
+manifest_tmp="$(mktemp /tmp/cwpt-manifest.XXXXXXXX)"
+cleanup_manifest() {
+  find "$manifest_tmp" -maxdepth 0 -type f -delete 2>/dev/null || true
+}
+trap cleanup_manifest EXIT HUP INT TERM
+
+valid_rel() {
+  local rel="$1"
+  [[ "$rel" =~ ^[A-Za-z0-9_./@+-]+$ \
+     && "$rel" != /* && "$rel" != ".." && "$rel" != ../* \
+     && "$rel" != */../* && "$rel" != */.. ]]
+}
+
+emit_file() {
+  local file="$1" rel="$2" digest
+  [[ -f "$file" && ! -L "$file" ]] || exit 3
+  valid_rel "$rel" || exit 3
+  digest="$(sha256sum "$file" | awk '{print $1}')"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || exit 3
+  printf '%s\t%s\n' "$digest" "$rel" >> "$manifest_tmp"
+}
+
+emit_tree() {
+  local dir="$1" prefix="$2" bad file rel
+  [[ -d "$dir" && ! -L "$dir" ]] || exit 3
+  bad="$(find -P "$dir" -mindepth 1 \( -type l -o \( ! -type f ! -type d \) \) -print -quit)"
+  [[ -z "$bad" ]] || exit 3
+  while IFS= read -r -d '' file; do
+    rel="${file#"$dir"/}"
+    valid_rel "$rel" || exit 3
+    emit_file "$file" "$prefix/$rel"
+  done < <(find -P "$dir" -type f -print0)
+}
+
+if [[ "$layout" == flat ]]; then
+  emit_tree "$root/engine/src" engine/src
+  emit_tree "$root/engine/migrations" engine/migrations
+  emit_tree "$root/webapp/dist" webapp/dist
+else
+  emit_tree "$root/modules" modules
+  emit_file "$root/docker-compose.addons.yml" docker-compose.addons.yml
+fi
+[[ -s "$manifest_tmp" ]] || exit 3
+LC_ALL=C sort -t $'\t' -k2,2 "$manifest_tmp"
+CWPT_PAYLOAD_MANIFEST
+}
+
+container_manifest_script() {
+  cat <<'CWPT_CONTAINER_MANIFEST'
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const root = process.argv[2] || '/app';
+const rows = [];
+const valid = rel => /^[A-Za-z0-9_./@+-]+$/.test(rel) &&
+  !rel.startsWith('/') && !rel.split('/').includes('..');
+function walk(dir, prefix) {
+  const stat = fs.lstatSync(dir);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('unsafe managed directory');
+  for (const name of fs.readdirSync(dir)) {
+    const absolute = path.join(dir, name);
+    const item = fs.lstatSync(absolute);
+    const rel = `${prefix}/${name}`;
+    if (!valid(rel) || item.isSymbolicLink()) throw new Error('unsafe managed path');
+    if (item.isDirectory()) walk(absolute, rel);
+    else if (item.isFile()) {
+      const digest = crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
+      rows.push({ digest, rel });
+    } else throw new Error('special file in managed tree');
+  }
+}
+walk(path.join(root, 'src'), 'src');
+walk(path.join(root, 'migrations'), 'migrations');
+walk(path.join(root, 'webapp-dist'), 'webapp-dist');
+if (!rows.length) throw new Error('empty managed tree');
+rows.sort((a, b) => Buffer.compare(Buffer.from(a.rel), Buffer.from(b.rel)));
+process.stdout.write(`${rows.map(row => `${row.digest}\t${row.rel}`).join('\n')}\n`);
+CWPT_CONTAINER_MANIFEST
+}
+
+valid_committed_path() {
+  [[ "$1" =~ ^[A-Za-z0-9_./@+-]+$ \
+     && "$1" != /* && "$1" != ".." && "$1" != ../* \
+     && "$1" != */../* && "$1" != */.. ]]
+}
+
+committed_payload_manifest() {
+  local ref="$1" layout="$2" record metadata mode type path rel digest count=0
+  local -a roots=()
+  case "$layout" in
+    flat)
+      roots=(modules/sequences/engine/src modules/sequences/engine/migrations
+             modules/sequences/webapp/dist)
+      ;;
+    modular|modular-managed) roots=(modules docker-compose.addons.yml) ;;
+    *) return 2 ;;
+  esac
+  while IFS= read -r -d '' record; do
+    metadata="${record%%$'\t'*}"
+    path="${record#*$'\t'}"
+    mode="${metadata%% *}"
+    metadata="${metadata#* }"
+    type="${metadata%% *}"
+    [[ "$type" == blob && ( "$mode" == 100644 || "$mode" == 100755 ) ]] || return 2
+    valid_committed_path "$path" || return 2
+    digest="$(git -C "$REPO_ROOT" show "$ref:$path" 2>/dev/null | sha256_stdin)" || return 1
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+    if [[ "$layout" == flat ]]; then
+      rel="${path#modules/sequences/}"
+    else
+      rel="$path"
+    fi
+    printf '%s\t%s\n' "$digest" "$rel"
+    count=$((count + 1))
+  done < <(git -C "$REPO_ROOT" ls-tree -r -z "$ref" -- "${roots[@]}")
+  [[ $count -gt 0 ]]
+}
+
+committed_container_manifest() {
+  local ref="$1" record metadata mode type path rel digest count=0 manifest=""
+  while IFS= read -r -d '' record; do
+    metadata="${record%%$'\t'*}"
+    path="${record#*$'\t'}"
+    mode="${metadata%% *}"
+    metadata="${metadata#* }"
+    type="${metadata%% *}"
+    [[ "$type" == blob && ( "$mode" == 100644 || "$mode" == 100755 ) ]] || return 2
+    valid_committed_path "$path" || return 2
+    digest="$(git -C "$REPO_ROOT" show "$ref:$path" 2>/dev/null | sha256_stdin)" || return 1
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+    case "$path" in
+      modules/sequences/engine/src/*) rel="src/${path#modules/sequences/engine/src/}" ;;
+      modules/sequences/engine/migrations/*) rel="migrations/${path#modules/sequences/engine/migrations/}" ;;
+      modules/sequences/webapp/dist/*) rel="webapp-dist/${path#modules/sequences/webapp/dist/}" ;;
+      *) return 2 ;;
+    esac
+    manifest+="${digest}"$'\t'"${rel}"$'\n'
+    count=$((count + 1))
+  done < <(git -C "$REPO_ROOT" ls-tree -r -z "$ref" -- \
+    modules/sequences/engine/src modules/sequences/engine/migrations modules/sequences/webapp/dist)
+  [[ $count -gt 0 ]] || return 1
+  printf '%s' "$manifest" | LC_ALL=C sort -t $'\t' -k2,2
+}
+
+remote_payload_manifest() {
+  local server="$1" layout="$2" root
+  if is_modular_layout "$layout"; then root="$(remote_modular_root "$layout")"; else root=/opt/chatwoot; fi
+  payload_manifest_script | ssh "$server" "sudo bash -s -- '$layout' '$root'"
+}
+
+remote_container_manifest() {
+  local server="$1" container="$2"
+  container_manifest_script | ssh "$server" "docker exec -i '$container' node - /app"
+}
+
+deployment_marker_path() {
+  case "$1" in flat|modular|modular-managed) ;; *) return 2 ;; esac
+  printf '/opt/chatwoot/.cwpt-state/deployment'
+}
+
+remote_deployment_marker() {
+  local server="$1" layout="$2" marker output commit marker_layout digest
+  marker="$(deployment_marker_path "$layout")"
+  output="$(ssh -n "$server" "sudo bash -c '
+    set -eu
+    state=/opt/chatwoot/.cwpt-state
+    marker=\"\$state/deployment\"
+    [ -d \"\$state\" ] && [ ! -L \"\$state\" ]
+    [ -f \"\$marker\" ] && [ ! -L \"\$marker\" ]
+    [ \"\$(stat -c %u:%g:%a \"\$state\")\" = 0:0:700 ]
+    [ \"\$(stat -c %u:%g:%a \"\$marker\")\" = 0:0:600 ]
+    sed -n -E \"/^(commit=[0-9a-f]{40}|layout=(flat|modular|modular-managed)|manifest_sha256=[0-9a-f]{64})\$/p\" \"\$marker\"
+  ' 2>/dev/null" || true)"
+  commit="$(printf '%s\n' "$output" | awk -F= '$1=="commit" {print $2; exit}')"
+  marker_layout="$(printf '%s\n' "$output" | awk -F= '$1=="layout" {print $2; exit}')"
+  digest="$(printf '%s\n' "$output" | awk -F= '$1=="manifest_sha256" {print $2; exit}')"
+  [[ "$commit" =~ ^[0-9a-f]{40}$ && "$marker_layout" == "$layout" \
+     && "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s|%s' "$commit" "$digest"
+}
+
+write_deployment_marker() {
+  local server="$1" layout="$2" manifest="$3" marker digest
+  marker="$(deployment_marker_path "$layout")"
+  digest="$(printf '%s\n' "$manifest" | sha256_stdin)"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf 'commit=%s\nlayout=%s\nmanifest_sha256=%s\n' "$DEPLOY_COMMIT" "$layout" "$digest" \
+    | ssh "$server" "sudo bash -c '
+      set -eu
+      state=/opt/chatwoot/.cwpt-state
+      [ ! -L \"\$state\" ]
+      install -d -o root -g root -m 700 \"\$state\"
+      [ \"\$(stat -c %u:%g:%a \"\$state\")\" = 0:0:700 ]
+      install -o root -g root -m 600 /dev/stdin \"\$state/deployment\"
+    '"
 }
 
 # Enumerate only production initializers committed directly under PATCH_REL_DIR. Tests
@@ -317,7 +533,6 @@ md5_stdin() { md5 -q 2>/dev/null || md5sum | awk '{print $1}'; }
 # so overwriting it would destroy the only copy.
 check_drift() {
   local server="$1" layout="$2" blocking=0 behind=0
-  local remote_src; remote_src="$(remote_engine_src "$layout")"
   local rails_initializer_mounts sidekiq_initializer_mounts
   rails_initializer_mounts="$(ssh "$server" "docker inspect --format '{{range .Mounts}}{{println .Destination}}{{end}}' chatwoot-rails-1 2>/dev/null" || true)"
   sidekiq_initializer_mounts="$(ssh "$server" "docker inspect --format '{{range .Mounts}}{{println .Destination}}{{end}}' chatwoot-sidekiq-1 2>/dev/null" || true)"
@@ -373,62 +588,36 @@ check_drift() {
   done < <(head_initializer_paths)
   [[ $patch_ok -eq 1 ]] && ok "Rails patches match git"
 
-  # Engine + webapp ship as one tar — all-or-nothing — so an other-branch version here
-  # blocks the whole server instead of skipping a single file.
-  for f in campaigns.js campaignCsv.js; do
-    want="$(head_md5 "modules/sequences/engine/src/$f")"
-    have="$(remote_md5 "$server" "$remote_src/$f")"
-    [[ "$want" == "$have" ]] && continue
-    if [[ -z "$have" ]] || known_in_ref "$DEPLOY_COMMIT" "modules/sequences/engine/src/$f" "$have"; then
+  # The payload is swapped as complete directories, so drift is checked as a complete
+  # path+SHA-256 manifest too. This catches a server-only auth.js fix, a missing migration,
+  # a stale hashed asset, an extra file and unsafe symlinks — none can hide behind two
+  # matching sentinels. A root-owned digest marker proves an intact prior deployment.
+  # A pre-marker or manually changed tree is never guessed from expensive partial history:
+  # it blocks unless the operator reviewed it and explicitly selected --force.
+  local expected_manifest remote_manifest remote_digest marker marker_commit marker_digest
+  expected_manifest="$(committed_payload_manifest "$DEPLOY_COMMIT" "$layout")" \
+    || die "could not build committed payload manifest"
+  if ! remote_manifest="$(remote_payload_manifest "$server" "$layout")"; then
+    warn "$server managed payload cannot be inventoried safely (missing tree, symlink or special file)"
+    blocking=1
+  elif [[ "$expected_manifest" != "$remote_manifest" ]]; then
+    remote_digest="$(printf '%s\n' "$remote_manifest" | sha256_stdin)"
+    marker="$(remote_deployment_marker "$server" "$layout" || true)"
+    marker_commit="${marker%%|*}"
+    marker_digest="${marker#*|}"
+    if [[ -n "$marker" && "$marker_digest" == "$remote_digest" \
+          && "$marker_commit" =~ ^[0-9a-f]{40}$ ]] \
+       && git -C "$REPO_ROOT" merge-base --is-ancestor \
+            "$marker_commit" "$DEPLOY_COMMIT" 2>/dev/null; then
+      warn "managed payload on $server is an intact older deployment — will be updated"
       behind=1
-    elif known_in_ref --all "modules/sequences/engine/src/$f" "$have"; then
-      warn "engine/src/$f on $server was deployed from ANOTHER branch — merge it into this branch first (or --force)"
-      blocking=1
+    elif [[ $FORCE -eq 1 ]]; then
+      warn "--force: replacing a pre-marker, other-branch or manually changed managed payload on $server"
+      behind=1
     else
-      warn "engine/src/$f on $server matches no commit — edited in place"
+      warn "managed payload on $server has no matching trusted deployment marker"
+      warn "  review it first, then rerun with --force for this one-time adoption"
       blocking=1
-    fi
-  done
-
-  # dist is a build artifact with timestamped asset names, so it rarely matches across
-  # builds — being behind is the normal pre-deploy state. But dist IS committed, so a
-  # server dist matching ANOTHER branch's build means the panel was deployed from
-  # elsewhere; replacing it from here would swap the feature set. Block, like engine.
-  local container; container="$(engine_container "$layout")"
-  want="$(head_md5 "modules/sequences/webapp/dist/index.html")"
-  have="$(ssh "$server" "docker exec $container md5sum /app/webapp-dist/index.html 2>/dev/null" | awk '{print $1}')"
-  if [[ -n "$have" && "$want" != "$have" ]]; then
-    if ! known_in_ref "$DEPLOY_COMMIT" "modules/sequences/webapp/dist/index.html" "$have" \
-       && known_in_ref --all "modules/sequences/webapp/dist/index.html" "$have"; then
-      warn "webapp dist on $server was deployed from ANOTHER branch — merge it into this branch first (or --force)"
-      blocking=1
-    else
-      behind=1
-    fi
-  fi
-
-  # The modular server consumes this file at rebuild time. Treat it as deployed state,
-  # not as an incidental transport file: unknown/server-only edits block, an older version
-  # of this branch is updated, and a sibling branch is never silently replaced.
-  if is_modular_layout "$layout"; then
-    local compose_rel="docker-compose.addons.yml"
-    local compose_dest="$(remote_modular_root "$layout")/docker-compose.addons.yml"
-    want="$(head_md5 "$compose_rel")"
-    have="$(remote_md5 "$server" "$compose_dest")"
-    if [[ -z "$have" ]]; then
-      warn "docker-compose.addons.yml missing on $server — will be installed"
-      behind=1
-    elif [[ "$want" != "$have" ]]; then
-      if known_in_ref "$DEPLOY_COMMIT" "$compose_rel" "$have"; then
-        warn "docker-compose.addons.yml on $server is older than the pinned commit — will be updated"
-        behind=1
-      elif known_in_ref --all "$compose_rel" "$have"; then
-        warn "docker-compose.addons.yml on $server comes from ANOTHER branch — merge it first (or --force)"
-        blocking=1
-      else
-        warn "docker-compose.addons.yml on $server matches no commit — edited in place"
-        blocking=1
-      fi
     fi
   fi
 
@@ -440,7 +629,7 @@ check_drift() {
   elif [[ -n "$SKIP_PATCHES" ]]; then
     return 3
   fi
-  ok "engine + webapp match git"
+  ok "complete managed payload matches git"
   return 0
 }
 
@@ -493,145 +682,11 @@ prepare_remote_tmp() {
 
 apply_remote_payload() {
   local server="$1" layout="$2" archive="$3"
-  # The remote script accepts only a validated temporary archive, a hex/numeric deployment
-  # id and one of three known layouts. All live and backup paths are hardcoded below; no
-  # caller-controlled path can reach rm/mv. Existing state is MOVED into a durable backup
-  # before replacement. Any error during the swap restores it and removes staging.
-  ssh "$server" "sudo bash -s -- '$archive' '$DEPLOY_ID' '$layout'" <<'CWPT_REMOTE_APPLY'
-set -Eeuo pipefail
-
-archive="$1"
-deploy_id="$2"
-layout="$3"
-[[ "$archive" =~ ^/tmp/cwpt-sync\.[A-Za-z0-9]+/payload\.tgz$ ]] || {
-  echo "unsafe archive path" >&2; exit 2;
-}
-[[ "$deploy_id" =~ ^[0-9a-f]{12}-[0-9]{14}-[0-9]+$ ]] || {
-  echo "unsafe deployment id" >&2; exit 2;
-}
-[[ "$layout" == modular || "$layout" == modular-managed || "$layout" == flat ]] || {
-  echo "unknown layout" >&2; exit 2;
-}
-
-stage="/opt/chatwoot/.cwpt-stage-${deploy_id}"
-backup="/opt/chatwoot/backups/cwpt-deploy-${deploy_id}"
-[[ ! -e "$stage" && ! -L "$stage" ]] || { echo "staging path already exists" >&2; exit 2; }
-[[ ! -e "$backup" && ! -L "$backup" ]] || { echo "backup path already exists" >&2; exit 2; }
-
-declare -a targets staged names types touched
-target_root_created=0
-if [[ "$layout" == modular || "$layout" == modular-managed ]]; then
-  checkout_root="/opt/chatwoot/chatwoot-power-tools"
-  [[ -d "$checkout_root" && ! -L "$checkout_root" ]] || {
-    echo "modular checkout root is missing or unsafe" >&2; exit 2;
-  }
-  if [[ "$layout" == modular-managed ]]; then
-    target_root="$checkout_root/.cwpt-runtime"
-    if [[ -e "$target_root" || -L "$target_root" ]]; then
-      [[ -d "$target_root" && ! -L "$target_root" ]] || {
-        echo "managed runtime root is unsafe" >&2; exit 2;
-      }
-    fi
-  else
-    target_root="$checkout_root"
-  fi
-  targets=("$target_root/modules" "$target_root/docker-compose.addons.yml")
-  staged=("$stage/modules" "$stage/docker-compose.addons.yml")
-  names=(modules docker-compose.addons.yml)
-  types=(dir file)
-else
-  target_root="/opt/chatwoot"
-  [[ -d "$target_root/engine" && ! -L "$target_root/engine" \
-     && -d "$target_root/webapp" && ! -L "$target_root/webapp" ]] || {
-    echo "flat target roots are missing or unsafe" >&2; exit 2;
-  }
-  targets=("$target_root/engine/src" "$target_root/engine/migrations" "$target_root/webapp/dist")
-  staged=("$stage/engine/src" "$stage/engine/migrations" "$stage/webapp/dist")
-  names=(engine-src engine-migrations webapp-dist)
-  types=(dir dir dir)
-fi
-touched=()
-
-committed=0
-rollback() {
-  local status=$? i old
-  trap - EXIT HUP INT TERM
-  set +e
-  if [[ $committed -eq 0 ]]; then
-    for ((i=${#targets[@]}-1; i>=0; i--)); do
-      old="$backup/${names[$i]}"
-      if [[ -e "$old" || -L "$old" ]]; then
-        rm -rf -- "${targets[$i]}"
-        mv -- "$old" "${targets[$i]}"
-      elif [[ "${touched[$i]:-0}" == 1 ]]; then
-        rm -rf -- "${targets[$i]}"
-      fi
-    done
-    rm -f -- "$backup/DEPLOYMENT"
-    rmdir "$backup" 2>/dev/null || true
-    if [[ $target_root_created -eq 1 ]]; then
-      rmdir "$target_root" 2>/dev/null || true
-    fi
-  fi
-  rm -rf -- "$stage"
-  exit "$status"
-}
-trap rollback EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-tar -tzf "$archive" >/dev/null
-mkdir -m 700 "$stage"
-tar -C "$stage" -xzf "$archive"
-
-if [[ "$layout" == modular || "$layout" == modular-managed ]]; then
-  [[ -d "$stage/modules/sequences/engine/src" && ! -L "$stage/modules" \
-     && -f "$stage/modules/sequences/engine/src/campaigns.js" \
-     && -f "$stage/modules/sequences/webapp/dist/index.html" \
-     && -f "$stage/docker-compose.addons.yml" && ! -L "$stage/docker-compose.addons.yml" ]] || {
-    echo "modular payload is incomplete" >&2; exit 1;
-  }
-  # Validate the exact staged compose file with the real base file and .env, without
-  # printing expanded values. No live file has moved yet if this fails.
-  (cd /opt/chatwoot && docker compose -f docker-compose.yml \
-    -f "$stage/docker-compose.addons.yml" -p chatwoot config --quiet)
-else
-  [[ -d "$stage/engine/src" && ! -L "$stage/engine/src" \
-     && -d "$stage/engine/migrations" && ! -L "$stage/engine/migrations" \
-     && -d "$stage/webapp/dist" && ! -L "$stage/webapp/dist" \
-     && -f "$stage/engine/src/campaigns.js" \
-     && -f "$stage/webapp/dist/index.html" ]] || {
-    echo "flat payload is incomplete" >&2; exit 1;
-  }
-fi
-
-mkdir -p -m 700 /opt/chatwoot/backups
-mkdir -m 700 "$backup"
-printf 'commit=%s\nlayout=%s\n' "${deploy_id%%-*}" "$layout" > "$backup/DEPLOYMENT"
-
-if [[ "$layout" == modular-managed && ! -d "$target_root" ]]; then
-  mkdir -m 755 "$target_root"
-  target_root_created=1
-fi
-
-for ((i=0; i<${#targets[@]}; i++)); do
-  [[ ! -L "${targets[$i]}" ]] || { echo "refusing symlink target: ${targets[$i]}" >&2; exit 2; }
-  if [[ -e "${targets[$i]}" ]]; then
-    if [[ "${types[$i]}" == dir ]]; then
-      [[ -d "${targets[$i]}" ]] || { echo "expected directory: ${targets[$i]}" >&2; exit 2; }
-    else
-      [[ -f "${targets[$i]}" ]] || { echo "expected regular file: ${targets[$i]}" >&2; exit 2; }
-    fi
-    mv -- "${targets[$i]}" "$backup/${names[$i]}"
-  fi
-  touched[$i]=1
-  mv -- "${staged[$i]}" "${targets[$i]}"
-done
-
-committed=1
-echo "  backup: $backup"
-CWPT_REMOTE_APPLY
+  # Stream the helper from the pinned commit: deployment and rollback tests exercise the
+  # exact same bytes. The payload itself was already uploaded to the validated temp path.
+  git -C "$REPO_ROOT" show \
+    "$DEPLOY_COMMIT:modules/sequences/deploy/remote-swap-runtime.sh" \
+    | ssh "$server" "sudo bash -s -- '$archive' '$DEPLOY_ID' '$layout'"
 }
 
 deploy_engine() {
@@ -653,7 +708,7 @@ deploy_engine() {
   fi
   if ! apply_remote_payload "$server" "$layout" "$REMOTE_DEPLOY_TMP/payload.tgz"; then
     cleanup_deploy_temps
-    die "$server: staged deployment failed; live state was restored"
+    die "$server: staged deployment failed; automatic restoration was attempted — inspect the remote backup/output before retrying"
   fi
   cleanup_deploy_temps
   ok "engine + webapp copied from $DEPLOY_COMMIT with backup ($layout)"
@@ -688,8 +743,9 @@ for migration in "$migrations_dir"/*_role_grants.sql; do
   case "$filename" in *[!A-Za-z0-9_.-]*) echo "unsafe migration filename" >&2; exit 1 ;; esac
   if [[ ",${enabled_modules}," == *",sequences,"* ]]; then
     : # Every owner migration is required by the complete sequences stack, including 053.
-  elif [[ ",${enabled_modules}," == *",enhancements,"* && "$filename" == 051_* ]]; then
-    : # Dashboard-only needs only the campaign-recipient grant.
+  elif [[ ",${enabled_modules}," == *",enhancements,"* \
+          && ( "$filename" == 051_* || "$filename" == 054_* ) ]]; then
+    : # Dashboard-only needs campaign analytics plus current mobile-membership proof.
   else
     continue
   fi
@@ -856,24 +912,21 @@ verify() {
   local server="$1" layout="$2"
   local container; container="$(engine_container "$layout")"
   local want have rel_patch base initializer_container
-  want="$(head_md5 "modules/sequences/engine/src/campaigns.js")"
-  have="$(ssh "$server" "docker exec $container md5sum /app/src/campaigns.js" 2>/dev/null | awk '{print $1}')"
-  [[ "$want" == "$have" ]] || die "$server runs different engine code than HEAD ($have vs $want)"
-  ok "running engine matches git"
+  local expected_host actual_host expected_container actual_container
+  expected_host="$(committed_payload_manifest "$DEPLOY_COMMIT" "$layout")" \
+    || die "could not build committed payload manifest during verification"
+  actual_host="$(remote_payload_manifest "$server" "$layout")" \
+    || die "$server managed payload cannot be inventoried after deployment"
+  [[ "$expected_host" == "$actual_host" ]] \
+    || die "$server host payload differs from pinned commit after deployment"
 
-  want="$(head_md5 "modules/sequences/webapp/dist/index.html")"
-  have="$(ssh "$server" "docker exec $container md5sum /app/webapp-dist/index.html 2>/dev/null" | awk '{print $1}')"
-  [[ "$want" == "$have" ]] \
-    || die "$server runs a webapp build different from $DEPLOY_COMMIT"
-  if is_modular_layout "$layout"; then
-    local compose_root
-    compose_root="$(remote_modular_root "$layout")"
-    want="$(head_md5 docker-compose.addons.yml)"
-    have="$(remote_md5 "$server" "$compose_root/docker-compose.addons.yml")"
-    [[ "$want" == "$have" ]] \
-      || die "$server has docker-compose.addons.yml different from $DEPLOY_COMMIT"
-  fi
-  ok "webapp + compose state match pinned commit"
+  expected_container="$(committed_container_manifest "$DEPLOY_COMMIT")" \
+    || die "could not build committed container manifest"
+  actual_container="$(remote_container_manifest "$server" "$container")" \
+    || die "$server running container cannot be inventoried"
+  [[ "$expected_container" == "$actual_container" ]] \
+    || die "$server running engine/webapp differs from pinned commit"
+  ok "complete host payload + running container match pinned commit"
 
   while IFS= read -r rel_patch; do
     [[ -z "$rel_patch" ]] && continue
@@ -897,6 +950,10 @@ verify() {
     raise 'legacy analytics controller patch not active' unless analytics_controller.ancestors.include?(LegacyCampaignAnalyticsController417)
   \"" >/dev/null 2>&1 || die "$server: campaign patch is not active"
   ok "campaign patch + legacy analytics adapter active"
+
+  write_deployment_marker "$server" "$layout" "$expected_host" \
+    || die "$server: could not record verified deployment marker"
+  ok "verified deployment marker recorded"
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────

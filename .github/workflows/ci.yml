@@ -61,6 +61,8 @@ jobs:
             message_templates jsonb DEFAULT '{}'::jsonb,
             message_templates_last_updated timestamp);
           CREATE TABLE IF NOT EXISTS public.accounts (id int PRIMARY KEY, name text);
+          CREATE TABLE IF NOT EXISTS public.account_users (
+            id int PRIMARY KEY, account_id int, user_id int, role int);
           CREATE TABLE IF NOT EXISTS public.agent_bot_inboxes (
             id int PRIMARY KEY, inbox_id int, agent_bot_id int, status int DEFAULT 0);
           CREATE TABLE IF NOT EXISTS public.campaigns (

@@ -119,6 +119,19 @@ EOF
   grep -q "GRANT SELECT ON public.agent_bot_inboxes TO drip_engine" lib/db.sh
 }
 
+@test "db.sh grants explicit read-only account membership access in every DB-backed mode" {
+  export MOCK_PSQL_CAPTURE="$BATS_TEST_TMPDIR/account-users.capture"
+
+  run provision_db "$COMPOSE_DIR" sequences
+  [ "$status" -eq 0 ]
+  grep -q 'GRANT SELECT ON public.account_users TO drip_engine' "$MOCK_PSQL_CAPTURE"
+
+  : > "$MOCK_PSQL_CAPTURE"
+  run provision_db "$COMPOSE_DIR" enhancements
+  [ "$status" -eq 0 ]
+  grep -q 'GRANT SELECT ON public.account_users TO drip_engine' "$MOCK_PSQL_CAPTURE"
+}
+
 @test "dashboard-only provisioning is additive until replacement engine starts" {
   export MOCK_PSQL_CAPTURE="$BATS_TEST_TMPDIR/psql.capture"
   run provision_db "$COMPOSE_DIR" enhancements
@@ -130,7 +143,7 @@ EOF
   ! grep -q 'REVOKE UPDATE (custom_attributes)' "$MOCK_PSQL_CAPTURE"
 }
 
-@test "dashboard-only finalization revokes sequence privileges and invalidates owner markers" {
+@test "dashboard-only finalization revokes sequence privileges but preserves dashboard owner markers" {
   export MOCK_PSQL_CAPTURE="$BATS_TEST_TMPDIR/finalize.capture"
   run finalize_db_module_privileges "$COMPOSE_DIR" enhancements
   [ "$status" -eq 0 ]
@@ -143,6 +156,8 @@ EOF
   grep -q 'REVOKE EXECUTE ON FUNCTION drip.ensure_journey_webhook(integer,text)' "$MOCK_PSQL_CAPTURE"
   grep -q "DELETE FROM drip.schema_migrations" "$MOCK_PSQL_CAPTURE"
   grep -q '053_presence_role_grants.sql' "$MOCK_PSQL_CAPTURE"
+  ! grep -q '051_campaign_recipients_role_grants.sql' "$MOCK_PSQL_CAPTURE"
+  ! grep -q '054_mobile_access_role_grants.sql' "$MOCK_PSQL_CAPTURE"
 }
 
 @test "import-only finalization revokes all public access, owner functions and markers" {
@@ -157,6 +172,7 @@ EOF
   grep -q 'REVOKE EXECUTE ON FUNCTION drip.ensure_account_bot(integer)' "$MOCK_PSQL_CAPTURE"
   grep -q '051_campaign_recipients_role_grants.sql' "$MOCK_PSQL_CAPTURE"
   grep -q '053_presence_role_grants.sql' "$MOCK_PSQL_CAPTURE"
+  grep -q '054_mobile_access_role_grants.sql' "$MOCK_PSQL_CAPTURE"
 }
 
 @test "fresh import-only finalization is a safe no-op when the role does not exist" {
@@ -165,28 +181,32 @@ EOF
   [[ "$output" == *"import_privileges_already_absent"* ]]
 }
 
-@test "apply_owner_migrations deterministically applies and records 024, 033, 051 and 053" {
+@test "apply_owner_migrations deterministically applies and records every owner grant" {
   run apply_owner_migrations "$COMPOSE_DIR"
   [ "$status" -eq 0 ]
   [[ "$output" == *"owner_migration_applied:024_auto_onboard_role_grants.sql"* ]]
   [[ "$output" == *"owner_migration_applied:033_journeys_role_grants.sql"* ]]
   [[ "$output" == *"owner_migration_applied:051_campaign_recipients_role_grants.sql"* ]]
   [[ "$output" == *"owner_migration_applied:053_presence_role_grants.sql"* ]]
+  [[ "$output" == *"owner_migration_applied:054_mobile_access_role_grants.sql"* ]]
   [[ "$output" == *"OWNER_MIGRATIONS_DONE"* ]]
 
   line_024="$(printf '%s\n' "$output" | grep -n 'owner_migration_applied:024_' | cut -d: -f1)"
   line_033="$(printf '%s\n' "$output" | grep -n 'owner_migration_applied:033_' | cut -d: -f1)"
   line_051="$(printf '%s\n' "$output" | grep -n 'owner_migration_applied:051_' | cut -d: -f1)"
   line_053="$(printf '%s\n' "$output" | grep -n 'owner_migration_applied:053_' | cut -d: -f1)"
+  line_054="$(printf '%s\n' "$output" | grep -n 'owner_migration_applied:054_' | cut -d: -f1)"
   [ "$line_024" -lt "$line_033" ]
   [ "$line_033" -lt "$line_051" ]
   [ "$line_051" -lt "$line_053" ]
+  [ "$line_053" -lt "$line_054" ]
 }
 
-@test "dashboard-only applies only campaign recipient owner grant after its own schema" {
+@test "dashboard-only applies campaign recipient and mobile access owner grants after its own schema" {
   run apply_owner_migrations "$COMPOSE_DIR" enhancements
   [ "$status" -eq 0 ]
   [[ "$output" == *"owner_migration_applied:051_campaign_recipients_role_grants.sql"* ]]
+  [[ "$output" == *"owner_migration_applied:054_mobile_access_role_grants.sql"* ]]
   [[ "$output" != *"024_auto_onboard"* ]]
   [[ "$output" != *"033_journeys"* ]]
   [[ "$output" != *"053_presence"* ]]
@@ -196,6 +216,11 @@ EOF
 @test "campaign recipients owner migration fails closed when the Chatwoot table is missing" {
   grep -q "RAISE EXCEPTION 'Chatwoot schema is missing public.campaign_recipients" \
     "$REPO/modules/sequences/engine/migrations/051_campaign_recipients_role_grants.sql"
+}
+
+@test "mobile access owner migration fails closed when account_users is missing" {
+  grep -q "RAISE EXCEPTION 'Chatwoot schema is missing public.account_users" \
+    "$REPO/modules/sequences/engine/migrations/054_mobile_access_role_grants.sql"
 }
 
 @test "apply_owner_migrations fails before applying grants when engine schema is not ready" {

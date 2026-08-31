@@ -13,6 +13,10 @@ const ENHANCEMENT_MIGRATIONS = new Set([
   '047_media_dedupe.sql',
   '048_campaign_resend_experiments.sql',
 ]);
+const ENHANCEMENT_OWNER_MIGRATIONS = new Set([
+  '051_campaign_recipients_role_grants.sql',
+  '054_mobile_access_role_grants.sql',
+]);
 
 function migrationSelection(files, enabledModules) {
   const enabled = new Set(enabledModules);
@@ -22,7 +26,7 @@ function migrationSelection(files, enabledModules) {
   const owners = files.filter(f => f.endsWith(OWNER_MIGRATION_MARKER));
   return {
     engineFiles: sequences ? ordinary : ordinary.filter(f => enhancements && ENHANCEMENT_MIGRATIONS.has(f)),
-    ownerFiles: sequences ? owners : owners.filter(f => enhancements && f.startsWith('051_')),
+    ownerFiles: sequences ? owners : owners.filter(f => enhancements && ENHANCEMENT_OWNER_MIGRATIONS.has(f)),
   };
 }
 

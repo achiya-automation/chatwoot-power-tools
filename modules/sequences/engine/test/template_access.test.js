@@ -199,6 +199,14 @@ async function withSsoApp(fetchImpl, fn) {
     ssoSecret: SSO_SECRET,
     pool,
     fetchImpl,
+    // This file exercises credential ordering, not membership lookup. Model the current
+    // Chatwoot membership explicitly; auth.test.js covers lookup failure and revocation.
+    mobileAccessLookup: async (claims) => ({
+      ok: true,
+      userId: Number(claims.u),
+      accounts: [{ id: Number(claims.a), role: 'agent' }],
+      isSuperAdmin: false,
+    }),
   });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -222,8 +230,9 @@ test('an administrator holding a roleless drip_session cookie is still an admini
   });
 });
 
-test('the drip_session cookie still authorizes when there is no Chatwoot session at all', async () => {
-  // The cookie-less WebView it was built for: no cw_d_session_info, so the mobile door decides.
+test("a current member's drip_session cookie authorizes with no Chatwoot session", async () => {
+  // The cookie-less WebView it was built for: current membership is proven by the lookup above,
+  // and there is no cw_d_session_info, so the mobile door decides.
   await withSsoApp(asAdmin(), async (base) => {
     const session = sign(SESSION, { u: AGENT_UID, a: ACCT, exp: Date.now() + 60_000 }, SSO_SECRET);
     const res = await fetch(`${base}/drip-api?account_id=${ACCT}`, {
