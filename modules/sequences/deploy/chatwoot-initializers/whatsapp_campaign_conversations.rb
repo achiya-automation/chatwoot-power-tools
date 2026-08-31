@@ -169,12 +169,7 @@ end
 # Bot 12 is deliberately campaign-only. Keeping this policy here (rather than only in
 # the dashboard) means a macro executed from Web, Mobile or the API cannot bypass it.
 module WhatsappCampaignMacroActionService
-  CAMPAIGN_ONLY_AGENT_BOTS = {
-    [11, 12] => {
-      inbox_id: 38,
-      markers: ['חשבת אולי למכור', 'רציתי לשאול בנוגע לדירה', 'חשבתם אולי למכור']
-    }
-  }.freeze
+  CAMPAIGN_ONLY_POLICY_KEY = 'cwpt_campaign_only_agent_bots'.freeze
 
   private
 
@@ -184,14 +179,14 @@ module WhatsappCampaignMacroActionService
     return super unless match
 
     agent_bot_id = match[1].to_i
-    policy = CAMPAIGN_ONLY_AGENT_BOTS[[@account.id, agent_bot_id]]
+    return unless AgentBot.accessible_to(@account).exists?(id: agent_bot_id)
+
+    policy = campaign_only_agent_bot_policy(agent_bot_id)
     if policy
       return assign_agent_bot_for_campaign_contact(
         [agent_bot_id, policy[:inbox_id], *policy[:markers]]
       )
     end
-
-    return unless AgentBot.accessible_to(@account).exists?(id: agent_bot_id)
 
     @conversation.with_lock do
       Conversations::AssignmentService.new(
@@ -200,6 +195,21 @@ module WhatsappCampaignMacroActionService
         assignee_type: 'AgentBot'
       ).perform
     end
+  end
+
+  # Client-specific routing policy belongs to the account, not to shared source code. Store it
+  # in Account#custom_attributes as:
+  #   { "cwpt_campaign_only_agent_bots": { "12": { "inbox_id": 38, "markers": [...] } } }
+  # Missing/malformed policy means the bot behaves like any other accessible AgentBot.
+  def campaign_only_agent_bot_policy(agent_bot_id)
+    policies = @account.custom_attributes.to_h[CAMPAIGN_ONLY_POLICY_KEY]
+    raw = policies.to_h[agent_bot_id.to_s]
+    return nil unless raw.is_a?(Hash)
+
+    inbox_id = Integer(raw['inbox_id'], exception: false)
+    return nil unless inbox_id&.positive? && @account.inboxes.exists?(id: inbox_id)
+
+    { inbox_id: inbox_id, markers: Array(raw['markers']).filter_map(&:presence) }
   end
 end
 
@@ -367,8 +377,9 @@ Rails.application.config.after_initialize do
           body << "\r\n--#{boundary}--\r\n".b
 
           api_base = ENV.fetch('WHATSAPP_CLOUD_BASE_URL', 'https://graph.facebook.com')
+          api_version = GlobalConfigService.load('WHATSAPP_API_VERSION', 'v22.0')
           response = HTTParty.post(
-            "#{api_base}/v13.0/#{channel.provider_config['phone_number_id']}/media",
+            "#{api_base}/#{api_version}/#{channel.provider_config['phone_number_id']}/media",
             headers: {
               'Authorization' => "Bearer #{channel.provider_config['api_key']}",
               'Content-Type' => "multipart/form-data; boundary=#{boundary}"
@@ -381,7 +392,8 @@ Rails.application.config.after_initialize do
             Rails.logger.info "Carousel media uploaded: #{media_id} (#{filename})"
             media_id
           else
-            Rails.logger.error "Carousel media upload rejected: #{response.body}"
+            error_code = response.parsed_response.dig('error', 'code') rescue nil
+            Rails.logger.error "Carousel media upload rejected: status=#{response.code} code=#{error_code || 'unknown'}"
             nil
           end
         end
@@ -449,13 +461,12 @@ Rails.application.config.after_initialize do
           )
 
           if message.persisted?
-            Rails.logger.info "Campaign #{campaign.id}: Created message #{message.id} in conversation #{conversation.id} for #{contact.phone_number}"
+            Rails.logger.info "Campaign #{campaign.id}: Created message #{message.id} in conversation #{conversation.id} for contact #{contact.id}"
           else
             Rails.logger.error "Campaign #{campaign.id}: Failed to create message: #{message.errors.full_messages.join(', ')}"
           end
         rescue StandardError => e
-          Rails.logger.error "Campaign #{campaign.id}: Conversation creation failed for #{contact.phone_number}: #{e.message}"
-          Rails.logger.error e.backtrace.first(5).join("\n")
+          Rails.logger.error "Campaign #{campaign.id}: Conversation creation failed for contact #{contact.id}: #{e.class}"
         end
 
         CAMPAIGN_PLACEHOLDER_NAME = /\A[a-z]+-[a-z]+-\d+\z/
