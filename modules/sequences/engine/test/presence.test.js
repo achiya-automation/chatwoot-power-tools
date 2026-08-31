@@ -69,11 +69,15 @@ test('שגיאת Meta מתורגמת לחריגה ולא נבלעת', async () =
   );
 });
 
-test('הקלדת נציג: מכה ב-Meta פעם אחת, ואז ממודדת', async () => {
+test('הקלדת נציג בשיחת בוט: מכה ב-Meta פעם אחת, ואז ממודדת', async () => {
   _internals.lastTyping.clear();
   const row = [{ inbox_id: 38, source_id: 'wamid.A', phone_id: 'P', token: 'T' }];
   const f = fakeFetch();
-  const deps = { query: fakeQuery([row, [{ typing_mode: 'agent' }]]), fetchImpl: f, log: noop };
+  const deps = {
+    query: fakeQuery([row, [{ typing_mode: 'agent' }], [{ '?column?': 1 }]]),
+    fetchImpl: f,
+    log: noop,
+  };
 
   assert.deepEqual(await relayAgentTyping(deps, 11, 900), { sent: true });
   assert.equal(f.sent.length, 1);
@@ -88,6 +92,30 @@ test('הקלדת נציג מכובדת ע"י typing_mode=off', async () => {
   const f = fakeFetch();
   const deps = { query: fakeQuery([row, [{ typing_mode: 'off' }]]), fetchImpl: f, log: noop };
   assert.deepEqual(await relayAgentTyping(deps, 11, 901), { sent: false, reason: 'disabled' });
+  assert.equal(f.sent.length, 0);
+});
+
+test('typing_mode=auto לא מסמן שיחה שאין בה בוט מחובר', async () => {
+  _internals.lastTyping.clear();
+  const row = [{ inbox_id: 38, source_id: 'wamid.A', phone_id: 'P', token: 'T' }];
+  const f = fakeFetch();
+  const deps = { query: fakeQuery([row, [{ typing_mode: 'auto' }], []]), fetchImpl: f, log: noop };
+  assert.deepEqual(
+    await relayAgentTyping(deps, 11, 903),
+    { sent: false, reason: 'bot_not_connected' }
+  );
+  assert.equal(f.sent.length, 0);
+});
+
+test('typing_mode=agent לא מסמן שיחה שאין בה בוט מחובר', async () => {
+  _internals.lastTyping.clear();
+  const row = [{ inbox_id: 38, source_id: 'wamid.A', phone_id: 'P', token: 'T' }];
+  const f = fakeFetch();
+  const deps = { query: fakeQuery([row, [{ typing_mode: 'agent' }], []]), fetchImpl: f, log: noop };
+  assert.deepEqual(
+    await relayAgentTyping(deps, 11, 904),
+    { sent: false, reason: 'bot_not_connected' }
+  );
   assert.equal(f.sent.length, 0);
 });
 
@@ -136,6 +164,34 @@ test('שיחה שאדם כבר ענה בה לא מסומנת כנקראה', asyn
   assert.match(sel, /external_echo/);
   assert.match(sel, /m\.conversation_id = msg\.conversation_id/);
   assert.match(sel, /m\.id < msg\.id/);
+});
+
+test('רק שיחה שמחובר אליה בוט עוברת לסימון נקרא', async () => {
+  const q = fakeQuery([[{ last_message_id: 0 }], [], [{ id: 0 }]]);
+  await tickPresence({ query: q, fetchImpl: fakeFetch(), log: noop });
+  const sel = q.calls[1].sql;
+
+  // בוט יכול להיות מוקצה לשיחה מסוימת, או פעיל ברמת כל התיבה.
+  assert.match(sel, /JOIN public\.conversations conv ON conv\.id = msg\.conversation_id/);
+  assert.match(sel, /conv\.assignee_agent_bot_id IS NOT NULL/);
+  assert.match(sel, /FROM public\.agent_bot_inboxes abi/);
+  assert.match(sel, /abi\.inbox_id = conv\.inbox_id/);
+  assert.match(sel, /abi\.status = 0/); // enum active
+
+  // takeover אנושי גובר על שני סוגי הבוטים.
+  assert.match(sel, /conv\.assignee_id IS NULL/);
+});
+
+test('בדיקת הבעלות החוזרת משתמשת באותו שער בוט ונכשלת סגור', async () => {
+  const connected = fakeQuery([[{ '?column?': 1 }]]);
+  assert.equal(await _internals.isBotConnected(connected, 900, 38), true);
+  assert.match(connected.calls[0].sql, /conv\.assignee_id IS NULL/);
+  assert.match(connected.calls[0].sql, /conv\.assignee_agent_bot_id IS NOT NULL/);
+  assert.match(connected.calls[0].sql, /agent_bot_inboxes/);
+  assert.deepEqual(connected.calls[0].params, [900, 38]);
+
+  assert.equal(await _internals.isBotConnected(fakeQuery([[]]), 900, 38), false);
+  assert.equal(await _internals.isBotConnected(fakeQuery([]), null, 38), false);
 });
 
 // ── לולאת רענון ה"מקליד" (06.08.2026) ────────────────────────────────────
