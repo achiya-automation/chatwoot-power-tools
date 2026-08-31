@@ -72,6 +72,27 @@ make_scratch_repo() {
   [ "$(tar -xzOf "$BATS_TEST_TMPDIR/payload.tgz" engine/src/campaigns.js)" = "COMMITTED" ]
 }
 
+@test "initializer discovery excludes committed Ruby tests in nested directories" {
+  SCRATCH="$BATS_TEST_TMPDIR/repo"
+  make_scratch_repo "$SCRATCH"
+  mkdir -p "$SCRATCH/modules/sequences/deploy/chatwoot-initializers/test"
+  printf '# test only\n' > "$SCRATCH/modules/sequences/deploy/chatwoot-initializers/test/a_test.rb"
+  git -C "$SCRATCH" add -A
+  git -C "$SCRATCH" commit -qm nested-test
+  PINNED="$(git -C "$SCRATCH" rev-parse HEAD)"
+
+  run bash -c '
+    lib="$1"; repo="$2"; pinned="$3"
+    set --
+    source "$lib"
+    REPO_ROOT="$repo"
+    DEPLOY_COMMIT="$pinned"
+    head_initializer_paths
+  ' _ "$LIB" "$SCRATCH" "$PINNED"
+  [ "$status" -eq 0 ]
+  [ "$output" = "modules/sequences/deploy/chatwoot-initializers/a.rb" ]
+}
+
 @test "server flag is a closed allowlist before any ssh call" {
   run bash "$SCRIPT" --check --server customer-production
   [ "$status" -eq 2 ]

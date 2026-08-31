@@ -58,10 +58,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # the checkout moves before a server is changed.
 DEPLOY_COMMIT=""
 DEPLOY_ID=""
-# כל קובצי ה-.rb שמחויבים ב-HEAD מועמדים לפריסה — initializer חדש בריפו מצטרף מעצמו, וקובץ
-# שקיים רק על הדיסק אינו מועמד כלל. נכתבים בפועל רק קבצים שחסרים בשרת או שגרסתם שם ישנה של
-# הברנץ' הזה; גרסה מברנץ' אחר מדולגת (known_in_ref). הנתיב יחסי-לריפו בכוונה — כל הגישה
-# לקבצים כאן היא דרך git, לא דרך הדיסק.
+# כל קובצי ה-.rb שמחויבים ישירות בשורש תיקיית ה-initializers ב-HEAD מועמדים לפריסה —
+# initializer חדש בריפו מצטרף מעצמו, אבל קובצי בדיקה בתיקיות משנה לעולם אינם נטענים לתוך
+# Rails. קובץ שקיים רק על הדיסק אינו מועמד כלל. נכתבים בפועל רק קבצים שחסרים בשרת או
+# שגרסתם שם ישנה של הברנץ' הזה; גרסה מברנץ' אחר מדולגת (known_in_ref).
 PATCH_REL_DIR="modules/sequences/deploy/chatwoot-initializers"
 PATCH_DEST_DIR="/opt/chatwoot/custom-initializers"
 ALLOWED_SERVERS=(chatwoot chatwoot_admon)
@@ -153,6 +153,19 @@ head_md5() {
   out="$(cd "$REPO_ROOT" && git show "$DEPLOY_COMMIT:$1" 2>/dev/null | md5_stdin)" \
     || die "$1 is not committed in $DEPLOY_COMMIT — commit it, or it cannot be deployed"
   printf '%s' "$out"
+}
+
+# Enumerate only production initializers committed directly under PATCH_REL_DIR. Tests
+# deliberately live below test/ and end in .rb too; treating a recursive listing as the
+# deploy set would either block preflight for a missing mount or boot test code in Rails.
+head_initializer_paths() {
+  git -C "$REPO_ROOT" ls-tree -r --name-only "$DEPLOY_COMMIT" -- "$PATCH_REL_DIR" |
+    awk -v prefix="$PATCH_REL_DIR/" '
+      index($0, prefix) == 1 {
+        tail = substr($0, length(prefix) + 1)
+        if (index(tail, "/") == 0 && tail ~ /\.rb$/) print $0
+      }
+    '
 }
 
 # Flat install (main server) or modular install (אדמון)? Decided by what is on disk, not
@@ -262,7 +275,7 @@ check_drift() {
       warn "  add $dest:$mount_target:ro to the sidekiq volumes before deploying"
       blocking=1; patch_ok=0
     fi
-  done < <(cd "$REPO_ROOT" && git ls-tree -r --name-only "$DEPLOY_COMMIT" -- "$PATCH_REL_DIR" | grep '\.rb$')
+  done < <(head_initializer_paths)
   [[ $patch_ok -eq 1 ]] && ok "Rails patches match git"
 
   # Engine + webapp ship as one tar — all-or-nothing — so an other-branch version here
@@ -697,7 +710,7 @@ verify() {
       have="$(ssh -n "$server" "docker exec $initializer_container md5sum /app/config/initializers/$base 2>/dev/null" | awk '{print $1}')"
       [[ "$want" == "$have" ]] || die "$server: $base is not mounted from HEAD in $initializer_container"
     done
-  done < <(cd "$REPO_ROOT" && git ls-tree -r --name-only "$DEPLOY_COMMIT" -- "$PATCH_REL_DIR" | grep '\.rb$')
+  done < <(head_initializer_paths)
   ok "all repository initializers mounted in Rails + Sidekiq"
 
   # 4.17 enterprise-graft (native-first, 20.8.26): the prepend itself is the proof; the
