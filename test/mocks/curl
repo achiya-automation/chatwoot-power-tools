@@ -1,7 +1,33 @@
 #!/usr/bin/env bash
 # test/mocks/curl — deterministic stand-in for curl, used only by install.sh's verify
-# step (a health-check GET). Always prints an HTTP status code (default 200) the way
-# `curl -s -o /dev/null -w '%{http_code}' <url>` would, and exits 0 (matching real curl's
-# behavior for a non-2xx response when --fail isn't used).
-printf '%s' "${MOCK_CURL_HTTP_CODE:-200}"
-exit "${MOCK_CURL_EXIT:-0}"
+# step (a health-check GET). Prints a response body followed by the HTTP status code,
+# matching `curl -w '\n%{http_code}' <url>`, and exits 0 (matching real curl's behavior
+# for a non-2xx response when --fail isn't used).
+url=""
+for arg in "$@"; do url="$arg"; done
+default_modules="${MOCK_CWPT_ENABLED_MODULES:-}"
+if [ -z "$default_modules" ] && [ -n "${MOCK_COMPOSE_DIR:-}" ] && [ -f "${MOCK_COMPOSE_DIR}/.env" ]; then
+  default_modules="$(sed -n 's/^CWPT_ENABLED_MODULES=//p' "${MOCK_COMPOSE_DIR}/.env" | tail -n 1)"
+fi
+default_modules="${default_modules:-import,sequences,enhancements}"
+default_deploy_id="${MOCK_CWPT_DEPLOY_ID:-}"
+if [ -z "$default_deploy_id" ] && [ -n "${MOCK_COMPOSE_DIR:-}" ] && [ -f "${MOCK_COMPOSE_DIR}/.env" ]; then
+  default_deploy_id="$(sed -n 's/^CWPT_DEPLOY_ID=//p' "${MOCK_COMPOSE_DIR}/.env" | tail -n 1)"
+fi
+default_deploy_id="${default_deploy_id:-test-deploy}"
+default_modules_json="[\"${default_modules//,/\",\"}\"]"
+default_body="{\"ok\":true,\"build\":\"test\",\"deployment\":\"${default_deploy_id}\",\"modules\":${default_modules_json}}"
+if [[ "$url" == http://127.0.0.1:* ]]; then
+  printf '%s\n%s' \
+    "${MOCK_CURL_ENGINE_BODY:-${MOCK_CURL_BODY:-$default_body}}" \
+    "${MOCK_CURL_ENGINE_HTTP_CODE:-${MOCK_CURL_HTTP_CODE:-200}}"
+  exit "${MOCK_CURL_ENGINE_EXIT:-${MOCK_CURL_EXIT:-0}}"
+fi
+public_default_body="$default_body"
+if [ -n "${MOCK_CURL_PUBLIC_DEPLOY_ID:-}" ]; then
+  public_default_body="{\"ok\":true,\"build\":\"test\",\"deployment\":\"${MOCK_CURL_PUBLIC_DEPLOY_ID}\",\"modules\":${default_modules_json}}"
+fi
+printf '%s\n%s' \
+  "${MOCK_CURL_PUBLIC_BODY:-${MOCK_CURL_BODY:-$public_default_body}}" \
+  "${MOCK_CURL_PUBLIC_HTTP_CODE:-${MOCK_CURL_HTTP_CODE:-200}}"
+exit "${MOCK_CURL_PUBLIC_EXIT:-${MOCK_CURL_EXIT:-0}}"

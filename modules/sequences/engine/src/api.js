@@ -134,8 +134,19 @@ export async function warmMediaUrl(url, attempts = 3) {
 }
 
 export function createApp(config) {
-  // Initialize store so it can access Chatwoot (needed for templates / enrollment_status)
-  initStore(config);
+  const enabledModules = new Set(
+    Array.isArray(config.enabledModules)
+      ? config.enabledModules
+      : ['import', 'sequences', 'enhancements'],
+  );
+  const importEnabled = enabledModules.has('import');
+  const sequencesEnabled = enabledModules.has('sequences');
+  const enhancementsEnabled = enabledModules.has('enhancements');
+  const dataFeaturesEnabled = sequencesEnabled || enhancementsEnabled;
+
+  // Import-only mode serves one authenticated static bundle and must not initialize the
+  // sequences database/store. This is the runtime half of install.sh's --modules isolation.
+  if (dataFeaturesEnabled) initStore(config);
 
   const app = express();
   app.use(express.json());
@@ -153,16 +164,23 @@ export function createApp(config) {
   })();
 
   // ── health check (PUBLIC — registered before the auth gate) ────────────────
-  app.get('/drip-api/health', (_req, res) => res.json({ ok: true, build: buildId }));
+  app.get('/drip-api/health', (_req, res) => res.json({
+    ok: true,
+    build: buildId,
+    deployment: String(config.deployId || ''),
+    modules: [...enabledModules],
+  }));
 
   // ── uploaded media (PUBLIC — Meta must fetch it, so it bypasses the auth gate) ──
   // Served from a persistent volume at <publicBase>/media/<file>. Only static GETs;
   // a missing file is a clean 404 (never falls through to the SPA shell).
-  app.use(
-    '/media',
-    express.static(mediaDir, { fallthrough: true, index: false, maxAge: '7d' }),
-    (_req, res) => res.status(404).json({ ok: false, error: 'not found' })
-  );
+  if (dataFeaturesEnabled) {
+    app.use(
+      '/media',
+      express.static(mediaDir, { fallthrough: true, index: false, maxAge: '7d' }),
+      (_req, res) => res.status(404).json({ ok: false, error: 'not found' })
+    );
+  }
 
   // ── built SPA assets (PUBLIC — registered BEFORE the auth gate) ────────────
   // /assets/* is Vite's content-hashed output: the same JavaScript and CSS for every tenant,
@@ -178,7 +196,7 @@ export function createApp(config) {
   //
   // Serving them publicly removes the failure mode at its root: there is no 401 left to cache.
   // The API below stays gated — that is where the tenant data actually lives.
-  if (config.webappDist) {
+  if (config.webappDist && dataFeaturesEnabled) {
     app.use(
       '/assets',
       express.static(`${config.webappDist}/assets`, {
@@ -199,7 +217,7 @@ export function createApp(config) {
   // אנחנו מאמתים שהוא תואם ל-account.id שבגוף הבקשה, בהשוואת זמן-קבוע. כך אדמין של דייר A
   // שרואה את ה-webhook שלו (Settings→Integrations) יודע רק את הסוד של A, ולא יכול לזייף
   // אירוע עבור דייר B — הוא לא יכול לחשב HMAC(master, B) בלי סוד-האב.
-  if (config.journeyHookSecret) {
+  if (sequencesEnabled && config.journeyHookSecret) {
     const journeysCtx = makeJourneysCtx({ query, makeClient, makeDbReads, config });
     app.post('/drip-api/journey-hook/:secret', (req, res) => {
       const accountId = Number(req.body?.account?.id);
@@ -218,7 +236,7 @@ export function createApp(config) {
   // ── external journey intake (PUBLIC URL, authenticated in Authorization header) ──
   // Synchronous by design: Make continues only after the contact/conversation exists and the
   // first template node has started. The per-account credential never appears in this URL.
-  if (config.journeyIntakeSecret) {
+  if (sequencesEnabled && config.journeyIntakeSecret) {
     const journeysCtx = makeJourneysCtx({ query, makeClient, makeDbReads, config });
     app.post('/drip-api/journey-intake/:accountId', async (req, res) => {
       const accountId = Number(req.params.accountId);
@@ -252,7 +270,18 @@ export function createApp(config) {
   // The gate also opens for a ticket signed by Chatwoot (config.ssoSecret) — that is the only way
   // the mobile app's WebView, which has no cookie jar, can get in without a second login. It needs
   // the pool to spend the ticket exactly once (src/sso.js). Tests pass their own pool/secret.
-  app.use(authGate({ pool: config.pool || getPool(config), ...config }));
+  app.use(authGate({
+    ...config,
+    pool: config.pool || (dataFeaturesEnabled ? getPool(config) : null),
+  }));
+
+  const requireModule = enabled => (req, res, next) => {
+    if (enabled) return next();
+    return res.status(404).json({ ok: false, error: 'module disabled' });
+  };
+  app.use('/drip-api/media', requireModule(dataFeaturesEnabled));
+  app.use('/drip-api/template-example', requireModule(sequencesEnabled));
+  app.use('/drip-api/campaign-csv', requireModule(dataFeaturesEnabled));
 
   // ── media upload (AUTHED) ──────────────────────────────────────────────────
   // Drag-drop a file → validated against WhatsApp limits → stored on the volume →
@@ -410,6 +439,18 @@ export function createApp(config) {
       return res.status(400).json({ ok: false, error: 'action required in request body' });
     }
 
+    // Dashboard enhancements need only read-only campaign metrics plus the campaign media
+    // mapping used by Chatwoot's native modal. With `sequences` disabled, every other action
+    // (enrollment, journey, template studio, resend, presence, etc.) is unreachable even
+    // though the shared sidecar image contains its implementation.
+    const enhancementActions = new Set([
+      'campaigns', 'campaign_detail', 'campaign_experiments', 'campaigns_trend',
+      'campaigns_tier', 'template_media', 'save_template_media',
+    ]);
+    if (!sequencesEnabled && (!enhancementsEnabled || !enhancementActions.has(action))) {
+      return res.status(404).json({ ok: false, error: 'module disabled' });
+    }
+
     const payload = body.payload && typeof body.payload === 'object'
       ? body.payload
       : (body || {});
@@ -506,7 +547,32 @@ export function createApp(config) {
   //                Immutable is safe and correct.
   //   everything else (index.html, the SPA shell) — must be revalidated, or a deploy would
   //                keep serving an index.html that points at bundles that no longer exist.
-  if (config.webappDist) {
+  if (config.webappDist && importEnabled) {
+    app.use('/smart-import', express.static(`${config.webappDist}/smart-import`, {
+      index: false,
+      fallthrough: false,
+      immutable: true,
+      maxAge: '1y',
+    }));
+  }
+
+  if (config.webappDist && dataFeaturesEnabled) {
+    // The catch-all static root also contains the pre-merged smart-import directory. Block
+    // that path explicitly when import was not selected, or a guessed URL would still deploy
+    // an unselected module even though its Chatwoot button is absent.
+    if (!importEnabled) {
+      app.use('/smart-import', (_req, res) => res.status(404).json({ ok: false, error: 'module disabled' }));
+    }
+    if (!sequencesEnabled && enhancementsEnabled) {
+      // Dashboard-only reuses the compiled CampaignsView, but must not expose the rest of
+      // the sequences SPA through a guessed root URL. The native campaign enhancement opens
+      // this exact deep link; every other SPA entry point is disabled.
+      app.use((req, res, next) => {
+        if (req.method !== 'GET' || (req.path !== '/' && req.path !== '/index.html')) return next();
+        if (String(req.query?.tab || '') === 'campaigns') return next();
+        return res.status(404).json({ ok: false, error: 'module disabled' });
+      });
+    }
     app.use(express.static(config.webappDist, {
       setHeaders: (res, filePath) => {
         res.set(

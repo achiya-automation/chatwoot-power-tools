@@ -37,7 +37,13 @@ services:
     # restarted until it is.
     environment:
       # Least-privilege DB role connection string (install.sh -> lib/db.sh writes it).
-      DATABASE_URL: ${CWPT_DATABASE_URL}
+      DATABASE_URL: ${CWPT_DATABASE_URL:-}
+      # Exact --modules selection. The image is shared, but unselected routes, assets and
+      # background loops stay disabled at runtime.
+      CWPT_ENABLED_MODULES: ${CWPT_ENABLED_MODULES:-import,sequences,enhancements}
+      # Unique per installer run; public verification rejects a stale/wrong engine even
+      # when it has the same SPA build and module selection.
+      CWPT_DEPLOY_ID: ${CWPT_DEPLOY_ID:-}
       # Chatwoot rails service, reachable on the compose default network.
       # Overridable when the detected rails service name differs.
       CHATWOOT_BASE_URL: ${CWPT_CHATWOOT_BASE_URL:-http://rails:3000}

@@ -15,9 +15,20 @@ CREATE TABLE IF NOT EXISTS drip.template_media (
 -- Seed: מדיה שכבר הוגדרה בשלבי רצפים כבר "נזכרת" — מייבאים אותה למאגר המרכזי כך
 -- שהמילוי האוטומטי יעבוד מיד בצ'אט ובקמפיינים, בלי להעלות שוב. media_url קבוע per-template,
 -- אז conflict כפול-URL לא אמור לקרות; DISTINCT + DO NOTHING שומר את הראשון ליתר ביטחון.
-INSERT INTO drip.template_media (account_id, template_name, media_url)
-SELECT DISTINCT s.account_id, st.template_name, st.media_url
-  FROM drip.sequence_steps st
-  JOIN drip.sequences s ON s.id = st.sequence_id
- WHERE nullif(st.media_url, '') IS NOT NULL
-ON CONFLICT (account_id, template_name) DO NOTHING;
+-- In dashboard-enhancements-only mode the sequence tables deliberately do not exist. Seed
+-- from them only when the sequences module has installed them; the media map itself remains
+-- fully usable for native Chatwoot campaigns.
+DO $$
+BEGIN
+  IF to_regclass('drip.sequence_steps') IS NOT NULL
+     AND to_regclass('drip.sequences') IS NOT NULL THEN
+    EXECUTE $seed$
+      INSERT INTO drip.template_media (account_id, template_name, media_url)
+      SELECT DISTINCT s.account_id, st.template_name, st.media_url
+        FROM drip.sequence_steps st
+        JOIN drip.sequences s ON s.id = st.sequence_id
+       WHERE nullif(st.media_url, '') IS NOT NULL
+      ON CONFLICT (account_id, template_name) DO NOTHING
+    $seed$;
+  END IF;
+END $$;

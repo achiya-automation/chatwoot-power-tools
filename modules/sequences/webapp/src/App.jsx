@@ -172,7 +172,15 @@ export default function App() {
   const t = useT(M);
   const locale = useLocale(); // כיוון (rtl/ltr) ריאקטיבי
   const dir = dirFor(locale);
-  const updateAvailable = useVersionCheck(); // נפרסה גרסה חדשה? → באנר רענון (עוקף מטמון נייד)
+  const { updateAvailable, enabledModules, modulesReady } = useVersionCheck();
+  // A successful health response without module metadata is an older full engine. Only an
+  // explicit module list is restrictive; this preserves compatibility with existing installs.
+  const sequencesEnabled = enabledModules == null || enabledModules.includes('sequences');
+  // Campaign analytics is part of the full sequences product as well as the standalone
+  // dashboard module. Only import-only has no campaign surface.
+  const campaignsEnabled = enabledModules == null
+    || enabledModules.includes('sequences')
+    || enabledModules.includes('enhancements');
 
   const [sequences, setSequences] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -205,6 +213,11 @@ export default function App() {
     return 'overview';
   });
 
+  // Dashboard-only serves the shared campaign UI, but none of the sequence screens behind it.
+  // Deriving this synchronously prevents a forbidden sequence child from mounting for one frame
+  // while the state-normalizing effect below catches up.
+  const effectiveView = modulesReady && !sequencesEnabled && campaignsEnabled ? 'campaigns' : view;
+
   // קמפיין נבחר לצלילה (null = רשימה). ?campaign=<id> ב-URL גובר — deep-link מעמוד הקמפיינים
   // הנייטיבי (כפתור "דוח מלא"), כדי לנחות ישר על תצוגת הפירוט של אותו קמפיין.
   const [campaignId, setCampaignId] = useState(() => {
@@ -212,6 +225,13 @@ export default function App() {
     const n = c ? parseInt(c, 10) : NaN;
     return Number.isInteger(n) ? n : null;
   });
+
+  useEffect(() => {
+    if (effectiveView !== view) {
+      setView(effectiveView);
+      setCampaignId(null);
+    }
+  }, [effectiveView, view]);
 
   // שמירת הטאב הפעיל — כדי שריענון לא יחזיר לסקירה
   useEffect(() => {
@@ -254,11 +274,11 @@ export default function App() {
     else setCampaignId(null);
   };
   // כותרת לפי הטאב הפעיל — בסגנון הכותרות הנייטיביות של Chatwoot (text-base font-medium)
-  const viewTitle = view === 'sequences' ? t('tab_sequences') : view === 'contacts' ? t('tab_contacts') : view === 'campaigns' ? t('tab_campaigns') : view === 'compliance' ? t('tab_compliance') : view === 'presence' ? t('tab_presence') : view === 'templates' ? t('tab_templates') : view === 'journeys' ? t('tab_journeys') : t('tab_overview');
+  const viewTitle = effectiveView === 'sequences' ? t('tab_sequences') : effectiveView === 'contacts' ? t('tab_contacts') : effectiveView === 'campaigns' ? t('tab_campaigns') : effectiveView === 'compliance' ? t('tab_compliance') : effectiveView === 'presence' ? t('tab_presence') : effectiveView === 'templates' ? t('tab_templates') : effectiveView === 'journeys' ? t('tab_journeys') : t('tab_overview');
 
   // מצב "שיחה" — האפליקציה רצה כ-Dashboard App בתוך שיחה (סרגל צד צר).
   // אז מציגים תצוגת מצב קומפקטית לקריאה-בלבד של הליד הזה בלבד (בלי ניהול).
-  const conversationMode = !!(conversation && conversation.id && accountId != null);
+  const conversationMode = modulesReady && sequencesEnabled && !!(conversation && conversation.id && accountId != null);
 
   // account_id מגיע אסינכרונית מ-context — נעדכן כשמופיע
   useEffect(() => {
@@ -287,12 +307,19 @@ export default function App() {
 
   // טעינת רצפים + תבניות כשה-account ידוע
   useEffect(() => {
-    if (accountId == null) return;
+    if (accountId == null || !modulesReady) return;
+    if (!sequencesEnabled) {
+      setSequences([]);
+      setTemplates([]);
+      setError('');
+      setLoading(false);
+      return;
+    }
     reload(accountId);
     listTemplates(accountId)
       .then(setTemplates)
       .catch(() => setTemplates([]));
-  }, [accountId, reload]);
+  }, [accountId, modulesReady, sequencesEnabled, reload]);
 
   const totalActive = useMemo(
     () => sequences.filter((s) => s.enabled).length,
@@ -406,7 +433,7 @@ export default function App() {
   return (
     <div dir={dir} className="min-h-screen bg-n-background font-inter text-n-slate-12">
       <div
-        className={`mx-auto ${view === 'journeys' ? 'max-w-7xl' : 'max-w-5xl'} px-4 sm:px-6 ${
+        className={`mx-auto ${effectiveView === 'journeys' ? 'max-w-7xl' : 'max-w-5xl'} px-4 sm:px-6 ${
           embedded ? 'py-4' : 'py-6 sm:py-8'
         }`}
       >
@@ -475,37 +502,41 @@ export default function App() {
             <h1 className="m-0 text-base font-medium text-n-slate-12">{viewTitle}</h1>
           ) : (
             <div className="relative flex items-center h-8 rounded-lg bg-n-alpha-1 dark:bg-n-solid-1 w-fit">
-              <TabButton active={view === 'overview'} onClick={() => setView('overview')}>
+              {sequencesEnabled ? <>
+              <TabButton active={effectiveView === 'overview'} onClick={() => setView('overview')}>
                 {t('tab_overview')}
               </TabButton>
-              <TabButton active={view === 'sequences'} onClick={() => setView('sequences')}>
+              <TabButton active={effectiveView === 'sequences'} onClick={() => setView('sequences')}>
                 {t('tab_sequences')}
               </TabButton>
-              <TabButton active={view === 'contacts'} onClick={() => setView('contacts')}>
+              <TabButton active={effectiveView === 'contacts'} onClick={() => setView('contacts')}>
                 {t('tab_contacts')}
               </TabButton>
-              <TabButton active={view === 'campaigns'} onClick={() => { setView('campaigns'); setCampaignId(null); }}>
+              </> : null}
+              {campaignsEnabled ? <TabButton active={effectiveView === 'campaigns'} onClick={() => { setView('campaigns'); setCampaignId(null); }}>
                 {t('tab_campaigns')}
-              </TabButton>
-              <TabButton active={view === 'compliance'} onClick={() => setView('compliance')}>
+              </TabButton> : null}
+              {sequencesEnabled ? <>
+              <TabButton active={effectiveView === 'compliance'} onClick={() => setView('compliance')}>
                 {t('tab_compliance')}
               </TabButton>
-              <TabButton active={view === 'presence'} onClick={() => setView('presence')}>
+              <TabButton active={effectiveView === 'presence'} onClick={() => setView('presence')}>
                 {t('tab_presence')}
               </TabButton>
-              <TabButton active={view === 'templates'} onClick={() => setView('templates')}>
+              <TabButton active={effectiveView === 'templates'} onClick={() => setView('templates')}>
                 {t('tab_templates')}
               </TabButton>
-              <TabButton active={view === 'journeys'} onClick={() => setView('journeys')}>
+              <TabButton active={effectiveView === 'journeys'} onClick={() => setView('journeys')}>
                 {t('tab_journeys')}
               </TabButton>
+              </> : null}
             </div>
           )}
           <div className="flex items-center gap-2">
             {/* "שיוך לפי תווית" משייך רצף לאנשי קשר — לא רלוונטי בהקשר הקמפיינים, שם מסתירים אותו.
                 גם בטאב הציות מסתירים: שם יש "רישום הסכמה לפי תווית" — שתי פעולות-לפי-תווית שונות
                 באותו מסך הן מלכודת. גם בטאב התבניות ובבונה הפלואו מסתירים: אין שם רצפים לשייך אליהם תווית. */}
-            {!noAccount && view !== 'campaigns' && view !== 'compliance' && view !== 'presence' && view !== 'templates' && view !== 'journeys' ? (
+            {sequencesEnabled && !noAccount && effectiveView !== 'campaigns' && effectiveView !== 'compliance' && effectiveView !== 'presence' && effectiveView !== 'templates' && effectiveView !== 'journeys' ? (
               <Button
                 variant="faded"
                 color="slate"
@@ -516,7 +547,7 @@ export default function App() {
                 {t('assignByLabel')}
               </Button>
             ) : null}
-            {view === 'sequences' && !noAccount ? (
+            {sequencesEnabled && effectiveView === 'sequences' && !noAccount ? (
               <Button variant="solid" color="blue" size="sm" icon={Plus} onClick={handleNew}>
                 {t('newSequence')}
               </Button>
@@ -525,25 +556,27 @@ export default function App() {
         </div>
 
         {/* תוכן */}
-        {noAccount ? (
+        {!modulesReady ? (
+          <Skeleton className="h-64 w-full rounded-xl" />
+        ) : noAccount ? (
           <div className="py-16 text-center text-sm text-n-slate-11">
             {t('waitingAccount')}
           </div>
-        ) : view === 'overview' ? (
+        ) : effectiveView === 'overview' ? (
           <OverviewView accountId={accountId} />
-        ) : view === 'campaigns' ? (
+        ) : effectiveView === 'campaigns' ? (
           campaignId != null
-            ? <CampaignDetailView campaignId={campaignId} accountId={accountId} onBack={handleCampaignBack} />
+            ? <CampaignDetailView campaignId={campaignId} accountId={accountId} onBack={handleCampaignBack} allowOutbound={sequencesEnabled} />
             : <CampaignsView accountId={accountId} onSelect={setCampaignId} />
-        ) : view === 'compliance' ? (
+        ) : effectiveView === 'compliance' ? (
           <ComplianceView accountId={accountId} />
-        ) : view === 'presence' ? (
+        ) : effectiveView === 'presence' ? (
           <PresenceView accountId={accountId} />
-        ) : view === 'templates' ? (
+        ) : effectiveView === 'templates' ? (
           <TemplatesScreen accountId={accountId} />
-        ) : view === 'journeys' ? (
+        ) : effectiveView === 'journeys' ? (
           <JourneysScreen accountId={accountId} />
-        ) : view === 'contacts' ? (
+        ) : effectiveView === 'contacts' ? (
           <EnrollmentsView accountId={accountId} />
         ) : loading ? (
           <div className="flex flex-col gap-4">

@@ -41,11 +41,18 @@ fi
 #   the original deploy script used. Falls back to `openssl dgst` if shasum isn't on PATH.
 _cwpt_content_hash() {
   local file="$1"
+  local output hash
   if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$file" | cut -c1-10
+    output="$(shasum -a 256 "$file")" || return 1
+    hash="${output%%[[:space:]]*}"
+  elif command -v openssl >/dev/null 2>&1; then
+    output="$(openssl dgst -sha256 "$file")" || return 1
+    hash="${output##*[[:space:]]}"
   else
-    openssl dgst -sha256 "$file" | awk '{print $NF}' | cut -c1-10
+    return 1
   fi
+  [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "${hash:0:10}"
 }
 
 # Markers wrapping chatwoot-power-tools' own contribution inside the single shared
@@ -69,11 +76,109 @@ _CWPT_INTEGRITY_SUFFIX=' -->'
 # _cwpt_string_hash <string> → full sha256 hex of the string, with no trailing newline added.
 # (_cwpt_content_hash hashes a FILE and truncates to 10 chars for cache-busting — different job.)
 _cwpt_string_hash() {
+  local output hash
   if command -v shasum >/dev/null 2>&1; then
-    printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
+    output="$(printf '%s' "$1" | shasum -a 256)" || return 1
+    hash="${output%%[[:space:]]*}"
+  elif command -v openssl >/dev/null 2>&1; then
+    output="$(printf '%s' "$1" | openssl dgst -sha256)" || return 1
+    hash="${output##*[[:space:]]}"
   else
-    printf '%s' "$1" | openssl dgst -sha256 | awk '{print $NF}'
+    return 1
   fi
+  [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "$hash"
+}
+
+# _cwpt_validate_dashboard_value <value> <merge|verify>
+#   Validates the only structure we are allowed to edit. Marker substrings must each occur
+#   either zero times (no CWPT block) or exactly once on their own lines, START must precede
+#   END, and an integrity line — when present — must be the first line inside the block and
+#   use the canonical 64-lowercase-hex form. `verify` additionally requires that integrity
+#   line and a non-empty payload. This deliberately fails closed on duplicate, nested,
+#   partial, reordered, or orphaned marker/integrity text: guessing which bytes belong to
+#   us could overwrite an operator's unrelated DASHBOARD_SCRIPTS content.
+#
+#   stdout: absent | present | legacy, or a short invalid:<reason> diagnostic.
+#   exit:   0 valid, 2 malformed/unverifiable.
+_cwpt_validate_dashboard_value() {
+  local value="$1" mode="${2:-merge}"
+  printf '%s' "$value" | awk \
+    -v start="$_CWPT_DASHBOARD_MARK_START" \
+    -v end="$_CWPT_DASHBOARD_MARK_END" \
+    -v iprefix="$_CWPT_INTEGRITY_PREFIX" \
+    -v isuffix="$_CWPT_INTEGRITY_SUFFIX" \
+    -v mode="$mode" '
+      function occurrences(haystack, needle, count, pos) {
+        count = 0
+        while ((pos = index(haystack, needle)) > 0) {
+          count++
+          haystack = substr(haystack, pos + length(needle))
+        }
+        return count
+      }
+      {
+        start_occ += occurrences($0, start)
+        end_occ += occurrences($0, end)
+        integrity_occ += occurrences($0, "cwpt-integrity")
+        if ($0 == start) { start_exact++; start_line = NR }
+        if ($0 == end) { end_exact++; end_line = NR }
+        if (start_line > 0 && NR > start_line + 1 && $0 != end) {
+          payload_line = $0
+          gsub(/[[:space:]]/, "", payload_line)
+          if (length(payload_line) > 0) payload_non_ws = 1
+        }
+
+        if (substr($0, 1, length(iprefix)) == iprefix &&
+            length($0) > length(iprefix) + length(isuffix) &&
+            substr($0, length($0) - length(isuffix) + 1) == isuffix) {
+          hash = substr($0, length(iprefix) + 1,
+                        length($0) - length(iprefix) - length(isuffix))
+          if (length(hash) == 64 && hash !~ /[^0-9a-f]/) {
+            integrity_exact++
+            integrity_line = NR
+          }
+        }
+      }
+      END {
+        if (start_occ == 0 && end_occ == 0) {
+          if (integrity_occ != 0) { print "invalid:orphan_integrity"; exit 2 }
+          if (mode == "verify") { print "invalid:missing_markers"; exit 2 }
+          print "absent"
+          exit 0
+        }
+        if (start_occ != 1 || end_occ != 1) {
+          print "invalid:marker_count"
+          exit 2
+        }
+        if (start_exact != 1 || end_exact != 1) {
+          print "invalid:marker_not_canonical_line"
+          exit 2
+        }
+        if (start_line >= end_line) {
+          print "invalid:marker_order"
+          exit 2
+        }
+        if (integrity_occ == 0) {
+          if (mode == "verify") { print "invalid:missing_integrity"; exit 2 }
+          print "legacy"
+          exit 0
+        }
+        if (integrity_occ != 1 || integrity_exact != 1) {
+          print "invalid:integrity_format_or_count"
+          exit 2
+        }
+        if (integrity_line != start_line + 1 || integrity_line >= end_line) {
+          print "invalid:integrity_position"
+          exit 2
+        }
+        if (end_line <= integrity_line + 1 || payload_non_ws != 1) {
+          print "invalid:empty_payload"
+          exit 2
+        }
+        print "present"
+      }
+    '
 }
 
 # _cwpt_extract_payload — stdin: the full DASHBOARD_SCRIPTS value. stdout: the hashed payload,
@@ -94,9 +199,9 @@ _cwpt_declared_hash() {
 
 # _cwpt_fetch_dashboard_scripts <rails_container>
 #   Prints the CURRENT DASHBOARD_SCRIPTS InstallationConfig value verbatim (empty, exit 0,
-#   when no such row exists yet — `&.value` on nil). Never fails the caller: stderr is
-#   discarded and the caller is expected to guard the call (`|| existing=""`), matching
-#   this codebase's set -e -o pipefail safety convention (test/set-e-safety.bats).
+#   when no such row exists yet — `&.value` on nil). A Docker/Rails failure is propagated:
+#   callers must distinguish "stored value is empty" from "the stored value could not be
+#   read", because treating the latter as empty would clobber operator-owned content.
 #   NOTE: the literal `&.value` below is load-bearing — test/mocks/docker's case
 #   statement keys on it to tell this READ apart from the WRITE rails runner calls in
 #   inject_dashboard_script/remove_dashboard_script. Keep it if you touch this string.
@@ -113,6 +218,21 @@ _cwpt_fetch_dashboard_scripts() {
   docker exec -e RAILS_LOG_TO_STDOUT=false "$rails_container" bundle exec rails runner "
     print InstallationConfig.find_by(name: 'DASHBOARD_SCRIPTS')&.value
   " 2>/dev/null
+}
+
+# _cwpt_read_dashboard_scripts <variable_name> <rails_container>
+#   Command substitution normally strips every trailing newline, which would corrupt a
+#   shared DASHBOARD_SCRIPTS value and make the optimistic hash disagree with Rails. Append
+#   a non-newline sentinel inside the substitution, then remove exactly that byte, preserving
+#   all original bytes while still propagating a failed Docker/Rails read.
+_cwpt_read_dashboard_scripts() {
+  local variable_name="$1" rails_container="$2" captured="" sentinel=$'\x1f'
+  if ! captured="$(_cwpt_fetch_dashboard_scripts "$rails_container" && printf '%s' "$sentinel")"; then
+    return 1
+  fi
+  [[ "$captured" == *"$sentinel" ]] || return 1
+  captured="${captured%"$sentinel"}"
+  printf -v "$variable_name" '%s' "$captured"
 }
 
 # _cwpt_backup_dashboard_scripts <compose_dir> <content>
@@ -137,6 +257,11 @@ _cwpt_backup_dashboard_scripts() {
 #   (e.g. a fresh Chatwoot instance with no DASHBOARD_SCRIPTS set at all yet).
 _cwpt_merge_dashboard_scripts() {
   local existing="$1" new_block="$2"
+  local structure=""
+  if ! structure="$(_cwpt_validate_dashboard_value "$existing" merge)"; then
+    echo "_cwpt_merge_dashboard_scripts: refusing malformed existing value (${structure:-invalid:unknown})" >&2
+    return 1
+  fi
   if [[ "$existing" == *"$_CWPT_DASHBOARD_MARK_START"*"$_CWPT_DASHBOARD_MARK_END"* ]]; then
     local prefix="${existing%%"$_CWPT_DASHBOARD_MARK_START"*}"
     local suffix="${existing#*"$_CWPT_DASHBOARD_MARK_END"}"
@@ -146,6 +271,16 @@ _cwpt_merge_dashboard_scripts() {
   else
     printf '%s' "$new_block"
   fi
+}
+
+_cwpt_merge_dashboard_scripts_into() {
+  local variable_name="$1" existing="$2" new_block="$3" captured="" sentinel=$'\x1f'
+  if ! captured="$(_cwpt_merge_dashboard_scripts "$existing" "$new_block" && printf '%s' "$sentinel")"; then
+    return 1
+  fi
+  [[ "$captured" == *"$sentinel" ]] || return 1
+  captured="${captured%"$sentinel"}"
+  printf -v "$variable_name" '%s' "$captured"
 }
 
 # inject_dashboard_script <compose_dir> <base> <module...>
@@ -179,12 +314,23 @@ inject_dashboard_script() {
   # build intermediate absent from a clean clone / the install tarball. Hashing the served
   # copy is both correct (its hash is the cache-bust key browsers see) and CI-safe.
   bundle="$(_cwpt_inject_root)/modules/sequences/webapp/dist/smart-import/import-tool.js"
-  if [ -f "$bundle" ]; then
+  # Only the import module contains this placeholder. A sequences/dashboard-only install
+  # must not inspect, hash, or fail because of an unselected module's artifact.
+  if [[ "$html" == *"__CWI_VER__"* ]]; then
+    if [ ! -f "$bundle" ]; then
+      echo "inject_dashboard_script: selected import module is missing its built bundle" >&2
+      return 1
+    fi
     local ver
-    # `|| true`: sourced into install.sh (set -e -o pipefail) — a hash-computation hiccup
-    # must not abort the whole injection; worst case the placeholder is left unreplaced.
-    ver="$(_cwpt_content_hash "$bundle")" || true
+    if ! ver="$(_cwpt_content_hash "$bundle")"; then
+      echo "inject_dashboard_script: could not hash the smart-import bundle" >&2
+      return 1
+    fi
     html="${html//__CWI_VER__/$ver}"
+  fi
+  if [[ "$html" == *"__CWI_VER__"* ]]; then
+    echo "inject_dashboard_script: unresolved smart-import content hash placeholder" >&2
+    return 1
   fi
 
   local rails_container
@@ -196,15 +342,35 @@ inject_dashboard_script() {
   # Read-merge-write, not a blind overwrite: DASHBOARD_SCRIPTS is one value shared with
   # whatever else the operator has configured (see this file's header comment).
   local existing=""
-  existing="$(_cwpt_fetch_dashboard_scripts "$rails_container")" || existing=""
+  if ! _cwpt_read_dashboard_scripts existing "$rails_container"; then
+    echo "inject_dashboard_script: could not read the existing DASHBOARD_SCRIPTS — refusing to overwrite it" >&2
+    return 1
+  fi
+  local existing_structure=""
+  if ! existing_structure="$(_cwpt_validate_dashboard_value "$existing" merge)"; then
+    echo "inject_dashboard_script: existing DASHBOARD_SCRIPTS is malformed (${existing_structure:-invalid:unknown}) — refusing to overwrite it" >&2
+    return 1
+  fi
+  local expected_existing_hash=""
+  if ! expected_existing_hash="$(_cwpt_string_hash "$existing")"; then
+    echo "inject_dashboard_script: could not hash the value used for compare-and-set" >&2
+    return 1
+  fi
   _cwpt_backup_dashboard_scripts "$compose_dir" "$existing"
 
-  local integrity_line new_block
-  integrity_line="${_CWPT_INTEGRITY_PREFIX}$(_cwpt_string_hash "$html")${_CWPT_INTEGRITY_SUFFIX}"
+  local payload_hash="" integrity_line new_block
+  if ! payload_hash="$(_cwpt_string_hash "$html")"; then
+    echo "inject_dashboard_script: could not compute the dashboard payload integrity hash" >&2
+    return 1
+  fi
+  integrity_line="${_CWPT_INTEGRITY_PREFIX}${payload_hash}${_CWPT_INTEGRITY_SUFFIX}"
   new_block="$(printf '%s\n%s\n%s\n%s' \
     "$_CWPT_DASHBOARD_MARK_START" "$integrity_line" "$html" "$_CWPT_DASHBOARD_MARK_END")"
   local merged
-  merged="$(_cwpt_merge_dashboard_scripts "$existing" "$new_block")"
+  if ! _cwpt_merge_dashboard_scripts_into merged "$existing" "$new_block"; then
+    echo "inject_dashboard_script: could not safely merge DASHBOARD_SCRIPTS" >&2
+    return 1
+  fi
 
   local tmp_local tmp_remote
   tmp_local="$(mktemp)"
@@ -219,11 +385,15 @@ inject_dashboard_script() {
   rm -f "$tmp_local"
 
   if ! docker exec "$rails_container" bundle exec rails runner "
-    c = InstallationConfig.find_or_initialize_by(name: 'DASHBOARD_SCRIPTS')
-    c.value = File.read('${tmp_remote}')
-    c.save!
-    GlobalConfig.clear_cache rescue nil
-    puts \"DASHBOARD_SCRIPTS set (#{c.value.to_s.length} chars)\"
+    require 'digest'
+    InstallationConfig.transaction do
+      c = InstallationConfig.lock.find_or_initialize_by(name: 'DASHBOARD_SCRIPTS')
+      raise 'DASHBOARD_SCRIPTS changed concurrently' unless Digest::SHA256.hexdigest(c.value.to_s) == '${expected_existing_hash}'
+      c.value = File.read('${tmp_remote}')
+      c.save!
+      GlobalConfig.clear_cache rescue nil
+      puts \"DASHBOARD_SCRIPTS set (#{c.value.to_s.length} chars)\"
+    end
   "; then
     echo "inject_dashboard_script: rails runner failed on ${rails_container}" >&2
     return 1
@@ -231,9 +401,18 @@ inject_dashboard_script() {
 
   docker exec "$rails_container" rm -f "$tmp_remote" >/dev/null 2>&1 || true
 
-  # Read-back verification: what Chatwoot actually STORED must hash to what we wrote. A write
-  # that silently mangled a character (see the _CWPT_INTEGRITY_PREFIX comment) fails here
-  # instead of shipping a dashboard whose scripts throw on the first tick.
+  # Read-back verification has two independent jobs: exact equality proves this write won
+  # (a no-op save, concurrent overwrite, or an old-but-self-consistent block must not pass),
+  # then verify_dashboard_script proves the stored block's own integrity metadata is sound.
+  local stored=""
+  if ! _cwpt_read_dashboard_scripts stored "$rails_container"; then
+    echo "inject_dashboard_script: could not read back the stored DASHBOARD_SCRIPTS" >&2
+    return 1
+  fi
+  if [ "$stored" != "$merged" ]; then
+    echo "inject_dashboard_script: stored DASHBOARD_SCRIPTS differs from the exact value written — NOT trusting this install" >&2
+    return 1
+  fi
   if ! verify_dashboard_script "$compose_dir"; then
     echo "inject_dashboard_script: stored DASHBOARD_SCRIPTS does not match what was written — NOT trusting this install" >&2
     return 1
@@ -247,8 +426,8 @@ inject_dashboard_script() {
 #   the sha256 it carries in its own integrity line. This is the guard against the failure mode
 #   that a passing test suite cannot see: the code in git is fine, the assembled artifact is
 #   fine, and the value sitting in the database is subtly corrupt.
-#   Prints one status word. Exit: 0 = ok / not-installed / legacy (nothing to compare),
-#   1 = the rails container can't be reached, 2 = CORRUPT (hash mismatch).
+#   Prints one status word. Exit: 0 = ok / not-installed, 1 = the rails container/value
+#   can't be read, 2 = malformed, legacy-unverifiable, or hash mismatch.
 verify_dashboard_script() {
   local compose_dir="$1"
   local rails_container
@@ -258,24 +437,36 @@ verify_dashboard_script() {
   }
 
   local value
-  value="$(_cwpt_fetch_dashboard_scripts "$rails_container")" || value=""
+  if ! _cwpt_read_dashboard_scripts value "$rails_container"; then
+    echo "dashboard_script_read_failed"
+    return 1
+  fi
 
   if [[ "$value" != *"$_CWPT_DASHBOARD_MARK_START"* ]]; then
+    local absent_structure=""
+    if ! absent_structure="$(_cwpt_validate_dashboard_value "$value" merge)"; then
+      echo "dashboard_script_malformed ${absent_structure:-invalid:unknown}"
+      return 2
+    fi
     echo "dashboard_script_not_installed"
     return 0
   fi
 
-  local declared
-  declared="$(printf '%s' "$value" | _cwpt_declared_hash)"
-  if [ -z "$declared" ]; then
-    # A block injected before integrity lines existed. Nothing to compare against — say so
-    # rather than claiming an all-clear; the next inject run adds the line.
-    echo "dashboard_script_legacy_no_integrity_line"
-    return 0
+  local structure=""
+  if ! structure="$(_cwpt_validate_dashboard_value "$value" verify)"; then
+    echo "dashboard_script_malformed ${structure:-invalid:unknown}"
+    return 2
   fi
 
-  local actual
-  actual="$(_cwpt_string_hash "$(printf '%s' "$value" | _cwpt_extract_payload)")"
+  local declared=""
+  declared="$(printf '%s' "$value" | _cwpt_declared_hash)"
+
+  local payload="" actual=""
+  payload="$(printf '%s' "$value" | _cwpt_extract_payload)"
+  if ! actual="$(_cwpt_string_hash "$payload")"; then
+    echo "dashboard_script_hash_failed"
+    return 2
+  fi
   if [ "$declared" != "$actual" ]; then
     echo "dashboard_script_corrupt declared=${declared:0:12} actual=${actual:0:12}"
     return 2
@@ -309,7 +500,10 @@ remove_dashboard_script() {
   }
 
   local existing=""
-  existing="$(_cwpt_fetch_dashboard_scripts "$rails_container")" || existing=""
+  if ! _cwpt_read_dashboard_scripts existing "$rails_container"; then
+    echo "remove_dashboard_script: could not read DASHBOARD_SCRIPTS — refusing to modify it" >&2
+    return 1
+  fi
 
   if [ -z "$(printf '%s' "$existing" | tr -d '[:space:]')" ]; then
     echo "dashboard_script_nothing_to_remove"
@@ -317,6 +511,12 @@ remove_dashboard_script() {
   fi
 
   _cwpt_backup_dashboard_scripts "$compose_dir" "$existing"
+
+  local existing_structure=""
+  if ! existing_structure="$(_cwpt_validate_dashboard_value "$existing" merge)"; then
+    echo "remove_dashboard_script: existing DASHBOARD_SCRIPTS is malformed (${existing_structure:-invalid:unknown}) — refusing to modify it" >&2
+    return 1
+  fi
 
   if [[ "$existing" != *"$_CWPT_DASHBOARD_MARK_START"*"$_CWPT_DASHBOARD_MARK_END"* ]]; then
     echo "  no chatwoot-power-tools block found in DASHBOARD_SCRIPTS — leaving it untouched" >&2
@@ -326,14 +526,29 @@ remove_dashboard_script() {
   local prefix="${existing%%"$_CWPT_DASHBOARD_MARK_START"*}"
   local suffix="${existing#*"$_CWPT_DASHBOARD_MARK_END"}"
   local remaining="${prefix}${suffix}"
+  local expected_existing_hash=""
+  if ! expected_existing_hash="$(_cwpt_string_hash "$existing")"; then
+    echo "remove_dashboard_script: could not hash the value used for compare-and-set" >&2
+    return 1
+  fi
 
   if [ -z "$(printf '%s' "$remaining" | tr -d '[:space:]')" ]; then
     if ! docker exec "$rails_container" bundle exec rails runner "
-      c = InstallationConfig.find_by(name: 'DASHBOARD_SCRIPTS')
-      c&.destroy
-      GlobalConfig.clear_cache rescue nil
+      require 'digest'
+      InstallationConfig.transaction do
+        c = InstallationConfig.lock.find_by(name: 'DASHBOARD_SCRIPTS')
+        raise 'DASHBOARD_SCRIPTS changed concurrently' unless Digest::SHA256.hexdigest(c ? c.value.to_s : '') == '${expected_existing_hash}'
+        c.destroy if c
+        GlobalConfig.clear_cache rescue nil
+      end
     " >/dev/null 2>&1; then
       echo "remove_dashboard_script: rails runner failed to destroy DASHBOARD_SCRIPTS on ${rails_container}" >&2
+      return 1
+    fi
+    local destroyed_readback=""
+    if ! _cwpt_read_dashboard_scripts destroyed_readback "$rails_container" ||
+       [ -n "$destroyed_readback" ]; then
+      echo "remove_dashboard_script: DASHBOARD_SCRIPTS destroy did not verify" >&2
       return 1
     fi
     echo "dashboard_script_destroyed"
@@ -353,16 +568,26 @@ remove_dashboard_script() {
   rm -f "$tmp_local"
 
   if ! docker exec "$rails_container" bundle exec rails runner "
-    c = InstallationConfig.find_or_initialize_by(name: 'DASHBOARD_SCRIPTS')
-    c.value = File.read('${tmp_remote}')
-    c.save!
-    GlobalConfig.clear_cache rescue nil
-    puts \"DASHBOARD_SCRIPTS updated (#{c.value.to_s.length} chars)\"
+    require 'digest'
+    InstallationConfig.transaction do
+      c = InstallationConfig.lock.find_or_initialize_by(name: 'DASHBOARD_SCRIPTS')
+      raise 'DASHBOARD_SCRIPTS changed concurrently' unless Digest::SHA256.hexdigest(c.value.to_s) == '${expected_existing_hash}'
+      c.value = File.read('${tmp_remote}')
+      c.save!
+      GlobalConfig.clear_cache rescue nil
+      puts \"DASHBOARD_SCRIPTS updated (#{c.value.to_s.length} chars)\"
+    end
   "; then
     echo "remove_dashboard_script: rails runner failed on ${rails_container}" >&2
     return 1
   fi
 
   docker exec "$rails_container" rm -f "$tmp_remote" >/dev/null 2>&1 || true
+  local remaining_readback=""
+  if ! _cwpt_read_dashboard_scripts remaining_readback "$rails_container" ||
+     [ "$remaining_readback" != "$remaining" ]; then
+    echo "remove_dashboard_script: stored DASHBOARD_SCRIPTS differs after removal" >&2
+    return 1
+  fi
   echo "dashboard_script_block_removed"
 }

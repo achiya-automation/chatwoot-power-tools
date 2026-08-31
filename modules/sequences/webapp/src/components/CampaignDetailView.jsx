@@ -181,7 +181,7 @@ function FilterChip({ active, onClick, label, count }) {
  * מאוחדת (מי שנוסה + מי שלא נוסה כלל) עם סינון דו-צירי — סטטוס מסירה × תגובה — שחל גם על
  * הטבלה, גם על ההדפסה וגם על ייצוא ה-CSV. נטען דרך CampaignsView.onSelect(campaignId).
  */
-export default function CampaignDetailView({ campaignId, accountId, onBack }) {
+export default function CampaignDetailView({ campaignId, accountId, onBack, allowOutbound = true }) {
   const t = useT(M);
   const locale = useLocale();
   const { toast } = useToast();
@@ -218,18 +218,22 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         setD(data); writeCache(cacheKey, data);
         // תקציב 24h של המספר שהקמפיין שולח ממנו (לא ניחוש ברמת חשבון) — לאזהרה
         // שבמודאל. נכשל בשקט: בלי נתון המודאל פשוט לא מזהיר.
-        getCampaignsTier(accountId, data.campaign?.inbox_id)
-          .then((x) => { if (alive.current) setTier(x); }).catch(() => {});
+        if (allowOutbound) {
+          getCampaignsTier(accountId, data.campaign?.inbox_id)
+            .then((x) => { if (alive.current) setTier(x); }).catch(() => {});
+        }
       })
       .catch((e) => { if (alive.current) setError(e.message || translate(M, 'errLoad')); });
     // תוצאות הניסויים; נכשל בשקט — הכרטיס פשוט לא יוצג.
     getCampaignExperiments(campaignId, accountId)
       .then((x) => { if (alive.current) setExperiments(x); })
       .catch(() => {});
-    getPendingResend(campaignId, accountId)
-      .then((x) => { if (alive.current) setPending(x); })
-      .catch(() => {});
-  }, [campaignId, accountId, cacheKey]);
+    if (allowOutbound) {
+      getPendingResend(campaignId, accountId)
+        .then((x) => { if (alive.current) setPending(x); })
+        .catch(() => {});
+    }
+  }, [campaignId, accountId, cacheKey, allowOutbound]);
   useEffect(() => { load(); }, [load]);
 
   // קמפיין בעיבוד → רענון מהיר; יש עוד הודעות "בדרך" (pending) → רענון רגוע. נעצר כשהטאב מוסתר.
@@ -242,13 +246,13 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
 
   // עבודת שליחה-מחדש שרצה (גם אם התחילה בטאב אחר) — נצמדים אליה ומתשאלים עד סיום.
   useEffect(() => {
-    if (accountId == null || campaignId == null) return;
+    if (!allowOutbound || accountId == null || campaignId == null) return;
     getCampaignResendStatus(campaignId, accountId)
       .then((s) => { if (alive.current && s && s.status === 'running') setResendJob(s); })
       .catch(() => {});
-  }, [campaignId, accountId]);
+  }, [campaignId, accountId, allowOutbound]);
   useEffect(() => {
-    if (resendJob?.status !== 'running') return undefined;
+    if (!allowOutbound || resendJob?.status !== 'running') return undefined;
     const timer = setInterval(async () => {
       try {
         const s = await getCampaignResendStatus(campaignId, accountId);
@@ -265,12 +269,13 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
       } catch { /* מתשאלים שוב בטיק הבא */ }
     }, 1500);
     return () => clearInterval(timer);
-  }, [resendJob?.status, campaignId, accountId, load, toast]);
+  }, [allowOutbound, resendJob?.status, campaignId, accountId, load, toast]);
 
   // template = null → תבנית הקמפיין המקורית; אחרת { name, language, params, mediaUrl }.
   // runAt = null → שליחה מיידית; אחרת ISO — נכנס לתור בשרת ומורץ שם בשעה שנקבעה.
   // inboxId = null → המספר של הקמפיין; אחרת מספר אחר של אותו חשבון.
   const startResend = async (template, runAt, inboxId) => {
+    if (!allowOutbound) return;
     setResendBusy(true);
     try {
       if (runAt) {
@@ -293,6 +298,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
   };
 
   const unschedule = async () => {
+    if (!allowOutbound) return;
     try {
       await cancelCampaignResend(campaignId, accountId);
       setPending(null);
@@ -481,7 +487,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
             </h2>
             {/* בזמן ריצה יש פס התקדמות, ואחרי ריצה הכפתור יושב בתוך הסיכום — כאן רק
                 כשאין ריצה בכלל, אחרת מוצגים שני כפתורים שעושים אותו דבר. */}
-            {counts.failed > 0 && !resendJob ? (
+            {allowOutbound && counts.failed > 0 && !resendJob ? (
               <Button variant="solid" color="blue" size="sm" icon={RotateCcw} onClick={() => setResendOpen(true)}>
                 {t('resend')} ({counts.failed})
               </Button>
@@ -489,7 +495,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
           </div>
 
           {/* תזמון ממתין — שורד רענון דף (הוא יושב בשרת), עם ביטול במקום */}
-          {pending ? (
+          {allowOutbound && pending ? (
             <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-n-blue-3 px-3 py-2 text-xs text-n-blue-11">
               <span>{translate(M, 'scheduledFor', { when: fmtWhen(pending.run_at) })}</span>
               {pending.template_name ? <span className="text-n-slate-11">· {translate(M, 'scheduledTpl', { name: pending.template_name })}</span> : null}
@@ -500,7 +506,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
           ) : null}
           {/* הסתיימה — סיכום שנשאר על המסך: כמה יצאו, כמה נכשלו שוב ולמה, ומיד
               אפשרות לנסות שוב (הכפתור מחשב את הנכשלים העדכניים) או לתזמן. */}
-          {resendJob?.status === 'done' ? (
+          {allowOutbound && resendJob?.status === 'done' ? (
             <div className="mb-3 rounded-lg border border-n-weak bg-n-alpha-1 px-3 py-2.5" role="status">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="text-sm font-medium text-n-slate-12">{t('resendDoneTitle')}</span>
@@ -539,7 +545,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
           ) : null}
 
           {/* עבודת שליחה-מחדש רצה — פס התקדמות חי במקום הכפתור */}
-          {resendJob?.status === 'running' ? (
+          {allowOutbound && resendJob?.status === 'running' ? (
             <div className="mb-3" role="status">
               <div className="flex items-center gap-3">
                 <span className="h-2 flex-1 overflow-hidden rounded-full bg-n-alpha-3">
@@ -701,7 +707,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
 
       {/* אישור שליחה מחדש — פעולת outbound אמיתית: מספרים בדיוק מה יקרה, מאפשרים
           לבחור תבנית אחרת לניסוי, ומזהירים כשהתקציב היומי של Meta לא מספיק לכולם. */}
-      <ResendDialog
+      {allowOutbound ? <ResendDialog
         open={resendOpen}
         onClose={() => setResendOpen(false)}
         onConfirm={startResend}
@@ -710,7 +716,7 @@ export default function CampaignDetailView({ campaignId, accountId, onBack }) {
         tier={tier}
         loading={resendBusy}
         accountId={accountId}
-      />
+      /> : null}
     </>
   );
 }

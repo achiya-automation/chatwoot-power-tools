@@ -7,8 +7,12 @@ setup() {
   REPO="$(cd "$(dirname "$BATS_TEST_DIRNAME")" && pwd)"
   export PATH="$BATS_TEST_DIRNAME/mocks:/usr/bin:/bin"
   source "$REPO/lib/inject.sh"
+  export MOCK_DASHBOARD_STATE_FILE="$BATS_TEST_TMPDIR/dashboard.state"
+  export MOCK_DASHBOARD_STAGED_FILE="$BATS_TEST_TMPDIR/dashboard.staged"
+  rm -f "$MOCK_DASHBOARD_STATE_FILE" "$MOCK_DASHBOARD_STAGED_FILE"
   unset MOCK_RAILS_CONTAINER MOCK_COMPOSE_PS_EMPTY MOCK_DOCKER_PS_NAMES MOCK_CID_RAILS \
         MOCK_EXISTING_DASHBOARD_SCRIPTS MOCK_FETCH_DASHBOARD_EXIT MOCK_DOCKER_CP_CAPTURE
+  unset MOCK_DASHBOARD_WRITE_NOOP MOCK_DASHBOARD_CONCURRENT_CHANGE MOCK_CONCURRENT_DASHBOARD_SCRIPTS
 }
 
 @test "inject builds a rails-runner command targeting the detected container" {
@@ -71,6 +75,75 @@ setup() {
   [ "$status" -eq 1 ]
 }
 
+@test "inject fails closed when the existing DASHBOARD_SCRIPTS read fails" {
+  export MOCK_FETCH_DASHBOARD_EXIT=7
+  run inject_dashboard_script /opt/chatwoot /chatwoot-addons import
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not read the existing DASHBOARD_SCRIPTS"* ]]
+  [[ "$output" != *"MOCK_EXEC"* ]]
+}
+
+@test "inject fails closed when the smart-import bundle hash cannot be computed" {
+  _cwpt_content_hash() { return 1; }
+  run inject_dashboard_script /opt/chatwoot /chatwoot-addons import
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not hash the smart-import bundle"* ]]
+  [[ "$output" != *"MOCK_EXEC"* ]]
+}
+
+@test "a non-import install never hashes or validates smart-import artifacts" {
+  _cwpt_content_hash() { return 1; }
+  run inject_dashboard_script /opt/chatwoot /chatwoot-addons sequences enhancements
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dashboard_script_injected"* ]]
+}
+
+@test "inject fails closed when the integrity hash cannot be computed" {
+  # Let the empty pre-read value receive its compare-and-set hash, then fail specifically
+  # on the non-empty assembled payload whose digest becomes the integrity line.
+  _cwpt_string_hash() {
+    if [ -z "$1" ]; then
+      printf '%064d' 0
+    else
+      return 1
+    fi
+  }
+  run inject_dashboard_script /opt/chatwoot /chatwoot-addons enhancements
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"integrity hash"* ]]
+  [[ "$output" != *"MOCK_EXEC"* ]]
+}
+
+@test "inject never reports success when stored-value verification fails" {
+  verify_dashboard_script() { echo "dashboard_script_read_failed"; return 1; }
+  run inject_dashboard_script /opt/chatwoot /chatwoot-addons enhancements
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"NOT trusting this install"* ]]
+  [[ "$output" != *"dashboard_script_injected"* ]]
+}
+
+@test "inject rejects a no-op write that leaves an old valid block in storage" {
+  local old_payload='<script>oldButValid();</script>'
+  printf '%s' "$(_mk_block "$old_payload")" > "$MOCK_DASHBOARD_STATE_FILE"
+  export MOCK_DASHBOARD_WRITE_NOOP=1
+  run inject_dashboard_script /opt/chatwoot /chatwoot-addons sequences
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"differs from the exact value written"* ]]
+  [[ "$output" != *"dashboard_script_injected"* ]]
+  [ "$(cat "$MOCK_DASHBOARD_STATE_FILE")" = "$(_mk_block "$old_payload")" ]
+}
+
+@test "inject compare-and-set refuses to overwrite a concurrent operator edit" {
+  printf '%s' '<script>before();</script>' > "$MOCK_DASHBOARD_STATE_FILE"
+  export MOCK_DASHBOARD_CONCURRENT_CHANGE=1
+  export MOCK_CONCURRENT_DASHBOARD_SCRIPTS='<script>concurrentOperatorEdit();</script>'
+  run inject_dashboard_script /opt/chatwoot /chatwoot-addons sequences
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"rails runner failed"* ]]
+  [[ "$output" != *"dashboard_script_injected"* ]]
+  grep -q 'concurrentOperatorEdit' "$MOCK_DASHBOARD_STATE_FILE"
+}
+
 # ── DASHBOARD_SCRIPTS is shared: read-merge-write, never a blind overwrite ──────────────
 
 @test "_cwpt_merge_dashboard_scripts appends the new block after existing (non-CWPT) content" {
@@ -119,6 +192,33 @@ NEW_BLOCK
   [[ "$output" != *"OLD_BLOCK"* ]]
 }
 
+@test "merge refuses duplicate or nested CWPT markers instead of choosing one block" {
+  local malformed
+  malformed="$(printf '%s\n%s\n%s\n%s' \
+    "$_CWPT_DASHBOARD_MARK_START" "$_CWPT_DASHBOARD_MARK_START" \
+    '<script>ours();</script>' "$_CWPT_DASHBOARD_MARK_END")"
+  run _cwpt_merge_dashboard_scripts "$malformed" "$(_mk_block '<script>new();</script>')"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"marker_count"* ]]
+}
+
+@test "inject refuses a missing END marker without writing or backing up a guessed value" {
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="$(printf '<script>operator();</script>\n%s\n<script>partial();</script>' "$_CWPT_DASHBOARD_MARK_START")"
+  export MOCK_DOCKER_CP_CAPTURE="$BATS_TEST_TMPDIR/should-not-exist.html"
+  run inject_dashboard_script "$BATS_TEST_TMPDIR/opt/chatwoot" /chatwoot-addons import
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"marker_count"* ]]
+  [ ! -e "$MOCK_DOCKER_CP_CAPTURE" ]
+  [ ! -e "$BATS_TEST_TMPDIR/opt/chatwoot/chatwoot-power-tools/dashboard_scripts.prev.bak" ]
+}
+
+@test "inject refuses markers embedded inside another line" {
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="<script>const marker='${_CWPT_DASHBOARD_MARK_START}';</script>\n${_CWPT_DASHBOARD_MARK_END}"
+  run inject_dashboard_script /opt/chatwoot /chatwoot-addons import
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"marker_not_canonical_line"* ]]
+}
+
 @test "inject appends its block after existing operator DASHBOARD_SCRIPTS content, preserving it" {
   export MOCK_EXISTING_DASHBOARD_SCRIPTS='<script>window.customerAnalytics();</script>'
   export MOCK_DOCKER_CP_CAPTURE="$BATS_TEST_TMPDIR/captured.html"
@@ -155,6 +255,29 @@ NEW_BLOCK
   grep -q 'legacy_tracking_snippet' "$BATS_TEST_TMPDIR/opt/chatwoot/chatwoot-power-tools/dashboard_scripts.prev.bak"
 }
 
+@test "inject preserves operator-owned trailing newlines byte-for-byte" {
+  local expected="$BATS_TEST_TMPDIR/operator.expected"
+  printf '<script>operatorWithTrailingNewlines();</script>\n\n' > "$expected"
+  cp "$expected" "$MOCK_DASHBOARD_STATE_FILE"
+  run inject_dashboard_script "$BATS_TEST_TMPDIR/opt/chatwoot" /chatwoot-addons sequences
+  [ "$status" -eq 0 ]
+  cmp "$expected" "$BATS_TEST_TMPDIR/opt/chatwoot/chatwoot-power-tools/dashboard_scripts.prev.bak"
+}
+
+@test "inject preserves trailing newlines after a replaced marked block" {
+  local suffix="$BATS_TEST_TMPDIR/operator.suffix" suffix_bytes
+  printf '<script>operatorSuffix();</script>\n\n' > "$suffix"
+  {
+    printf '%s\n<script>old();</script>\n%s\n' \
+      "$_CWPT_DASHBOARD_MARK_START" "$_CWPT_DASHBOARD_MARK_END"
+    cat "$suffix"
+  } > "$MOCK_DASHBOARD_STATE_FILE"
+  run inject_dashboard_script /opt/chatwoot /chatwoot-addons sequences
+  [ "$status" -eq 0 ]
+  suffix_bytes="$(wc -c < "$suffix" | tr -d '[:space:]')"
+  tail -c "$suffix_bytes" "$MOCK_DASHBOARD_STATE_FILE" | cmp - "$suffix"
+}
+
 # ── remove_dashboard_script (--uninstall path) ──────────────────────────────────────────
 
 @test "remove_dashboard_script strips only its own block, preserving surrounding operator content" {
@@ -184,6 +307,17 @@ NEW_BLOCK
   [[ "$output" == *"dashboard_script_destroyed"* ]]
 }
 
+@test "remove_dashboard_script compare-and-set preserves a concurrent operator edit" {
+  printf '%s' "$(printf '<script>before();</script>\n<!-- CWPT:START -->\n<script>ours();</script>\n<!-- CWPT:END -->')" > "$MOCK_DASHBOARD_STATE_FILE"
+  export MOCK_DASHBOARD_CONCURRENT_CHANGE=1
+  export MOCK_CONCURRENT_DASHBOARD_SCRIPTS='<script>concurrentOperatorEdit();</script>'
+  run remove_dashboard_script /opt/chatwoot
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"rails runner failed"* ]]
+  [[ "$output" != *"dashboard_script_block_removed"* ]]
+  grep -q 'concurrentOperatorEdit' "$MOCK_DASHBOARD_STATE_FILE"
+}
+
 @test "remove_dashboard_script leaves DASHBOARD_SCRIPTS untouched when no chatwoot-power-tools block is found" {
   export MOCK_EXISTING_DASHBOARD_SCRIPTS='<script>only_operator_content();</script>'
   run remove_dashboard_script /opt/chatwoot
@@ -209,6 +343,14 @@ NEW_BLOCK
 @test "remove_dashboard_script requires a compose_dir argument" {
   run remove_dashboard_script
   [ "$status" -eq 1 ]
+}
+
+@test "remove_dashboard_script fails closed when the current value cannot be read" {
+  export MOCK_FETCH_DASHBOARD_EXIT=6
+  run remove_dashboard_script /opt/chatwoot
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to modify"* ]]
+  [[ "$output" != *"MOCK_EXEC"* ]]
 }
 
 # ── integrity: the guard against a stored value that no longer matches the code ──────────
@@ -261,15 +403,70 @@ _mk_block() {
   [[ "$output" == *"dashboard_script_ok"* ]]
 }
 
-@test "verify_dashboard_script: pre-integrity block → reported as legacy, never a false all-clear" {
+@test "verify_dashboard_script: pre-integrity block is unverifiable and fails closed" {
   export MOCK_EXISTING_DASHBOARD_SCRIPTS="$(printf '%s\n<script>old();</script>\n%s' "$_CWPT_DASHBOARD_MARK_START" "$_CWPT_DASHBOARD_MARK_END")"
   run verify_dashboard_script /opt/chatwoot
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"dashboard_script_legacy_no_integrity_line"* ]]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"missing_integrity"* ]]
 }
 
 @test "verify_dashboard_script: nothing installed → not_installed" {
   run verify_dashboard_script /opt/chatwoot
   [ "$status" -eq 0 ]
   [[ "$output" == *"dashboard_script_not_installed"* ]]
+}
+
+
+@test "verify_dashboard_script: read failure is not treated as not-installed" {
+  export MOCK_FETCH_DASHBOARD_EXIT=5
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dashboard_script_read_failed"* ]]
+  [[ "$output" != *"dashboard_script_not_installed"* ]]
+}
+
+@test "verify_dashboard_script: duplicate integrity lines are malformed" {
+  local block hash
+  hash="$(_cwpt_string_hash '<script>ours();</script>')"
+  block="$(printf '%s\n%s%s%s\n%s%s%s\n<script>ours();</script>\n%s' \
+    "$_CWPT_DASHBOARD_MARK_START" \
+    "$_CWPT_INTEGRITY_PREFIX" "$hash" "$_CWPT_INTEGRITY_SUFFIX" \
+    "$_CWPT_INTEGRITY_PREFIX" "$hash" "$_CWPT_INTEGRITY_SUFFIX" \
+    "$_CWPT_DASHBOARD_MARK_END")"
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="$block"
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"integrity_format_or_count"* ]]
+}
+
+@test "verify_dashboard_script: integrity line must be first inside the block" {
+  local payload='<script>ours();</script>' hash
+  hash="$(_cwpt_string_hash "$payload")"
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="$(printf '%s\n<!-- unexpected -->\n%s%s%s\n%s\n%s' \
+    "$_CWPT_DASHBOARD_MARK_START" \
+    "$_CWPT_INTEGRITY_PREFIX" "$hash" "$_CWPT_INTEGRITY_SUFFIX" \
+    "$payload" "$_CWPT_DASHBOARD_MARK_END")"
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"integrity_position"* ]]
+}
+
+@test "verify_dashboard_script rejects a whitespace-only payload even with the empty hash" {
+  local empty_hash
+  empty_hash="$(_cwpt_string_hash '')"
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="$(printf '%s\n%s%s%s\n  \t\n%s' \
+    "$_CWPT_DASHBOARD_MARK_START" \
+    "$_CWPT_INTEGRITY_PREFIX" "$empty_hash" "$_CWPT_INTEGRITY_SUFFIX" \
+    "$_CWPT_DASHBOARD_MARK_END")"
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"empty_payload"* ]]
+}
+
+@test "verify_dashboard_script: hash-computation failure is corruption, not success" {
+  export MOCK_EXISTING_DASHBOARD_SCRIPTS="$(_mk_block '<script>ours();</script>')"
+  _cwpt_string_hash() { return 1; }
+  run verify_dashboard_script /opt/chatwoot
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"dashboard_script_hash_failed"* ]]
 }

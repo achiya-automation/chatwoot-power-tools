@@ -16,18 +16,26 @@ import { API_BASE } from './config.js';
  */
 export default function useVersionCheck() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  // null means either an older engine (which did not publish module metadata) or that the
+  // first health response has not arrived yet. modulesReady distinguishes those two cases.
+  const [enabledModules, setEnabledModules] = useState(null);
+  const [modulesReady, setModulesReady] = useState(false);
 
   useEffect(() => {
     const mine = typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : '';
-    if (!mine) return undefined; // dev server has no build id → feature simply off
 
     let alive = true;
     const check = async () => {
       try {
         const res = await fetch(`${API_BASE}/health`, { cache: 'no-store' });
         const data = await res.json();
+        if (!alive || res.ok === false || !data || data.ok !== true) return;
+        // A successful response without `modules` is an older, sequence-capable engine. Keep
+        // the backward-compatible null value, but mark discovery complete so the app may load.
+        setEnabledModules(Array.isArray(data.modules) ? data.modules : null);
+        setModulesReady(true);
         // Only fire on a real, different id — never on missing/empty (older engine, dev).
-        if (alive && data && data.build && data.build !== mine) setUpdateAvailable(true);
+        if (mine && data.build && data.build !== mine) setUpdateAvailable(true);
       } catch {
         /* offline / engine restarting → ignore; next tick retries */
       }
@@ -45,5 +53,5 @@ export default function useVersionCheck() {
     };
   }, []);
 
-  return updateAvailable;
+  return { updateAvailable, enabledModules, modulesReady };
 }

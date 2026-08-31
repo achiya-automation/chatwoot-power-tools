@@ -36,7 +36,7 @@ modules/
                                   owns its own migrations under engine/migrations/ instead
     inject/                     — dashboard-script part: sidebar "Sequences" nav
   dashboard-enhancements/
-    parts/                      — dashboard-script parts: campaign modal, video compressor
+    parts/                      — dashboard-script parts: campaign modal/stats, native i18n, WAHA controls
 test/                            — bats tests for install.sh + lib/ (mocked docker/psql)
 ```
 
@@ -55,40 +55,59 @@ directory (`modules/sequences/engine/test`, `modules/sequences/webapp/test`,
    running. Nothing about a specific deployment is hardcoded; every one of these values is
    discovered at run time so the same installer works across differently-named or
    differently-laid-out Chatwoot installs.
-4. **Provision the database** (`lib/db.sh`) — creates the `drip_engine` role and `drip`
-   schema (see "Database" below). Idempotent: skips creation if the role already exists.
-5. **Copy modules into the compose directory** — `modules/` and
-   `docker-compose.addons.yml` are copied to `<compose_dir>/chatwoot-power-tools/`, so the
-   engine's Docker build context lives next to Chatwoot's own compose files.
+4. **Provision the database when selected** (`lib/db.sh`) — `sequences` and `dashboard`
+   create the `drip_engine` role/schema; an `import`-only install skips this phase.
+5. **Copy selected modules into the compose directory** — the shared
+   `modules/sequences` sidecar runtime plus only selected optional module directories and
+   `docker-compose.addons.yml` are copied to `<compose_dir>/chatwoot-power-tools/`.
+   When that exact path is the source Git checkout, the pruned deployment is instead stored
+   under its `.cwpt-runtime/` child so a subset install cannot delete tracked source; the
+   image build context points only at that managed child. Reinstalling a subset first moves
+   the old managed tree to a scoped rollback directory, so stale unselected assets cannot
+   survive and an extraction failure can restore the previous runtime. The exact selection
+   is also recorded in the managed runtime's `enabled-modules.txt`.
 6. **Write addons environment variables** into Chatwoot's own `.env`:
    `CWPT_DATABASE_URL` (written by `provision_db` itself), `CWPT_CHATWOOT_BASE_URL`
    (derived from the detected rails container name), `CWPT_PUBLIC_BASE_URL` (derived
    from Chatwoot's own `FRONTEND_URL` — this must be an absolute `https://` origin, since
-   Meta has to be able to fetch WhatsApp template media from it), and independent random
-   secrets for the Journey event hook and optional external Journey intake endpoint.
+   Meta has to be able to fetch WhatsApp template media from it), the exact
+   `CWPT_ENABLED_MODULES`, a random per-run `CWPT_DEPLOY_ID`, and (only when sequences is
+   selected) independent random secrets for the Journey event hook and optional external
+   Journey intake endpoint. Import-only explicitly blanks `CWPT_DATABASE_URL`.
 7. **Build and start `cwpt-engine`** — `docker compose -f docker-compose.yml -f
    chatwoot-power-tools/docker-compose.addons.yml up -d --build cwpt-engine`, joining
    Chatwoot's own compose project and network.
-8. **Add the reverse-proxy route** — a single `/chatwoot-addons/*` route to
+8. **Apply owner-only migrations** — the companions required by the exact module selection
+   are applied in deterministic filename order as Chatwoot's DB owner after the selected
+   engine schema is ready, then recorded in `drip.schema_migrations`.
+9. **Add the reverse-proxy route** — a single `/chatwoot-addons/*` route to
    `127.0.0.1:3100`, added automatically for Caddy (host-installed) or nginx. Any other
-   proxy (Traefik, etc.) gets a copy-paste config block printed instead
-   (`lib/proxy-snippet.sh`) — the installer never fails outright just because it can't
-   auto-edit an unfamiliar proxy config.
-9. **Inject the dashboard script** (`lib/inject.sh`) — merges the assembled HTML for the
-   selected modules into Chatwoot's `DASHBOARD_SCRIPTS` `InstallationConfig` value via
-   `docker exec ... rails runner`. See "Dashboard integration" below.
-10. **Verify** — a loopback health check against the engine
-    (`http://127.0.0.1:3100/drip-api/health`), reported but never fatal on its own (the
-    install has already completed by this point; this is a diagnostic).
+   proxy (Traefik, etc.) gets a copy-paste config block printed instead.
+10. **Verify before publishing UI** — both the loopback engine URL and the public
+    `/chatwoot-addons/drip-api/health` URL must return the engine health JSON, with the exact
+    requested modules, build and random deployment identity matching across both paths. A
+    plain 200/SPA fallback or stale engine is rejected; the existing dashboard block remains
+    untouched and the installer exits non-zero with `INCOMPLETE`.
+11. **Publish the dashboard script** (`lib/inject.sh`) — only after verification, merges the
+    assembled HTML for the selected modules into Chatwoot's `DASHBOARD_SCRIPTS`
+    `InstallationConfig` via a locked compare-and-set and exact readback verification.
 
-`--dry-run` runs steps 3-4 in read-only/best-effort mode and prints the full plan without
+`--dry-run` performs detection in read-only/best-effort mode and prints the full plan without
 making any changes — it works the same way whether run on the real target server or on a
-machine with no Docker at all. `--uninstall` reverses steps 5-9 (removes the route, stops
-and removes the `cwpt-engine` container, strips only chatwoot-power-tools' own block from
-`DASHBOARD_SCRIPTS`, deletes the copied `chatwoot-power-tools/` directory) but **always**
-leaves the `drip_engine` role/schema and the `cwpt_media` volume in place — a manual `DROP`
-command is printed, never run automatically, since destroying a database schema is
-irreversible and the operator should make that call explicitly.
+machine with no Docker at all. `--uninstall` first validates the existing marked dashboard
+block without changing it, then stops/removes the exact `cwpt-engine` container and verifies
+that it is absent (Compose plus an exact-name Docker fallback). A stop failure exits
+incomplete with the dashboard, route and files intact, so an old background engine can
+never keep sending after a reported success. It then removes only chatwoot-power-tools' own
+dashboard block with compare-and-set; a late conflict leaves the already-stopped engine and
+preserves the route/files for retry. It never recursively deletes the whole
+`chatwoot-power-tools/` target: unknown files and the dashboard backup are preserved,
+and when the repository checkout itself is that target (a supported production layout),
+only its `.cwpt-runtime/` deployment is removed while the checkout, `.git`, source modules
+and compose source stay intact. It **always** leaves
+the `drip_engine` role/schema and the `cwpt_media` volume in place — a manual `DROP` command
+is printed, never run automatically, since destroying a database schema is irreversible
+and the operator should make that call explicitly.
 
 ## The `cwpt-engine` sidecar container
 
@@ -109,7 +128,7 @@ irreversible and the operator should make that call explicitly.
 - Reads all configuration from environment variables only
   (`modules/sequences/engine/src/config.js`): `DATABASE_URL`, `CHATWOOT_BASE_URL`,
   `PUBLIC_BASE_URL`, `PORT`, `RECONCILE_INTERVAL`, `MEDIA_DIR`, plus a few tunable safety
-  caps (`MAX_SENDS_PER_TICK`, `MAX_DELIVERY_RETRIES`, `DELIVERY_RETRY_HOURS`).
+  caps (`MAX_SENDS_PER_TICK`, `SPREAD_WINDOW_MS`).
   Cross-account authority comes only from Chatwoot's native `SuperAdmin` user type; an
   administrator of account 1 is not treated as a platform administrator. There is no
   hardcoded domain or fallback anywhere in this path —
@@ -130,17 +149,26 @@ irreversible and the operator should make that call explicitly.
 All persistent state lives inside Chatwoot's own Postgres instance, isolated by role and
 schema rather than by a separate database server:
 
-- `provision_db` (`lib/db.sh`) creates a Postgres role `drip_engine` with a random password
-  (`openssl rand`, generated on the host, never printed to stdout/logs) and a schema `drip`
-  owned by that role.
-- The role is **least-privilege** against Chatwoot's own tables: `SELECT` on
-  `conversations`, `messages`, `contacts`, `inboxes`, `contact_inboxes`,
-  `channel_whatsapp`, `agent_bot_inboxes`, `accounts`, the Active Storage attachment
-  tables, and the campaign/label/tag tables used by the dashboards. Version-specific
-  read grants (for example `campaign_recipients`) live in explicit `*_role_grants.sql`
-  files. Write access is column-scoped: `contacts.custom_attributes` and the two WhatsApp
-  template-cache columns only; table-wide `UPDATE` is revoked first. It has no access to
-  unrelated Chatwoot tables.
+- When a selected module needs database access, `provision_db` (`lib/db.sh`) creates a
+  Postgres role `drip_engine` with a random password (`openssl rand`, generated on the host,
+  never printed to stdout/logs) and a schema `drip` owned by that role. Import-only installs
+  create neither the role nor the schema.
+- The role is **least-privilege** against Chatwoot's own tables: module-scoped `SELECT` on
+  `conversations`, `contacts`, `inboxes`, `contact_inboxes`, `channel_whatsapp`, `accounts`,
+  `agent_bot_inboxes`, `campaigns`, `campaign_recipients`, `messages`, labels/tagging tables,
+  and `active_storage_attachments`/`active_storage_blobs`. Version-specific grants such as
+  `campaign_recipients` live in explicit `*_role_grants.sql` files. `SELECT` is read-only but
+  includes contact names, phones and emails used by the product's contact, bot-ownership,
+  sequence and campaign screens.
+  With `sequences`, `UPDATE` is limited to three columns: `contacts.custom_attributes`
+  (assignment state) plus `channel_whatsapp.message_templates` and
+  `channel_whatsapp.message_templates_last_updated` (Chatwoot's approved-template cache).
+  A dashboard-only re-run explicitly revokes all three column grants, both sequence-only
+  `SECURITY DEFINER` execute grants, and sequence-only reads (`accounts`, `agent_bot_inboxes`
+  and Active Storage),
+  then grants only its campaign-report reads. Import-only clears the container credential
+  and revokes all public-schema table/sequence grants, database `CREATE`, owner-function
+  execution, and their ledger markers. It cannot change contact identity fields.
 - It additionally holds `CREATE` on the database itself — not because it needs broad
   access, but because the engine's own `migrate.js` runs `CREATE SCHEMA IF NOT EXISTS drip`
   on every boot (see "Self-migration on boot" below), and creating a schema requires that
@@ -190,18 +218,18 @@ left in it afterward.
 
 `cwpt-engine` manages its own schema. On every start
 (`modules/sequences/engine/src/migrate.js`), it creates the `drip` schema and a
-`drip.schema_migrations` tracking table if they don't already exist, then applies any
-`.sql` file under `modules/sequences/engine/migrations/` that isn't already recorded there,
-in filename order, inside a fail-fast check (a failed migration aborts startup with a clear
-error rather than booting on a half-applied schema). One file is deliberately skipped by
-this loop — `002_role_grants.sql`, whose own header says it must be run once by a Postgres
-superuser, not by the engine — because granting privileges on Chatwoot's own tables to
-`drip_engine` needs more than the schema-owner rights `drip_engine` itself has. `lib/db.sh`'s
-`provision_db` (see "Database" above) is what actually applies those grants today, via
-equivalent inline SQL; the migration file is kept as a plain, readable record of the same
-intent. There is no separate table-migration step in `install.sh` itself beyond that
-provisioning — applying `drip.*` table definitions is the engine's own responsibility every
-time it starts, which also makes upgrades (pull a new image, restart) self-applying.
+`drip.schema_migrations` tracking table if they don't already exist, then applies each
+ordinary `.sql` file selected for the enabled modules that isn't already recorded there,
+in filename order, inside a fail-fast check. Dashboard-only uses a minimal campaign/media
+manifest and does not create sequence/journey state. Files ending in `_role_grants.sql` need
+the Chatwoot database owner, so the engine checks their ledger markers and logs any pending
+ones instead of silently skipping them. `install.sh` waits for the last selected ordinary
+migration, applies the selected owner companions through `apply_owner_migrations`, and records
+each filename in the same ledger. The production `sync-servers.sh` path likewise re-applies
+and ledgers owner files transactionally before rebuilding either flat or modular engines,
+safely backfilling installs whose grants predated the ledger. The engine does not start its
+HTTP server or background work until the required markers exist; its normal DB-ready retry
+loop waits while the installer completes the owner phase. Both phases are idempotent.
 
 ## Testing
 
