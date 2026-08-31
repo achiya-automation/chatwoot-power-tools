@@ -66,6 +66,23 @@ function isTplAdmin(access, accountId) {
     (access.accounts || []).some((x) => x.id === accountId && x.role === 'administrator'));
 }
 
+// Every action a regular account member may reach is named here. This is intentionally an
+// allowlist: adding a new store action cannot silently make a write available to every agent.
+// The three prefixed modules have their own finer-grained checks immediately below.
+const ACCOUNT_MEMBER_ACTIONS = new Set([
+  'list', 'enrollments', 'enrollment_status', 'sent_history', 'projected_schedule',
+  'labels', 'set_sequence', 'templates', 'storage_usage', 'delivery_stats',
+  'campaigns', 'campaign_detail', 'campaign_experiments', 'campaigns_trend',
+  'campaigns_tier', 'campaign_inboxes', 'campaign_resend_status',
+  'campaign_resend_pending', 'contacts', 'template_media', 'whatsapp_inboxes',
+  'compliance', 'record_consent', 'set_suppression', 'suppressed',
+]);
+
+export function memberMayUseAction(action) {
+  const normalized = String(action || '').toLowerCase();
+  return ACCOUNT_MEMBER_ACTIONS.has(normalized) || /^(tpl_|prs_|jrn_)/.test(normalized);
+}
+
 // Managing WHO may use the studio is never delegated — otherwise a granted agent could
 // grant themselves company. Administrators only, always.
 const TPL_ADMIN_ONLY = new Set(['tpl_access', 'tpl_set_access']);
@@ -444,6 +461,14 @@ export function createApp(config) {
       payload.__actor = { uid: Number(req.dripAccess?.userId) || null, isAdmin: admin };
     }
 
+    // Everything not explicitly listed as safe for a normal member is account-admin only.
+    // This protects sequence editing, bulk enrollment, WhatsApp routing, reusable media,
+    // compliance configuration and safety-resume/alert actions — including future actions that
+    // a developer adds to store.js but forgets to classify here.
+    if (!memberMayUseAction(action) && !isTplAdmin(req.dripAccess, accountId)) {
+      return res.status(403).json({ ok: false, error: 'administrator role required' });
+    }
+
     try {
       const result = await handleAction(accountId, action, payload);
 
@@ -464,7 +489,7 @@ export function createApp(config) {
       return res.json({ ok: true, data });
     } catch (err) {
       console.error(`[drip-api] action=${action} account_id=${accountId}:`, err.message);
-      return res.status(500).json({ ok: false, error: err.message });
+      return res.status(500).json({ ok: false, error: 'request failed' });
     }
   });
 
