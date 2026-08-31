@@ -69,7 +69,7 @@ module PresenceHumanizer
 
       AgentBotInbox.where(inbox_id: conversation.inbox_id, status: 0).exists?
     rescue StandardError => e
-      Rails.logger.error "[presence] bot ownership check failed: #{e.class}: #{e.message}"
+      Rails.logger.error "[presence] bot ownership check failed: #{e.class}"
       false
     end
 
@@ -98,7 +98,7 @@ module PresenceHumanizer
       elapsed = Time.current - last_incoming.created_at
       (lead + needed - elapsed).clamp(0, MAX_HOLD)
     rescue StandardError => e
-      Rails.logger.error "[presence] hold_seconds failed: #{e.class}: #{e.message}"
+      Rails.logger.error "[presence] hold_seconds failed: #{e.class}"
       0
     end
 
@@ -142,10 +142,10 @@ module PresenceHumanizer
           timeout: 10
         )
       rescue StandardError => e
-        Rails.logger.warn "[presence] typing relay failed conv=#{conversation.id}: #{e.message}"
+        Rails.logger.warn "[presence] typing relay failed conv=#{conversation.id}: #{e.class}"
       end
     rescue StandardError => e
-      Rails.logger.error "[presence] relay_agent_typing failed: #{e.class}: #{e.message}"
+      Rails.logger.error "[presence] relay_agent_typing failed: #{e.class}"
     end
   end
 

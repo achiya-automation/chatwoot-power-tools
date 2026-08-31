@@ -41,6 +41,26 @@ module CwptWebhookUrlRedaction
   end
 end
 
+# Chatwoot's native WhatsApp error logger includes the sender's full phone number and the
+# provider's free-form title.  Both are unnecessary for operations and can turn retained
+# logs into a copy of customer data (or of a provider message that embeds request details).
+# Keep only the bounded error code and message type.
+module CwptWhatsappErrorLogRedaction
+  def log_error(message)
+    error = Array(message['errors']).first.to_h
+    code = error['code'].to_s
+    code = 'unknown' if code.empty?
+    message_type = message['type'].to_s
+    message_type = 'unknown' if message_type.empty?
+    Rails.logger.warn("Whatsapp Error: code=#{code} type=#{message_type}")
+  end
+end
+
 Rails.application.config.to_prepare do
   Webhooks::Trigger.prepend(CwptWebhookUrlRedaction) unless Webhooks::Trigger.ancestors.include?(CwptWebhookUrlRedaction)
+
+  next unless defined?(Whatsapp::IncomingMessageBaseService)
+
+  service = Whatsapp::IncomingMessageBaseService
+  service.prepend(CwptWhatsappErrorLogRedaction) unless service.ancestors.include?(CwptWhatsappErrorLogRedaction)
 end

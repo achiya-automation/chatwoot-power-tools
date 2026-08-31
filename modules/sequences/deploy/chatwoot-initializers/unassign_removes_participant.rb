@@ -42,7 +42,7 @@ Rails.application.config.to_prepare do
       conversation.conversation_participants.find_by(user_id: user_id)&.destroy
     rescue StandardError => e
       # never let cleanup break the assignment itself
-      Rails.logger.warn "[unassign_removes_participant] conversation #{conversation&.id}: #{e.class}: #{e.message}"
+      Rails.logger.warn "[unassign_removes_participant] conversation #{conversation&.id}: #{e.class}"
     end
 
     # previous_changes is dispatched as changed_attributes; ActiveModel keys it
