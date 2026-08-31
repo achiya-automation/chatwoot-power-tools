@@ -53,6 +53,46 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const jitter = (min, max) => (Number(min) + Math.random() * (Number(max) - Number(min))) * 1000;
 
 /**
+ * שיחת בוט פעילה לפי מודל Chatwoot, בשני המצבים שנתמכים בפלטפורמה:
+ *
+ * 1. בוט שמוקצה במפורש לשיחה (`assignee_agent_bot_id`).
+ * 2. בוט פעיל שמחובר לכל התיבה (`agent_bot_inboxes.status = active/0`).
+ *
+ * הקצאה לאדם תמיד גוברת. בלי התנאי הזה בוט-תיבה ממשיך להיחשב מחובר גם אחרי
+ * takeover, מפני ש-Chatwoot עדיין מדוור אליו אירועים ברמת התיבה.
+ *
+ * נשארים עם העמודה הוותיקה `assignee_agent_bot_id` ולא עם `ai_assignee_type`, כדי
+ * שהתוסף ימשיך לעבוד גם ב-Chatwoot 4.16; ב-4.17+ אותה עמודה היא המפתח של
+ * ה-polymorphic association החדש.
+ */
+const BOT_CONNECTED_SQL = `(conv.assignee_id IS NULL
+  AND (
+    conv.assignee_agent_bot_id IS NOT NULL
+    OR EXISTS (
+      SELECT 1 FROM public.agent_bot_inboxes abi
+       WHERE abi.inbox_id = conv.inbox_id
+         AND abi.status = 0
+    )
+  ))`;
+
+/**
+ * בדיקה חוזרת רגע לפני פנייה ל-Meta. ה-tick מסנן מראש, אבל בין קליטת ההודעה
+ * לבין השהיית ה-read/typing אדם יכול לקחת את השיחה או לכבות את בוט התיבה.
+ */
+async function isBotConnected(query, conversationId, inboxId) {
+  if (!conversationId || !inboxId) return false;
+  const rows = await query(
+    `SELECT 1
+       FROM public.conversations conv
+      WHERE conv.id = $1 AND conv.inbox_id = $2
+        AND ${BOT_CONNECTED_SQL}
+      LIMIT 1`,
+    [conversationId, inboxId]
+  );
+  return rows.length > 0;
+}
+
+/**
  * שולח פעולת presence אחת. `typing` מוסיף את המחוון לאותה קריאה שמסמנת כנקרא —
  * זה מבנה ה-payload של Meta, לא קיצור דרך שלנו.
  */
@@ -87,8 +127,8 @@ async function send({ phoneId, token, wamid, typing }, fetchImpl = timedFetch) {
 
 /**
  * ההגדרות בתוקף לתיבה: שורת התיבה גוברת על ברירת המחדל של החשבון (inbox_id = 0),
- * וזו גוברת על DEFAULTS. תיבה שמעולם לא נגעו בה מקבלת התנהגות שמרנית — קריאה כן,
- * "מקליד" רק מהקלדה אמיתית של נציג.
+ * וזו גוברת על DEFAULTS. תיבה שמעולם לא נגעו בה נכשלת סגור — בלי "נקרא" ובלי
+ * "מקליד" עד להפעלה מפורשת.
  */
 export async function settingsFor(query, accountId, inboxId) {
   const rows = await query(
@@ -121,11 +161,20 @@ async function hasNewerMessage(query, conversationId, messageId) {
  */
 async function handleIncoming(deps, msg) {
   const { query, log } = deps;
-  const s = await settingsFor(query, msg.account_id, msg.inbox_id);
+  let s = await settingsFor(query, msg.account_id, msg.inbox_id);
   if (!s.read_receipts && s.typing_mode !== 'auto') return;
 
   const target = { phoneId: msg.phone_id, token: msg.token, wamid: msg.source_id };
   await sleep(jitter(s.read_delay_min, s.read_delay_max));
+
+  // ההגדרה והבעלות עשויות להשתנות בזמן ההשהיה. כיבוי מהדשבורד או takeover
+  // חייבים לעצור גם handler שכבר תוזמן, לא רק הודעות שייכנסו מה-tick הבא.
+  s = await settingsFor(query, msg.account_id, msg.inbox_id);
+  if (!s.read_receipts && s.typing_mode !== 'auto') return;
+  if (!await isBotConnected(query, msg.conversation_id, msg.inbox_id)) {
+    log(`[presence] skipped inbox=${msg.inbox_id}: bot not connected`);
+    return;
+  }
 
   if (s.read_receipts) {
     try {
@@ -139,6 +188,13 @@ async function handleIncoming(deps, msg) {
 
   if (s.typing_mode !== 'auto') return;
   await sleep(jitter(s.typing_delay_min, s.typing_delay_max));
+
+  s = await settingsFor(query, msg.account_id, msg.inbox_id);
+  if (s.typing_mode !== 'auto') return;
+  if (!await isBotConnected(query, msg.conversation_id, msg.inbox_id)) {
+    log(`[presence] typing skipped inbox=${msg.inbox_id}: bot not connected`);
+    return;
+  }
   try {
     await send({ ...target, typing: true }, deps.fetchImpl);
     log(`[presence] typing inbox=${msg.inbox_id} (auto)`);
@@ -153,6 +209,9 @@ async function handleIncoming(deps, msg) {
   while (Date.now() < deadline) {
     await sleep(jitter(TYPING_REFRESH_MIN_S, TYPING_REFRESH_MAX_S));
     if (await hasNewerMessage(query, msg.conversation_id, msg.id)) return;
+    const current = await settingsFor(query, msg.account_id, msg.inbox_id);
+    if (current.typing_mode !== 'auto') return;
+    if (!await isBotConnected(query, msg.conversation_id, msg.inbox_id)) return;
     try {
       await send({ ...target, typing: true }, deps.fetchImpl);
       cycles += 1;
@@ -194,6 +253,11 @@ export async function relayAgentTyping(deps, accountId, conversationId) {
 
   const s = await settingsFor(deps.query, accountId, rows[0].inbox_id);
   if (s.typing_mode === 'off') return { sent: false, reason: 'disabled' };
+  // גם payload של "נציג מקליד" מכיל status=read. לכן כל מצב פעיל — auto או agent —
+  // חייב לעבור את אותו שער בוט; opt-in לתיבה אינו הרשאה לסמן שיחה רגילה כנקראה.
+  if (!await isBotConnected(deps.query, conversationId, rows[0].inbox_id)) {
+    return { sent: false, reason: 'bot_not_connected' };
+  }
 
   await send(
     { phoneId: rows[0].phone_id, token: rows[0].token, wamid: rows[0].source_id, typing: true },
@@ -208,12 +272,11 @@ export async function relayAgentTyping(deps, accountId, conversationId) {
  * הסמן מתקדם גם כשההודעות מסוננות החוצה, אחרת תיבה שקטה עם ערוץ אחר תשאיר את
  * הלולאה תקועה על אותו טווח לנצח.
  *
- * ⭐ 10.08.2026 — למה NOT EXISTS על HUMAN_OUTGOING_SQL: ההגדרה היא פר-תיבה, אבל
- * המטרה שלה היא להחיות *בוט*. בלי הסינון הזה כל שיחה בתיבה מסומנת כנקראה, כולל
- * שיחות שאדם מנהל והבוט לא נוגע בהן — ואז הלקוח רואה ✓✓ כחול בלי שאף אחד ענה.
- * נמדד בתיבה 38: מתוך 478 הודעות נכנסות ב-14 יום, 454 (95%) היו בשיחות שכבר היה
- * בהן אדם. משתמשים בקבוע המשותף ולא בבדיקה מקומית — sender_type='User' לבדו מחמיץ
- * תשובה שנשלחה מהטלפון ב-coexistence (היא מסומנת רק ב-content_attributes).
+ * ⭐ 31.08.2026 — שני שערים נפרדים, ושניהם חובה:
+ * (א) BOT_CONNECTED_SQL מוכיח שבוט מחובר *עכשיו* לשיחה או לתיבה ושאדם לא לקח
+ *     בעלות. זה סוגר את החור שבו שיחה חדשה ולא-מוקצית סומנה לפני שאדם ענה.
+ * (ב) NOT EXISTS על HUMAN_OUTGOING_SQL משמר את הגנת ה-takeover מהטלפון. ב-coexistence
+ *     תשובת אדם יכולה להגיע כ-external_echo בלי לשנות מיד את ההקצאה ב-Chatwoot.
  */
 export async function tickPresence(deps) {
   const { query } = deps;
@@ -228,6 +291,7 @@ export async function tickPresence(deps) {
        FROM public.messages msg
        JOIN public.inboxes i           ON i.id = msg.inbox_id
        JOIN public.channel_whatsapp cw ON cw.id = i.channel_id
+       JOIN public.conversations conv  ON conv.id = msg.conversation_id
       WHERE msg.id > $1
         AND msg.message_type = 0
         AND msg.private = false
@@ -235,6 +299,7 @@ export async function tickPresence(deps) {
         AND i.channel_type = 'Channel::Whatsapp'
         AND cw.provider = 'whatsapp_cloud'
         AND COALESCE(cw.provider_config->>'api_key', '') <> ''
+        AND ${BOT_CONNECTED_SQL}
         AND NOT EXISTS (
               SELECT 1 FROM public.messages m
                WHERE m.conversation_id = msg.conversation_id
@@ -347,5 +412,6 @@ export async function handlePresenceAction(deps, action, payload = {}, accountId
 
 export const _internals = {
   send, jitter, DEFAULTS, TYPING_TTL_MS, lastTyping,
+  BOT_CONNECTED_SQL, isBotConnected,
   hasNewerMessage, TYPING_REFRESH_MIN_S, TYPING_REFRESH_MAX_S, TYPING_MAX_WAIT_MS,
 };

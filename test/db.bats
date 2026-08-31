@@ -100,3 +100,7 @@ EOF
 @test "db.sh grants UPDATE on channel_whatsapp template columns" {
   grep -q "UPDATE (message_templates, message_templates_last_updated) ON public.channel_whatsapp" lib/db.sh
 }
+
+@test "db.sh grants read-only access needed to prove an active inbox bot" {
+  grep -q "GRANT SELECT ON public.agent_bot_inboxes TO drip_engine" lib/db.sh
+}

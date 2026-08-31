@@ -132,11 +132,13 @@ schema rather than by a separate database server:
   (`openssl rand`, generated on the host, never printed to stdout/logs) and a schema `drip`
   owned by that role.
 - The role is **least-privilege** against Chatwoot's own tables: `SELECT` on
-  `conversations`, `contacts`, `inboxes`, `contact_inboxes`, `channel_whatsapp`, `accounts`,
-  `active_storage_attachments`/`active_storage_blobs` — and, narrowly, `UPDATE` on exactly
-  one column: `contacts.custom_attributes` (the `UPDATE` privilege is `REVOKE`d at the
-  table level first, then re-`GRANT`ed for that single column only). It has no access to
-  any other Chatwoot table.
+  `conversations`, `messages`, `contacts`, `inboxes`, `contact_inboxes`,
+  `channel_whatsapp`, `agent_bot_inboxes`, `accounts`, the Active Storage attachment
+  tables, and the campaign/label/tag tables used by the dashboards. Version-specific
+  read grants (for example `campaign_recipients`) live in explicit `*_role_grants.sql`
+  files. Write access is column-scoped: `contacts.custom_attributes` and the two WhatsApp
+  template-cache columns only; table-wide `UPDATE` is revoked first. It has no access to
+  unrelated Chatwoot tables.
 - It additionally holds `CREATE` on the database itself — not because it needs broad
   access, but because the engine's own `migrate.js` runs `CREATE SCHEMA IF NOT EXISTS drip`
   on every boot (see "Self-migration on boot" below), and creating a schema requires that
