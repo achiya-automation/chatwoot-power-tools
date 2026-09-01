@@ -94,7 +94,9 @@ module WhatsappTextStyle
   # per match needs the Rails renderer (this file is checked standalone) and buys
   # nothing -- a needless wrap is invisible on the wire and merely renders the
   # code in monospace, which is what it is.
-  DIAL_CODE = /(?<![`\w])[*#][\d*#]{2,}#/
+  # The lookahead demands at least one DIGIT: without it «####» — an ordinary
+  # markdown heading — matched as a dial code and got backticked.
+  DIAL_CODE = /(?<![`\w])[*#](?=[\d*#]*\d)[\d*#]{2,}#/
   # an existing code span -- fenced block first, then inline -- so an
   # already-shielded code is never re-wrapped: a sender may shield its own codes,
   # and a second pass would match the asterisks INSIDE the span and produce
