@@ -162,7 +162,11 @@ if defined?(Rails)
       end
     end
 
-    Whatsapp::Providers::WhatsappCloudService.prepend(WhatsappCloudTextStylePatch)
+    if defined?(Whatsapp::Providers::WhatsappCloudService)
+      Whatsapp::Providers::WhatsappCloudService.prepend(WhatsappCloudTextStylePatch)
+    else
+      Rails.logger.warn('[whatsapp_text_style] WhatsappCloudService missing - outgoing style conversion is off')
+    end
 
     # WhatsApp has no inline-code syntax, and upstream already drops the fences
     # for a fenced BLOCK (code_block -> string_content). Doing the same inline
@@ -174,6 +178,15 @@ if defined?(Rails)
       end
     end
 
-    Messages::MarkdownRenderers::WhatsAppRenderer.prepend(WhatsAppRendererBareCodePatch)
+    # Guarded: this reaches into a Chatwoot internal, and an initializer that
+    # raises takes the whole app down at boot. If a future version renames or
+    # drops the renderer we lose the shield's transparency (customers would see
+    # literal backticks around a dial code) but Chatwoot still starts, and the
+    # warning says what to re-point.
+    if defined?(Messages::MarkdownRenderers::WhatsAppRenderer)
+      Messages::MarkdownRenderers::WhatsAppRenderer.prepend(WhatsAppRendererBareCodePatch)
+    else
+      Rails.logger.warn('[whatsapp_text_style] WhatsAppRenderer missing - dial-code backticks will reach customers; re-point WhatsAppRendererBareCodePatch')
+    end
   end
 end
