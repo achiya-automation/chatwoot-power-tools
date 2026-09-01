@@ -51,7 +51,9 @@ raise 'shield idempotent' unless W.shield_dial_codes(once) == once
 raise 'pre-shielded kept' unless W.shield_dial_codes('חייגו `**61*0338**5#`') == 'חייגו `**61*0338**5#`'
 raise 'fenced block kept' unless W.shield_dial_codes("```\n**61*0338**5#\n```") == "```\n**61*0338**5#\n```"
 # ordinary text must not be mistaken for a code
-['המחיר 29 ₪ לחודש', 'חייגו 03-3825601', 'שלום **עולם**', '## כותרת', "5*3*2"].each do |plain|
+# a dial code always contains a digit; markdown headings and rules do not
+['המחיר 29 ₪ לחודש', 'חייגו 03-3825601', 'שלום **עולם**', '## כותרת',
+ '#### כותרת משנה', '####', '###', "5*3*2", 'סעיף # 4 #'].each do |plain|
   raise "false positive: #{plain}" unless W.shield_dial_codes(plain) == plain
 end
 
