@@ -291,6 +291,8 @@ Then open **`http://localhost:5173/?mock=1&account_id=1`**. Add `&tab=` (`overvi
 
 The fixtures live in `src/data/devFixtures.js` and are deliberately not an all-green account: one paused template, a YELLOW quality rating and an open alert, so the states that actually matter are visible. The whole file is tree-shaken out of production builds (`import.meta.env.DEV`) and never reaches an installed instance.
 
+> **Weighing self-hosted against Chatwoot Cloud?** The tier prices, the data-retention caps that usually decide the tier, and a self-hosted install measured in production (348,703 messages in ~1.8 GB of RAM) are broken down in [what Chatwoot actually costs to run](https://achiya-automation.com/en/blog/chatwoot-pricing/).
+
 ## License
 
 [MIT](LICENSE)
