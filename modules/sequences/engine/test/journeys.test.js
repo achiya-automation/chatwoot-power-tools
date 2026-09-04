@@ -38,8 +38,13 @@ function fakeClient() {
 
 const fakeReads = { getContact: async () => ({ name: 'דנה', phone: '+972501234567' }) };
 
+// חלון שבת עתידי: הופך את נתוני לוח־השנה ל"טריים", כך שהנפילה הסגורה של isNoSendNow
+// (שישי מ-16:00 עד מוצאי שבת, כשאין נתוני Hebcal) לא חוסמת. בלי זה כל בדיקה שמצפה
+// לשליחה נכשלה בכל סוף שבוע. בדיקה שרוצה חלון חוסם מעבירה windows משלה ודורסת.
+const CALENDAR = [{ starts_at: '2099-01-02T16:00:00+02:00', ends_at: '2099-01-03T17:20:00+02:00' }];
+
 function ctxWith(client, config = {}) {
-  return { query, reads: fakeReads, makeClientFor: async () => client, config };
+  return { query, reads: fakeReads, makeClientFor: async () => client, config, windows: CALENDAR };
 }
 
 // גרף בסיסי: trigger → message → question(שם→שדה) → handoff
