@@ -859,6 +859,10 @@ CWPT_REMOTE_PATCH
 #
 # engine_build_is_pinned קובע אם אנחנו במצב הזה; repin_engine_image בונה עם קבצי ה-build
 # בלבד, ואז מעדכן את ה-sha הנעוץ כדי שההקשחה תישאר בתוקף מול ה-image החדש.
+#
+# ⚠️ ההפעלה חייבת לקבל את אותם קבצי compose כמו הבנייה. ב-admon ‏COMPOSE_FILE כברירת
+# מחדל אינו כולל את docker-compose.addons.yml, ו-`up` בלעדיו יצר שירות בלי
+# ‏container_name ובלי ההגדרות שלו — הקונטיינר קם בשם אחר ומת מיד (4.9.26).
 engine_build_is_pinned() {
   local server="$1" container="$2" answer
   answer="$(ssh -n "$server" "cd /opt/chatwoot && sudo docker compose -p chatwoot config --format json 2>/dev/null \
@@ -887,8 +891,9 @@ sys.exit('pin line not found') if n != 1 else open(p, 'w', encoding='utf-8').wri
 \" \
     && sudo chown root:root /opt/chatwoot/docker-compose.security.yml \
     && sudo chmod 600 /opt/chatwoot/docker-compose.security.yml \
-    && sudo docker compose -p chatwoot config --quiet \
-    && sudo docker compose -p chatwoot up -d --force-recreate --no-deps '$container'" \
+    && SEC=\$( [ -f docker-compose.security.yml ] && echo '-f docker-compose.security.yml' ) \
+    && sudo docker compose -p chatwoot $build_files \$SEC config --quiet \
+    && sudo docker compose -p chatwoot $build_files \$SEC up -d --force-recreate --no-deps '$container'" \
     >/dev/null 2>&1 || die "$server: $container build+repin failed"
   ok "$container built and re-pinned in docker-compose.security.yml"
 }
