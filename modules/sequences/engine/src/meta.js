@@ -185,7 +185,7 @@ export async function refreshHealth(pool, reads, accountId, now = new Date(), de
   } = deps;
 
   const current = (await pool.query(
-    `SELECT tier, cap, quality FROM drip.account_health WHERE account_id = $1`, [accountId]
+    `SELECT tier, cap, quality, checked_at FROM drip.account_health WHERE account_id = $1`, [accountId]
   )).rows[0];
 
   const cached = _cache.get(accountId);
@@ -262,11 +262,46 @@ export async function refreshHealth(pool, reads, accountId, now = new Date(), de
       }
     }
 
-    _cache.set(accountId, { at: now.getTime() });
     return { cap, tier, quality };
   } catch (e) {
     console.error(`[drip] health read failed acct ${accountId} (keeping last known):`, e.message);
+    // כישלון בודד הוא רעש; כישלון מתמשך פירושו שהתקרה של החשבון קפואה על קריאה ישנה,
+    // והמנוע שולח לפי מספר שאיש כבר לא בדק. נמדד בייצור 4.9.2026: התיבה שנבחרה לחשבון
+    // הראשי הצביעה על מספר רדום שהגרף דוחה, והתקרה נשארה על קריאה מ-16.8 — 19 יום של
+    // עיוורון בלי אף התראה. מתריעים אחרי יממה: אז זו כבר תקלת הגדרה, לא תקלת רשת.
+    const staleFor = current?.checked_at
+      ? now.getTime() - new Date(current.checked_at).getTime()
+      : Infinity;
+    // ‏try משלו: החוזה של refreshHealth הוא שהוא לעולם אינו זורק. שער עוין (compliance
+    // בלי raiseAlert, כמו בבדיקות) לא יפיל דרכו קריאה שכל תפקידה הוא לא להפיל כלום.
+    try {
+    if (typeof compliance?.raiseAlert === 'function' && staleFor > 24 * 3600 * 1000) {
+      const days = Number.isFinite(staleFor) ? Math.floor(staleFor / 86400000) : null;
+      await compliance.raiseAlert(
+        pool, accountId, 'warn', 'health_read_stale',
+        days === null
+          ? 'לא הצלחנו לקרוא ולו פעם אחת את דירוג האיכות ותקרת השליחה של החשבון. ' +
+            'התיבה שנבחרה למנוע מצביעה על מספר שמטא לא מכירה — בדקו את בחירת התיבה.'
+          : `דירוג האיכות ותקרת השליחה של החשבון לא התרעננו ${days} ימים: כל ניסיון קריאה ` +
+            `נכשל. המנוע ממשיך לפי הקריאה האחרונה, שכבר אינה עדכנית. בדרך כלל זה מספר ` +
+            `שהוסר מה-WABA או תיבה שנבחרה ואינה בשימוש — בדקו את בחירת התיבה.`,
+        { days, error: String(e.message).slice(0, 120) }
+      );
+    }
+    } catch (alertErr) {
+      console.error(`[drip] stale-health alert failed acct ${accountId}:`, alertErr.message);
+    }
     return { cap: capFromDb(current), tier: current?.tier || null, quality: current?.quality || null };
+  } finally {
+    // ‏finally ולא בסוף ה-try: הוויסות חייב לחול גם על כישלון. עד 4.9.2026 ה-cache נכתב
+    // רק במסלול המוצלח, ולכן מספר שהגרף מחזיר עליו 400 באופן קבוע (מספר שכבר אינו ב-WABA)
+    // נבדק מחדש בכל טיק — כל 60 שניות במקום כל 30 דקות. נמדד בייצור: 91 קריאות כושלות
+    // בשעה במקום 2, כלומר פי 45, וכולן מול Graph של מטא. הלוג התמלא בשורה אחת חוזרת
+    // וכיסה כל אות אחר.
+    //
+    // ‏"keeping last known" ממילא אומר שאיננו פועלים על התשובה, אז ניסיון מוקדם יותר לא
+    // קונה כלום; ותקלה חולפת נפתרת בתוך חלון הרענון בין כה.
+    _cache.set(accountId, { at: now.getTime() });
   }
 }
 
