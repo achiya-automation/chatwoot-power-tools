@@ -21,11 +21,14 @@ beforeEach(async () => {
   await query('DELETE FROM public.accounts WHERE id IN (901, 902)');
   await query("INSERT INTO public.accounts (id, name) VALUES (901, 'live account')");
   // 902 בכוונה לא נוצר — הוא מייצג חשבון שנמחק.
+  // ‏status הוא integer (2 = sent, כמו ב-campaign_recipients של Chatwoot), ו-source_id
+  // ו-status_updated_at הם NOT NULL — הכנסה חסרה נופלת ב-beforeEach ולא בבדיקה עצמה.
   await query(`INSERT INTO drip.campaign_send_snapshots
-      (account_id, campaign_id, contact_id, contact_name, phone, status, attempted_at)
-    VALUES (901, 1, 1, 'לקוח חי', '972500000001', 'sent', now()),
-           (902, 1, 2, 'לקוח של חשבון שנמחק', '972500000002', 'sent', now()),
-           (902, 1, 3, 'עוד אחד', '972500000003', 'sent', now())`);
+      (account_id, campaign_id, contact_id, contact_name, phone, source_id,
+       status, attempted_at, status_updated_at)
+    VALUES (901, 1, 1, 'לקוח חי',             '972500000001', 'wamid.A', 2, now(), now()),
+           (902, 1, 2, 'לקוח של חשבון שנמחק', '972500000002', 'wamid.B', 2, now(), now()),
+           (902, 1, 3, 'עוד אחד',             '972500000003', 'wamid.C', 2, now(), now())`);
 });
 
 test('הצילום מדווח רק על שורות של חשבון שאיננו', async () => {
