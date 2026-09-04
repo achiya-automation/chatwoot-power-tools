@@ -59,21 +59,56 @@ module WhatsappTextStyle
     text.gsub(SOFT_BREAK, "  \n")
   end
 
-  # Chatwoot markdown -> WhatsApp syntax (outgoing via Cloud API). Port of
-  # WAHA's MarkdownToWhatsApp so official and bridge inboxes look the same.
+  # The gaps Chatwoot's own WhatsAppRenderer leaves, and NOTHING it already did.
+  #
+  # This was a full markdown->WhatsApp port, written when send_text_message got
+  # raw markdown. Chatwoot later routed sends through
+  # MessageContentPresenter#outgoing_content -> MarkdownRendererService#render_whatsapp,
+  # which does that job -- so every send was converted TWICE, the second pass
+  # re-reading the first pass's output as markdown:
+  #
+  #   "**bold**"   -> render_whatsapp "*bold*"   -> here "_bold_"   (italic, not bold)
+  #   "**61*x**5#" -> render_whatsapp "*61*x*5#" -> here "_61_x*5#" (not dialable)
+  #
+  # Bold reached every customer as italic from that upgrade until 1.9.2026. What
+  # remains is only what WhatsAppRenderer genuinely does not emit: WhatsApp uses
+  # single tildes for strikethrough, and asterisk bullets.
   def markdown_to_whatsapp(text)
     return '' if text.nil? || text.empty?
 
     text
-      .gsub(/\\\n/, "\n")
-      .gsub(/(?<!\*)\*(?!\*)(.*?)\*(?!\*)|(?<!_)_(?!_)(.*?)_(?!_)/) do
-        "_#{Regexp.last_match(1) || Regexp.last_match(2)}_"
-      end
-      .gsub(/\*\*(.*?)\*\*/, '*\1*')
       .gsub(/~~(.*?)~~/, '~\1~')
-      .gsub(%r{\[([^\]]+)\]\((https?://[^\s)]+)\)}, '\1 (\2)')
-      .gsub(/^[-+*] /, '* ')
+      .gsub(/^[-+] /, '* ')
       .gsub(/ +\n/, "\n") # drop hard-break spaces; WhatsApp keeps the \n anyway
+  end
+
+  # A dial code is markdown too: «**61*033825601**10#» is a **strong** span and
+  # «*61*x*10#» an emphasis one, so a parser eats the very asterisks that make it
+  # dialable -- in BOTH directions. The agent read a broken code in the thread,
+  # and the customer received a different MMI service than the one intended
+  # (3GPP TS 22.030). Backticks stop the parser; WhatsAppRenderer#code (patched
+  # below) drops them again at the send boundary, so the agent sees the code
+  # whole and the customer gets the bare characters.
+  #
+  # Every dial code is wrapped, not only the ones markdown would mangle: deciding
+  # per match needs the Rails renderer (this file is checked standalone) and buys
+  # nothing -- a needless wrap is invisible on the wire and merely renders the
+  # code in monospace, which is what it is.
+  # The lookahead demands at least one DIGIT: without it «####» — an ordinary
+  # markdown heading — matched as a dial code and got backticked.
+  DIAL_CODE = /(?<![`\w])[*#](?=[\d*#]*\d)[\d*#]{2,}#/
+  # an existing code span -- fenced block first, then inline -- so an
+  # already-shielded code is never re-wrapped: a sender may shield its own codes,
+  # and a second pass would match the asterisks INSIDE the span and produce
+  # «`*`*61*x**10#``», a destroyed code.
+  CODE_SPAN = /(```.*?```|`[^`\n]*`)/m
+
+  def shield_dial_codes(text)
+    text.split(CODE_SPAN).each_with_index.map do |segment, index|
+      next segment if index.odd? # odd indexes are whole code spans: hands off
+
+      segment.gsub(DIAL_CODE) { |code| "`#{code}`" }
+    end.join
   end
 end
 
@@ -95,6 +130,16 @@ if defined?(Rails)
         elsif outgoing?
           # dashboard/API-composed text is already markdown - only keep breaks
           self.content = WhatsappTextStyle.hard_breaks(content)
+        end
+
+        # Shield dial codes so the stored body survives the markdown renderer the
+        # dashboard displays it with. Safe before the send only on
+        # Channel::Whatsapp, where render_whatsapp strips the backticks on the way
+        # out; a Channel::Api (WAHA) body is delivered verbatim, so there we
+        # shield only what will never be sent -- incoming, or an already
+        # delivered message carrying a source_id.
+        if inbox.channel_type == 'Channel::Whatsapp' || incoming? || source_id.present?
+          self.content = WhatsappTextStyle.shield_dial_codes(content)
         end
       end
     end
@@ -119,6 +164,31 @@ if defined?(Rails)
       end
     end
 
-    Whatsapp::Providers::WhatsappCloudService.prepend(WhatsappCloudTextStylePatch)
+    if defined?(Whatsapp::Providers::WhatsappCloudService)
+      Whatsapp::Providers::WhatsappCloudService.prepend(WhatsappCloudTextStylePatch)
+    else
+      Rails.logger.warn('[whatsapp_text_style] WhatsappCloudService missing - outgoing style conversion is off')
+    end
+
+    # WhatsApp has no inline-code syntax, and upstream already drops the fences
+    # for a fenced BLOCK (code_block -> string_content). Doing the same inline
+    # turns a backtick into a display-only shield: the agent's thread renders the
+    # code verbatim, the customer receives the bare characters.
+    module WhatsAppRendererBareCodePatch
+      def code(node)
+        out(node.string_content)
+      end
+    end
+
+    # Guarded: this reaches into a Chatwoot internal, and an initializer that
+    # raises takes the whole app down at boot. If a future version renames or
+    # drops the renderer we lose the shield's transparency (customers would see
+    # literal backticks around a dial code) but Chatwoot still starts, and the
+    # warning says what to re-point.
+    if defined?(Messages::MarkdownRenderers::WhatsAppRenderer)
+      Messages::MarkdownRenderers::WhatsAppRenderer.prepend(WhatsAppRendererBareCodePatch)
+    else
+      Rails.logger.warn('[whatsapp_text_style] WhatsAppRenderer missing - dial-code backticks will reach customers; re-point WhatsAppRendererBareCodePatch')
+    end
   end
 end
