@@ -32,8 +32,6 @@ export default defineConfig({
       input: {
         // האפליקציה הראשית (HTML entry, hashed)
         main: resolve(dir, 'index.html'),
-        // מודול דחיסה עצמאי ל-injector של Chatwoot — שם פלט יציב <addons-base>/sequences/compressor.js
-        compressor: resolve(dir, 'src/compressor-entry.js'),
       },
       output: {
         // כל שם קובץ נושא גם את מזהה ה-build, לא רק את ה-hash של התוכן.
@@ -44,10 +42,7 @@ export default defineConfig({
         // ה-import היחסי אל אותו chunk ייכשל בשקט, גרף המודולים לא ירוץ, והמסך יישאר לבן.
         // בדיוק זה קרה כאן. build חדש = כתובות חדשות לכל הקבצים = אין רשומה ישנה להיתקע בה.
         // המחיר (הורדה מחדש של ~350KB בכל פריסה) זניח לדשבורד פנימי.
-        //
-        // compressor יוצא דופן: ה-injector מייבא אותו מכתובת קבועה, אז השם שלו נשאר יציב.
-        entryFileNames: (chunk) =>
-          (chunk.name === 'compressor' ? 'compressor.js' : `assets/[name]-[hash]-${BUILD_ID}.js`),
+        entryFileNames: `assets/[name]-[hash]-${BUILD_ID}.js`,
         chunkFileNames: `assets/[name]-[hash]-${BUILD_ID}.js`,
         assetFileNames: `assets/[name]-[hash]-${BUILD_ID}[extname]`,
       },
