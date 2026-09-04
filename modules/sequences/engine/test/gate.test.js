@@ -91,8 +91,14 @@ async function seed({ contactId = 1, phone = '+972541234567', consent = false } 
   return seq;
 }
 
+// חלון שבת עתידי: הופך את נתוני לוח־השנה ל"טריים" בעיני isNoSendNow, כך שהנפילה
+// הסגורה (שישי מ-16:00 עד מוצאי שבת, שקיימת רק כשאין נתוני Hebcal) לא נכנסת לפעולה.
+// בלי זה כל בדיקה כאן שמצפה לשליחה נכשלה מכל שישי אחה"צ עד מוצאי שבת — כלומר ה-CI
+// היה אדום בכל סוף שבוע בלי קשר לקוד. הנפילה הסגורה עצמה נבדקת ב-schedule.test.js.
+const CALENDAR = [{ starts_at: '2099-01-02T16:00:00+02:00', ends_at: '2099-01-03T17:20:00+02:00', kind: 'shabbat' }];
+
 const run = (client, opts = {}) =>
-  reconcileAccount(pool, client, ACCT, new Date(), [], { tierCap: 1000, ...opts });
+  reconcileAccount(pool, client, ACCT, new Date(), CALENDAR, { tierCap: 1000, ...opts });
 
 const enrollment = async (contactId = 1) =>
   (await query(`SELECT * FROM drip.enrollments WHERE account_id=$1 AND contact_id=$2`, [ACCT, contactId]))[0];
