@@ -322,6 +322,20 @@ async function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+// דחייה שלא נתפסה מפילה את התהליך ב-Node מודרני, וההסבר נעלם איתו: דוקר מרים מחדש
+// ומה שנשאר בלוג הוא קונטיינר שקם, בלי סיבה. הלולאות כאן כבר עטופות (loop.js) ושתי
+// המשימות ברקע מסתיימות ב-catch, אז זה נתיב שלא אמור להיפתח — ובדיוק לכן, אם הוא
+// נפתח, השורה הזאת היא הדבר היחיד שיסביר למה. יוצאים בכוונה: מצב לא ידוע אחרי חריגה
+// שלא טופלה מסוכן יותר מהפסקה קצרה שדוקר מתקן לבד.
+process.on('unhandledRejection', (reason) => {
+  console.error('[drip] unhandled rejection — exiting:', reason instanceof Error ? reason.stack : reason);
+  shutdown('unhandledRejection');
+});
+process.on('uncaughtException', (err) => {
+  console.error('[drip] uncaught exception — exiting:', err && err.stack ? err.stack : err);
+  shutdown('uncaughtException');
+});
+
 // ── Presence loop — "נקרא"/"מקליד" ─────────────────────────────────────────
 // לולאה נפרדת ומהירה מה-reconcile: ✓✓ שמופיע דקה אחרי ההודעה מרגיש מוזר.
 // ההשהיה האנושית שבהגדרות נוספת על זה. ראה presence.js על למה משיכה ולא webhook

@@ -13,6 +13,12 @@
 // the stock look returns for that element.
 //
 // Kill switch, per browser: localStorage.setItem('cwptWaTheme', 'off') and reload.
+//
+// ⛔ מחלקות Tailwind עם תו מיוחד (dark:, hover:, group/avatar, has-[:focus]) נכתבות כאן
+// כ-[class~="..."] ולא כסלקטור-מחלקה עם escape. הסיבה אינה סגנון: DASHBOARD_SCRIPTS נכתב
+// דרך מחרוזת Ruby שמקפלת backslash כפול לבודד, ולכן כל escape נשבר בכתיבה חוזרת
+// והסלקטור מפסיק להתאים בשקט. הספציפיות זהה (0,1,0), אז אין שינוי בקסקייד. אותו פתרון
+// כמו CARD_SEL ב-campaign-stats.js, ויש בדיקה שנופלת על כל escape כזה ב-artifact.
 // ponytail: one style tag + one throttled observer; no settings UI, no per-user toggle.
 (function () {
   if (window.__cwptWaTheme) return;
@@ -69,17 +75,17 @@
     '}',
 
     /* ---------- brand blue hardcodes (#2781f6) → WhatsApp green ---------- */
-    'html body .bg-n-brand,html body .checked\\:bg-n-brand:checked,html body .after\\:bg-n-brand:after,html body .before\\:bg-n-brand:before,html body .group:hover .group-hover\\:bg-n-brand,html body .bg-n-blue-9,html body .indeterminate\\:bg-n-brand:indeterminate{background-color:var(--wa-primary)}',
-    'html body .bg-n-brand\\/10,html body .hover\\:bg-n-brand\\/10:hover,html body .dark\\:bg-n-brand\\/10:is(.dark *){background-color:rgba(0,168,132,.1)}',
-    'html body .bg-n-brand\\/20,html body .hover\\:enabled\\:bg-n-brand\\/20:enabled:hover,html body .focus-visible\\:bg-n-brand\\/20:focus-visible{background-color:rgba(0,168,132,.2)}',
-    'html body .bg-n-brand\\/5{background-color:rgba(0,168,132,.05)}',
-    'html body .hover\\:bg-n-brand\\/80:hover{background-color:rgba(0,168,132,.8)}',
-    'html body .text-n-brand,html body .hover\\:text-n-brand:hover,html body .text-n-blue-9,html body .group:focus-within .group-focus-within\\:text-n-brand,html body .dark\\:hover\\:text-n-brand:hover:is(.dark *){color:var(--wa-primary-strong)}',
-    'html body .border-n-brand,html body .hover\\:border-n-brand:hover,html body .focus\\:border-n-brand:focus,html body .checked\\:border-n-brand:checked,html body .dark\\:border-n-brand:is(.dark *),html body .indeterminate\\:border-n-brand:indeterminate{border-color:var(--wa-primary)}',
-    'html body .border-t-n-brand,html body .before\\:\\!border-t-n-brand:before{border-top-color:var(--wa-primary)!important}',
-    'html body .outline-n-brand,html body .\\!outline-n-brand,html body .outline-n-blue-9,html body .focus\\:outline-n-brand:focus,html body .focus\\:outline-n-blue-9:focus,html body .focus-visible\\:outline-n-brand:focus-visible,html body .focus-within\\:outline-n-brand:focus-within,html body .has-\\[\\:focus\\]\\:outline-n-brand:has(:focus),html body .dark\\:focus\\:outline-n-brand:focus:is(.dark *),html body .dark\\:focus-within\\:outline-n-brand:focus-within:is(.dark *),html body .dark\\:\\!outline-n-brand:is(.dark *),html body .dark\\:has-\\[\\:focus\\]\\:outline-n-brand:has(:focus):is(.dark *),html body select:focus,html body textarea:focus{outline-color:var(--wa-primary)!important}',
+    'html body .bg-n-brand,html body [class~="checked:bg-n-brand"]:checked,html body [class~="after:bg-n-brand"]:after,html body [class~="before:bg-n-brand"]:before,html body .group:hover [class~="group-hover:bg-n-brand"],html body .bg-n-blue-9,html body [class~="indeterminate:bg-n-brand"]:indeterminate{background-color:var(--wa-primary)}',
+    'html body [class~="bg-n-brand/10"],html body [class~="hover:bg-n-brand/10"]:hover,html body [class~="dark:bg-n-brand/10"]:is(.dark *){background-color:rgba(0,168,132,.1)}',
+    'html body [class~="bg-n-brand/20"],html body [class~="hover:enabled:bg-n-brand/20"]:enabled:hover,html body [class~="focus-visible:bg-n-brand/20"]:focus-visible{background-color:rgba(0,168,132,.2)}',
+    'html body [class~="bg-n-brand/5"]{background-color:rgba(0,168,132,.05)}',
+    'html body [class~="hover:bg-n-brand/80"]:hover{background-color:rgba(0,168,132,.8)}',
+    'html body .text-n-brand,html body [class~="hover:text-n-brand"]:hover,html body .text-n-blue-9,html body .group:focus-within [class~="group-focus-within:text-n-brand"],html body [class~="dark:hover:text-n-brand"]:hover:is(.dark *){color:var(--wa-primary-strong)}',
+    'html body .border-n-brand,html body [class~="hover:border-n-brand"]:hover,html body [class~="focus:border-n-brand"]:focus,html body [class~="checked:border-n-brand"]:checked,html body [class~="dark:border-n-brand"]:is(.dark *),html body [class~="indeterminate:border-n-brand"]:indeterminate{border-color:var(--wa-primary)}',
+    'html body .border-t-n-brand,html body [class~="before:!border-t-n-brand"]:before{border-top-color:var(--wa-primary)!important}',
+    'html body .outline-n-brand,html body [class~="!outline-n-brand"],html body .outline-n-blue-9,html body [class~="focus:outline-n-brand"]:focus,html body [class~="focus:outline-n-blue-9"]:focus,html body [class~="focus-visible:outline-n-brand"]:focus-visible,html body [class~="focus-within:outline-n-brand"]:focus-within,html body [class~="has-[:focus]:outline-n-brand"]:has(:focus),html body [class~="dark:focus:outline-n-brand"]:focus:is(.dark *),html body [class~="dark:focus-within:outline-n-brand"]:focus-within:is(.dark *),html body [class~="dark:!outline-n-brand"]:is(.dark *),html body [class~="dark:has-[:focus]:outline-n-brand"]:has(:focus):is(.dark *),html body select:focus,html body textarea:focus{outline-color:var(--wa-primary)!important}',
     'html body .fill-n-blue-9{fill:var(--wa-primary)}',
-    'html body p a,html body .prose-a\\:text-n-brand :is(:where(a):not(:where([class~=not-prose],[class~=not-prose] *))){color:var(--wa-link)}',
+    'html body p a,html body [class~="prose-a:text-n-brand"] :is(:where(a):not(:where([class~=not-prose],[class~=not-prose] *))){color:var(--wa-link)}',
     'html body .banner.primary{background-color:var(--wa-primary)}',
     'html body .ProseMirror-prompt .ProseMirror-prompt-buttons button[type=submit]{background-color:var(--wa-primary)}',
     'html body .search-input:focus{border-color:var(--wa-primary)}',
@@ -117,10 +123,10 @@
     '#app .conversation.active,#app .conversation.selected{background:var(--wa-selected)}',
     '#app .conversation.active{animation:none}',
     '#app .conversation>.relative{margin-inline-end:4px}',
-    '#app .conversation>.relative .group\\/avatar{width:49px!important;height:49px!important;margin-top:0!important}',
-    '#app .conversation>.relative .group\\/avatar [role=img]{width:49px!important;height:49px!important;border-radius:50%!important}',
-    '#app .conversation>.relative .group\\/avatar [role=img]>span{font-size:18px!important}',
-    '#app .conversation>.relative .group\\/avatar label{border-radius:50%}',
+    '#app .conversation>.relative [class~="group/avatar"]{width:49px!important;height:49px!important;margin-top:0!important}',
+    '#app .conversation>.relative [class~="group/avatar"] [role=img]{width:49px!important;height:49px!important;border-radius:50%!important}',
+    '#app .conversation>.relative [class~="group/avatar"] [role=img]>span{font-size:18px!important}',
+    '#app .conversation>.relative [class~="group/avatar"] label{border-radius:50%}',
     '#app .conversation>div.border-line{padding:10px 0;border:0}',
     '#app .conversation .text-label-small{font-size:11px;line-height:14px;color:var(--wa-text-2)}',
     '#app .conversation h4.conversation--user{font-size:16px;line-height:22px;color:var(--wa-text);text-transform:none;padding-top:0}',
@@ -135,9 +141,9 @@
     /* ---------- conversation header ---------- */
     '#app .conversation-details-wrap{background:var(--wa-chat-bg);border-color:var(--wa-divider)}',
     '#app .conversation-details-wrap>div:first-child{background:var(--wa-app-bg);border-color:var(--wa-divider)!important}',
-    '#app .conversation-details-wrap>div:first-child .group\\/avatar{width:40px!important;height:40px!important}',
-    '#app .conversation-details-wrap>div:first-child .group\\/avatar [role=img]{width:40px!important;height:40px!important;border-radius:50%!important}',
-    '#app .conversation-details-wrap>div:first-child .group\\/avatar [role=img]>span{font-size:15px!important}',
+    '#app .conversation-details-wrap>div:first-child [class~="group/avatar"]{width:40px!important;height:40px!important}',
+    '#app .conversation-details-wrap>div:first-child [class~="group/avatar"] [role=img]{width:40px!important;height:40px!important;border-radius:50%!important}',
+    '#app .conversation-details-wrap>div:first-child [class~="group/avatar"] [role=img]>span{font-size:15px!important}',
     '#app .conversation-details-wrap>div:first-child .text-sm.font-medium.truncate{font-size:16px;color:var(--wa-text)}',
     '#app .conversation-details-wrap>div:first-child .conversation--header--actions{color:var(--wa-text-2);font-size:13px}',
     '#app .conversation-details-wrap>div:first-child+.h-10{background:var(--wa-app-bg)}',
@@ -161,7 +167,7 @@
     '#app .message-bubble-container .prose-bubble p{margin:0}',
     '#app .message-bubble-container .left-bubble>.text-xs,#app .message-bubble-container .right-bubble>.text-xs{justify-content:flex-end;margin-top:2px;margin-bottom:-4px;font-size:11px;line-height:15px;color:var(--wa-text-2)}',
     '#app .message-bubble-container .right-bubble>.text-xs{color:var(--wa-meta-out)}',
-    '#app .message-bubble-container .right-bubble .text-\\[\\#7EB6FF\\]{color:var(--wa-tick-read)}',
+    '#app .message-bubble-container .right-bubble [class~="text-[#7EB6FF]"]{color:var(--wa-tick-read)}',
     '#app .message-bubble-container .right-bubble .text-n-slate-10{color:var(--wa-meta-out)}',
     '#app .message-bubble-container [data-bubble-name="text"]:before{content:"";position:absolute;top:0;width:8px;height:13px}',
     '#app .message-bubble-container .left-bubble[data-bubble-name="text"]{border-start-start-radius:0}',
@@ -185,9 +191,9 @@
     /* ---------- composer: one WhatsApp-style row ---------- */
     '#app .reply-box{margin:0;border:0;border-radius:0;background:var(--wa-app-bg);display:flex;flex-wrap:wrap;align-items:flex-end;padding:6px 10px 8px}',
     '#app .reply-box.is-private{background:var(--wa-note)}',
-    '#app .reply-box>div.h-\\[3\\.25rem\\]{order:1;flex:0 0 100%;height:auto;min-height:36px;padding:0 0 4px}',
-    '#app .reply-box>div.h-\\[3\\.25rem\\]>button.rounded-full{background:var(--wa-chip);color:var(--wa-text-2);height:28px;font-size:13px}',
-    '#app .reply-box>div.h-\\[3\\.25rem\\]>button.rounded-full>div.bg-n-solid-1{background:var(--wa-input);height:22px}',
+    '#app .reply-box>div[class~="h-[3.25rem]"]{order:1;flex:0 0 100%;height:auto;min-height:36px;padding:0 0 4px}',
+    '#app .reply-box>div[class~="h-[3.25rem]"]>button.rounded-full{background:var(--wa-chip);color:var(--wa-text-2);height:28px;font-size:13px}',
+    '#app .reply-box>div[class~="h-[3.25rem]"]>button.rounded-full>div.bg-n-solid-1{background:var(--wa-input);height:22px}',
     '#app .reply-box>.reply-box__top{order:3;flex:1 1 0;min-width:0;background:var(--wa-input);border-radius:8px;padding:6px 12px;margin:0;box-shadow:0 1px .5px var(--wa-shadow)}',
     '#app .reply-box.is-private>.reply-box__top{background:rgba(255,255,255,.6)}',
     'body.dark #app .reply-box.is-private>.reply-box__top{background:rgba(0,0,0,.25)}',
