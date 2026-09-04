@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isNoSendNow, nextSendAt, addInterval, jerusalemDow, skipNoSendWindows, projectSchedule, gateFor, accountQuietWindow } from '../src/schedule.js';
+import { isNoSendNow, quietWindowEnd, nextSendAt, addInterval, jerusalemDow, skipNoSendWindows, projectSchedule, gateFor, accountQuietWindow } from '../src/schedule.js';
 
 const D = (s) => new Date(s);
 
@@ -257,4 +257,38 @@ test('אין הגדרת חשבון — התנהגות כשהייתה', () => {
   const g = gateFor(seq, 2, new Date(), [], null);
   assert.equal(g.quietStart, undefined);
   assert.equal(g.quietEnd, undefined);
+});
+
+// ── כל חסימה חייבת סוף חלון ────────────────────────────────────────────────
+// ‏isNoSendNow נופל סגור בלי נתוני Hebcal וחוסם שישי מ-16:00 ואת שבת כולה.
+// ל-quietWindowEnd לא הייתה נפילה מקבילה, ולכן הוא החזיר null בדיוק במצבים האלה.
+// ‏reconcile מעדכן next_send_at רק כשיש סוף חלון (`if (edge)`), אז ההרשמה נשארה עם
+// זמן בעבר: כל טיק בוחר אותה מחדש לאורך כל השבת, ובמוצאי שבת כולן בשלות בבת אחת
+// בלי הפיזור שנועד למנוע התפרצות מול מטא. נתפס 4.9.2026 — בדיקה שנכשלה רק בשישי אחה"צ.
+test('נפילה סגורה: לכל מצב חסום בלי נתוני Hebcal יש סוף חלון', () => {
+  for (const iso of ['2026-09-04T16:30:00+03:00',   // שישי, אחרי 16:00
+                     '2026-09-04T23:59:00+03:00',   // שישי בלילה
+                     '2026-09-05T10:00:00+03:00',   // שבת
+                     '2026-09-05T23:30:00+03:00']) { // מוצאי שבת, עדיין חסום בנפילה הסגורה
+    const args = { now: D(iso), windows: [], skipShabbat: true };
+    assert.equal(isNoSendNow(args), true, `${iso} אמור להיחסם`);
+    const end = quietWindowEnd(args);
+    assert.ok(end, `${iso} נחסם בלי סוף חלון — ההרשמה תישאר עם זמן בעבר`);
+    assert.ok(end > args.now, `${iso}: סוף החלון חייב להיות בעתיד`);
+    assert.equal(jerusalemDow(end), 0, `${iso}: החסימה נמשכת עד ראשון`);
+  }
+});
+
+test('מחוץ לחסימה אין סוף חלון מומצא', () => {
+  for (const iso of ['2026-09-04T12:00:00+03:00', '2026-09-06T09:00:00+03:00']) {
+    const args = { now: D(iso), windows: [], skipShabbat: true };
+    assert.equal(isNoSendNow(args), false, `${iso} לא אמור להיחסם`);
+    assert.equal(quietWindowEnd(args), null, `${iso}: אין חסימה, אין סוף חלון`);
+  }
+});
+
+test('כשיש נתוני Hebcal טריים — סוף החלון הוא צאת השבת האמיתי, לא הנפילה הסגורה', () => {
+  const args = { now: D('2026-06-19T20:00:00+03:00'), windows: summerShabbat, skipShabbat: true };
+  assert.equal(isNoSendNow(args), true);
+  assert.equal(quietWindowEnd(args).toISOString(), D('2026-06-20T20:25:00+03:00').toISOString());
 });
