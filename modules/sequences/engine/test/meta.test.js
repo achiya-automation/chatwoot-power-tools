@@ -16,7 +16,10 @@ function fakePool(initial = null) {
     get health() { return health; },
     query: async (sql, params) => {
       writes.push({ sql, params });
-      if (/SELECT tier, cap, quality FROM drip\.account_health/.test(sql)) {
+      // ‏regex על הטבלה, לא על רשימת העמודות המדויקת: הוספת עמודה לשאילתה האמיתית
+      // (למשל checked_at) שברה כאן את ההתאמה, ה-fake החזיר 0 שורות, והבדיקה נכשלה
+      // על התשתית ולא על הקוד.
+      if (/SELECT .*FROM drip\.account_health/.test(sql)) {
         return { rows: health ? [health] : [] };
       }
       if (/INSERT INTO drip\.account_health/.test(sql) && /tier, cap, quality/.test(sql)) {
@@ -151,6 +154,25 @@ test('refreshHealth caches within refreshMs (no second Graph call)', async () =>
   assert.equal(calls, 1);
 });
 
+test('refreshHealth: גם כישלון מוויסת — לא מנסים שוב בכל טיק', async () => {
+  // ה-cache נכתב רק במסלול המוצלח, ולכן מספר שהגרף מחזיר עליו 400 באופן קבוע נבדק
+  // מחדש בכל טיק של המנוע — כל 60 שניות במקום כל 30 דקות. נמדד בייצור 4.9.2026:
+  // ‏91 קריאות כושלות בשעה במקום 2, כולן מול Graph של מטא, והלוג התמלא בשורה אחת.
+  _resetHealthCache();
+  const pool = fakePool();
+  let calls = 0;
+  const failing = async () => { calls += 1; throw new Error('Graph number health 123 → 400'); };
+  const opts = { fetchNumberHealthFn: failing, fetchTemplateHealthFn: noTemplates, refreshMs: 3600000 };
+
+  await refreshHealth(pool, creds, 7, new Date('2026-07-08T10:00:00Z'), opts);
+  await refreshHealth(pool, creds, 7, new Date('2026-07-08T10:01:00Z'), opts);
+  await refreshHealth(pool, creds, 7, new Date('2026-07-08T10:02:00Z'), opts);
+  assert.equal(calls, 1, 'שלושה טיקים בתוך חלון הרענון — קריאה אחת בלבד');
+
+  await refreshHealth(pool, creds, 7, new Date('2026-07-08T11:30:00Z'), opts);
+  assert.equal(calls, 2, 'אחרי שהחלון חלף — מנסים שוב');
+});
+
 test('refreshHealth re-fetches after refreshMs elapses', async () => {
   _resetHealthCache();
   const pool = fakePool();
@@ -172,6 +194,31 @@ test('refreshHealth NEVER throws — a Graph outage keeps the last known cap', a
   });
   assert.equal(r.cap, 10000);   // last known, NOT DEFAULT_CAP and NOT unlimited
   assert.equal(r.tier, 'TIER_10K');
+});
+
+test('refreshHealth: כישלון מתמשך מתריע, כישלון טרי שותק', async () => {
+  // ‏19 יום בייצור (4.9.2026) התקרה של החשבון הראשי נשארה על קריאה מ-16.8: התיבה שנבחרה
+  // הצביעה על מספר רדום שהגרף דוחה, כל רענון נכשל, והלוג היה הסימן היחיד. עכשיו זו התראה.
+  const failing = async () => { throw new Error('Graph number health 123 → 400'); };
+  const mk = () => { const a = []; return { alerts: a, raiseAlert: async (_p, _acc, lvl, code) => a.push(`${lvl}:${code}`) }; };
+
+  _resetHealthCache();
+  const fresh = mk();
+  await refreshHealth(
+    fakePool({ tier: 'TIER_2K', cap: 2000, quality: 'GREEN', checked_at: new Date('2026-07-08T09:00:00Z') }),
+    creds, 5, new Date('2026-07-08T10:00:00Z'),
+    { fetchNumberHealthFn: failing, fetchTemplateHealthFn: noTemplates, compliance: fresh }
+  );
+  assert.deepEqual(fresh.alerts, [], 'שעה אחת של כישלון היא תקלת רשת — לא מתריעים');
+
+  _resetHealthCache();
+  const stale = mk();
+  await refreshHealth(
+    fakePool({ tier: 'TIER_2K', cap: 2000, quality: 'GREEN', checked_at: new Date('2026-06-20T09:00:00Z') }),
+    creds, 5, new Date('2026-07-08T10:00:00Z'),
+    { fetchNumberHealthFn: failing, fetchTemplateHealthFn: noTemplates, compliance: stale }
+  );
+  assert.deepEqual(stale.alerts, ['warn:health_read_stale'], 'שבועות של כישלון = תקלת הגדרה');
 });
 
 test('refreshHealth falls back to DEFAULT_CAP when there is nothing known at all', async () => {
