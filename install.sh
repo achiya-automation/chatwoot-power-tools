@@ -35,8 +35,8 @@
 #   cd modules/smart-import && npm run build
 #   cp modules/smart-import/dist/import-tool.js modules/smart-import/vendor/xlsx.mini.min.js \
 #     modules/sequences/webapp/dist/smart-import/
-# (No CI freshness check exists yet for this — a TODO for a follow-up PR; until then this
-# is enforced by code review only.)
+# ‏CI אוכף את זה: השלב "Verify committed dist matches src" בונה מחדש עם ה-BUILD_ID
+# הצרוב ב-dist המחויב ונופל על כל הפרש תוכן.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
