@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "postbuild": "cd ../../smart-import && npm run build --silent && mkdir -p ../sequences/webapp/dist/smart-import && cp dist/import-tool.js vendor/xlsx.mini.min.js ../sequences/webapp/dist/smart-import/",
+    "postbuild": "cd ../../smart-import && npm run build --silent && mkdir -p ../sequences/webapp/dist/smart-import && cp dist/import-tool.js vendor/xlsx.mini.min.js ../sequences/webapp/dist/smart-import/ && test -s ../sequences/webapp/dist/smart-import/import-tool.js && test -s ../sequences/webapp/dist/smart-import/xlsx.mini.min.js",
     "preview": "vite preview",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.3",
+    "browserslist": "^4.28.8",
     "lucide-react": "^0.454.0",
     "mediabunny": "^1.49.0",
     "react": "^18.3.1",
