@@ -302,6 +302,18 @@ inject_dashboard_script() {
   fi
   shift 2
 
+  # ‏cwpt-watchdog בשרתים משווה את מה שמוזרק בפועל מול רשימה מקובעת בתוכו. הרשימה קופאת:
+  # ‏video-compressor הוסר מהקוד ב-20.8.26 וההתראה רצה על מודול מת עד 23.8; waha-controls
+  # הוסר ב-21.8 ורשימת אדמון עוד ציפתה לו ב-4.9, בזמן שרשימת השרת הראשי לא כללה אותו כלל —
+  # כלומר אותה בדיקה בדיוק דיווחה "תקין" בשני מצבים סותרים. כאן נכתב הקאנון עצמו לקובץ,
+  # והשומר קורא ממנו במקום מהעתק שמישהו צריך לזכור לעדכן.
+  local canon_dir="${compose_dir}/.cwpt-state"
+  if mkdir -p "$canon_dir" 2>/dev/null; then
+    local mod
+    for mod in "$@"; do _cwpt_module_parts "$mod"; done > "${canon_dir}/dashboard-parts.txt" 2>/dev/null || :
+    chmod 644 "${canon_dir}/dashboard-parts.txt" 2>/dev/null || :
+  fi
+
   local html
   html="$(assemble_dashboard_script "$base" "$@")" || {
     echo "inject_dashboard_script: assemble_dashboard_script failed" >&2
