@@ -20,12 +20,12 @@ after(() => {
   }
 });
 
-function pageDom(chatId = 'whatsapp.integration') {
+function pageDom(chatId = 'whatsapp.integration', dir = 'rtl') {
   const cookie = encodeURIComponent(JSON.stringify({
     'access-token': 'test-token', 'token-type': 'Bearer', client: 'test-client', expiry: '999', uid: 'test@example.invalid',
   }));
   const dom = new JSDOM(
-    '<!doctype html><html><head></head><body><div id="app" dir="rtl"><main><div class="flex flex-col"><ul class="conversation-panel"><li><div class="message-bubble-container">הודעה קיימת</div></li></ul><div class="relative resizable-editor-wrapper"><div class="reply-box"></div></div></div></main></div></body></html>',
+    '<!doctype html><html><head></head><body><div id="app" dir="' + dir + '"><main><div class="flex flex-col"><ul class="conversation-panel"><li><div class="message-bubble-container">הודעה קיימת</div></li></ul><div class="relative resizable-editor-wrapper"><div class="reply-box"></div></div></div></main></div></body></html>',
     {
       url: 'https://chatwoot.test/app/accounts/1/inbox/23/conversations/3289',
       runScripts: 'outside-only',
@@ -128,4 +128,26 @@ test('enhancements artifact includes the WAHA controls part', () => {
   );
   assert.match(html, /part: modules\/dashboard-enhancements\/parts\/waha-controls\.js/);
   assert.match(html, /מה תרצו לעשות/);
+});
+
+test('an LTR dashboard renders the panel in English (locale read at render time)', async () => {
+  const ltr = pageDom('whatsapp.integration', 'ltr');
+  await runInjector(ltr.dom);
+  const text = ltr.dom.window.document.body.textContent;
+  assert.ok(ltr.dom.window.document.getElementById('cwpt-waha-controls'));
+  assert.match(text, /What would you like to do/);
+  assert.match(text, /Reconnect with QR/);
+  assert.doesNotMatch(text, /מה תרצו לעשות/);
+});
+
+test('the panel inherits direction from Chatwoot and uses palette colours that exist', async () => {
+  const match = pageDom();
+  const window = await runInjector(match.dom);
+  const css = window.document.getElementById('cwpt-waha-controls-style').textContent;
+  // ‏direction:rtl קשיח היה מקבע את הפריסה גם בממשק אנגלי — הכיוון יורש מ-#app[dir].
+  assert.doesNotMatch(css, /direction:\s*rtl/);
+  // ‏--green-*/--red-* אינם קיימים בפלטת Chatwoot: הם היו נופלים ל-fallback בהיר גם ב-dark mode.
+  assert.doesNotMatch(css, /--(green|red)-\d/);
+  assert.match(css, /--teal-11/);
+  assert.match(css, /--ruby-11/);
 });
