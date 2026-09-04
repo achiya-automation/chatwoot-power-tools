@@ -816,17 +816,21 @@ CWPT_OWNER_MIGRATIONS
 # admon: /chatwoot-addons), ולכן נקרא ממה שכבר מוזרק ולא נקבע כאן.
 remote_addons_base() {
   local server="$1" base
-  base="$(ssh -n "$server" "docker exec chatwoot-rails-1 bundle exec rails runner \
+  # ‏RAILS_LOG_TO_STDOUT=false — בלעדיו אזהרת ההוצאה משימוש של RubyLLM נפלטת ל-stdout
+  # ומתערבבת בערך; היא מכילה גרש בודד, שמפרק את הציטוט של הפקודה המרוחקת ומפיל את
+  # ההזרקה. אותו טיפול בדיוק קיים ב-lib/inject.sh. הסינון שאחריו הוא חגורה שנייה:
+  # רק שורה שנראית כמו נתיב מוחלט מתקבלת.
+  base="$(ssh -n "$server" "docker exec -e RAILS_LOG_TO_STDOUT=false chatwoot-rails-1 bundle exec rails runner \
     \"v = InstallationConfig.find_by(name: 'DASHBOARD_SCRIPTS')&.value.to_s; \
-      m = v.match(/__CW_ADDONS_BASE=\\\"([^\\\"]+)\\\"/); print(m ? m[1] : '')\" 2>/dev/null" \
-    2>/dev/null | tr -d '[:space:]')"
+      m = v.match(/__CW_ADDONS_BASE=\\\"([^\\\"]+)\\\"/); puts(m ? m[1] : '')\" 2>/dev/null" \
+    2>/dev/null | grep -oE '^/[A-Za-z0-9._/-]*$' | tail -n 1)"
   printf '%s' "${base:-/chatwoot-addons}"
 }
 
 # רשימת החלקים שמוזרקים בפועל בשרת, לפי חותמות "// part:".
 remote_injected_parts() {
   local server="$1"
-  ssh -n "$server" "docker exec chatwoot-rails-1 bundle exec rails runner \
+  ssh -n "$server" "docker exec -e RAILS_LOG_TO_STDOUT=false chatwoot-rails-1 bundle exec rails runner \
     \"InstallationConfig.find_by(name: 'DASHBOARD_SCRIPTS')&.value.to_s.scan(%r{// part: (\\S+)}).flatten.each { |p| puts p }\" 2>/dev/null" \
     2>/dev/null | grep -E '^modules/' | sort
 }
@@ -840,6 +844,12 @@ committed_parts() {
 
 deploy_dashboard_script() {
   local server="$1" base tgz
+  # ‏DASHBOARD_SCRIPTS הוא ערך יחיד ששאר הדשבורד תלוי בו; כתיבה מיותרת היא סיכון בלי
+  # תמורה. אם מה שמוזרק כבר זהה לקאנון — לא נוגעים.
+  if [[ "$(remote_injected_parts "$server")" == "$(committed_parts)" ]]; then
+    ok "dashboard script already matches the canon — nothing written"
+    return 0
+  fi
   base="$(remote_addons_base "$server")"
   tgz="$(mktemp -t cwptinj).tgz"
   # ‏git archive ולא tar: מקבע את אותו commit כמו שאר הפריסה, ובלי מאפייני xattr של macOS
