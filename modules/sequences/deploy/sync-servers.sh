@@ -70,6 +70,15 @@ DEPLOY_ID=""
 PATCH_REL_DIR="modules/sequences/deploy/chatwoot-initializers"
 PATCH_DEST_DIR="/opt/chatwoot/custom-initializers"
 ALLOWED_SERVERS=(chatwoot chatwoot_admon)
+
+# ‏sync-servers תומך רק בסט המלא (ראה assert_full_module_selection), אז הרשימה קבועה.
+CWPT_MODULES="import sequences enhancements"
+# ‏_cwpt_module_parts — הקאנון של החלקים המוזרקים, אותו מקור שההזרקה עצמה משתמשת בו.
+# מותנה בכוונה: הבדיקות מעתיקות את הסקריפט לתיקייה זמנית, ושם REPO_ROOT אינו checkout —
+# ‏source קשיח היה מפיל אותן תחת set -e עוד לפני שנקראה פונקציה אחת.
+# shellcheck source=../../../lib/assemble-dashboard-script.sh
+[[ -r "$REPO_ROOT/lib/assemble-dashboard-script.sh" ]] \
+  && source "$REPO_ROOT/lib/assemble-dashboard-script.sh"
 SERVERS=("${ALLOWED_SERVERS[@]}")
 
 CHECK_ONLY=0
@@ -592,6 +601,25 @@ check_drift() {
   done < <(head_initializer_paths)
   [[ $patch_ok -eq 1 ]] && ok "Rails patches match git"
 
+  # הסקריפטים המוזרקים לדשבורד — עד 4.9.26 לא נבדקו כאן כלל, ולכן חלק שנוסף או הוסר
+  # בקוד יכול היה להיעדר משרת אחד ולהמשיך לרוץ בשני בלי שאף בדיקה תראה את זה.
+  local want_parts have_parts
+  want_parts="$(committed_parts)"
+  have_parts="$(remote_injected_parts "$server")"
+  if [[ -z "$have_parts" ]]; then
+    warn "dashboard script on $server carries no recognizable parts — will be injected"
+    behind=1
+  elif [[ "$want_parts" != "$have_parts" ]]; then
+    local only_git only_server
+    only_git="$(comm -23 <(printf '%s\n' "$want_parts") <(printf '%s\n' "$have_parts") | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+    only_server="$(comm -13 <(printf '%s\n' "$want_parts") <(printf '%s\n' "$have_parts") | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+    [[ -n "$only_git" ]] && warn "dashboard parts missing on $server: $only_git"
+    [[ -n "$only_server" ]] && warn "dashboard parts on $server that git no longer ships: $only_server"
+    behind=1
+  else
+    ok "dashboard script matches git ($(printf '%s\n' "$want_parts" | wc -l | tr -d ' ') parts)"
+  fi
+
   # The payload is swapped as complete directories, so drift is checked as a complete
   # path+SHA-256 manifest too. This catches a server-only auth.js fix, a missing migration,
   # a stale hashed asset, an extra file and unsafe symlinks — none can hide behind two
@@ -772,6 +800,62 @@ CWPT_OWNER_MIGRATIONS
     die "$server: owner migrations failed — engine was not rebuilt"
   fi
   ok "owner migrations applied + ledgered before rebuild ($layout)"
+}
+
+# ── DASHBOARD_SCRIPTS ────────────────────────────────────────────────────────
+# עד 4.9.26 הפריסה נגעה בכל דבר חוץ מהסקריפטים שמוזרקים לדשבורד: המנוע, ה-webapp
+# וה-initializers סונכרנו ונבדקו מול גיט, וההזרקה נשארה פעולה ידנית של install.sh.
+# מכאן שני הכשלים שנמצאו באותו יום: חלק שהוסר מהקוד המשיך לרוץ בשרת אחד, וחלק
+# שנוסף לקוד לא הגיע לאף שרת — ואף בדיקה לא ראתה את זה, כי גם רשימת השומר קופאה.
+#
+# ההזרקה עצמה נשארת lib/inject.sh — הקוד הבדוק, עם הגיבוי, סמני CWPT וחתימת
+# השלמות. אנחנו רק שולחים אותו לשרת ומריצים אותו שם, כי בפריסה השטוחה (chatwoot)
+# אין עותק של המאגר בכלל.
+
+# הבסיס שכל חלק מרכיב ממנו את הנתיבים שלו — נשמר פר-שרת (chatwoot: /drip,
+# admon: /chatwoot-addons), ולכן נקרא ממה שכבר מוזרק ולא נקבע כאן.
+remote_addons_base() {
+  local server="$1" base
+  base="$(ssh -n "$server" "docker exec chatwoot-rails-1 bundle exec rails runner \
+    \"v = InstallationConfig.find_by(name: 'DASHBOARD_SCRIPTS')&.value.to_s; \
+      m = v.match(/__CW_ADDONS_BASE=\\\"([^\\\"]+)\\\"/); print(m ? m[1] : '')\" 2>/dev/null" \
+    2>/dev/null | tr -d '[:space:]')"
+  printf '%s' "${base:-/chatwoot-addons}"
+}
+
+# רשימת החלקים שמוזרקים בפועל בשרת, לפי חותמות "// part:".
+remote_injected_parts() {
+  local server="$1"
+  ssh -n "$server" "docker exec chatwoot-rails-1 bundle exec rails runner \
+    \"InstallationConfig.find_by(name: 'DASHBOARD_SCRIPTS')&.value.to_s.scan(%r{// part: (\\S+)}).flatten.each { |p| puts p }\" 2>/dev/null" \
+    2>/dev/null | grep -E '^modules/' | sort
+}
+
+committed_parts() {
+  declare -f _cwpt_module_parts >/dev/null 2>&1 \
+    || die "lib/assemble-dashboard-script.sh not found under $REPO_ROOT — cannot resolve the dashboard canon"
+  local mod
+  for mod in $CWPT_MODULES; do _cwpt_module_parts "$mod"; done | sort
+}
+
+deploy_dashboard_script() {
+  local server="$1" base tgz
+  base="$(remote_addons_base "$server")"
+  tgz="$(mktemp -t cwptinj).tgz"
+  tar --exclude='._*' -czf "$tgz" -C "$REPO_ROOT" \
+    lib modules/smart-import/inject modules/sequences/inject \
+    modules/dashboard-enhancements/parts modules/sequences/webapp/dist/smart-import 2>/dev/null
+  scp -q "$tgz" "$server:/tmp/cwpt-inject.tgz"
+  rm -f "$tgz"
+  ssh -n "$server" "sudo rm -rf /opt/chatwoot/.cwpt-inject \
+    && sudo mkdir -p /opt/chatwoot/.cwpt-inject \
+    && sudo tar -C /opt/chatwoot/.cwpt-inject -xzf /tmp/cwpt-inject.tgz \
+    && rm -f /tmp/cwpt-inject.tgz \
+    && cd /opt/chatwoot/.cwpt-inject \
+    && sudo bash -c 'source lib/inject.sh && inject_dashboard_script /opt/chatwoot \"$base\" $CWPT_MODULES'" \
+    >/dev/null 2>&1 || die "$server: dashboard script injection failed"
+  ssh -n "$server" "sudo rm -rf /opt/chatwoot/.cwpt-inject" >/dev/null 2>&1 || true
+  ok "dashboard script injected (base $base)"
 }
 
 deploy_patch() {
@@ -997,6 +1081,10 @@ verify() {
   done < <(head_initializer_paths)
   ok "all repository initializers mounted in Rails + Sidekiq"
 
+  [[ "$(remote_injected_parts "$server")" == "$(committed_parts)" ]] \
+    || die "$server: injected dashboard parts differ from the committed canon"
+  ok "dashboard script matches the committed canon"
+
   # 4.17 enterprise-graft (native-first, 20.8.26): the prepend itself is the proof; the
   # signature check catches the next upstream reshape before it silently disables us again.
   ssh "$server" "docker exec chatwoot-sidekiq-1 bundle exec rails runner \"
@@ -1115,6 +1203,7 @@ for ((server_index=0; server_index<${#SERVERS[@]}; server_index++)); do
   # Publish Rails code only after the owner-side schema/grants have been proven. A failed
   # owner migration therefore cannot become active on an unrelated future Rails restart.
   deploy_patch "$server"
+  deploy_dashboard_script "$server"
   rebuild_engine "$server" "$layout"
   wait_healthy "$server" "$(engine_container "$layout")"
   restart_rails "$server"
