@@ -13,6 +13,13 @@
   // wizard already relies on. he→Hebrew, ltr→English (also the sane fallback for fr/es/…). ──
   // ⚠️ חייב להיות עצל — ראה import-button.js: ב-DASHBOARD_SCRIPTS זמן-הטעינה מקדים את Vue,
   // אז #app[dir] עוד לא קיים וחישוב חד-פעמי ננעל על 'en' לנצח.
+  // ── שער נתיב ─────────────────────────────────────────────────────────────────
+  // ‏4 קריאות querySelectorAll רצו כאן בכל התייצבות DOM (150ms) בכל עמוד בדשבורד, גם
+  // בעמוד השיחות שבו אין מודל קמפיין בכלל. הסלקטורים עצמם מסננים נכון (למשל
+  // mediaFormatFromPlaceholder), אז זו לא הייתה שגיאה — רק סריקה של כל המסמך על לא כלום.
+  // אותו שער כמו ב-campaign-stats.js (onPage) וב-native-i18n-he.js באותה תיקייה.
+  function onPage() { return /\/accounts\/\d+\/campaigns\b/.test(location.pathname); }
+
   function dripLocale() {
     var a = document.querySelector('#app[dir]');
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
@@ -666,7 +673,11 @@
   // כבר ידוע והרשימה טרייה. קריאה כאן הייתה רק מציתה את ה-throttle מוקדם מדי עם רשימה ישנה.
   loadTemplateMedia();
   var enhanceTimer;
-  new MutationObserver(function () { clearTimeout(enhanceTimer); enhanceTimer = setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); autofillAllMedia(); }, 150); })
+  function runEnhancers() {
+    if (!onPage()) return;
+    enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); autofillAllMedia();
+  }
+  new MutationObserver(function () { clearTimeout(enhanceTimer); enhanceTimer = setTimeout(runEnhancers, 150); })
     .observe(document.documentElement, { childList: true, subtree: true });
-  setTimeout(function () { enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); autofillAllMedia(); }, 500);
+  setTimeout(runEnhancers, 500);
 })();
