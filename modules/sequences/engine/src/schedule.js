@@ -159,11 +159,27 @@ export function quietWindowEnd({ now, windows, skipShabbat = false, quietStart, 
     }
   }
 
-  if (skipShabbat && Array.isArray(windows)) {
-    for (const w of windows) {
-      const s = new Date(w.starts_at).getTime();
-      const e = new Date(w.ends_at).getTime();
-      if (now.getTime() >= s && now.getTime() < e) ends.push(new Date(e));
+  if (skipShabbat) {
+    const fresh = Array.isArray(windows)
+      && windows.some((w) => new Date(w.ends_at).getTime() >= now.getTime());
+    if (fresh) {
+      for (const w of windows) {
+        const s = new Date(w.starts_at).getTime();
+        const e = new Date(w.ends_at).getTime();
+        if (now.getTime() >= s && now.getTime() < e) ends.push(new Date(e));
+      }
+    } else {
+      // 🔒 אותה נפילה סגורה בדיוק כמו ב-isNoSendNow, שחסמה שישי מ-16:00 ושבת כולה — ובלי
+      // התאמה כאן הפונקציה החזירה null, ה-reconciler לא עדכן next_send_at בכלל, וההרשמה
+      // נשארה עם זמן בעבר: כל טיק (60 שניות) בוחר אותה מחדש לאורך כל השבת, ובצאת השבת
+      // כולן מגיעות בבת אחת בלי הפיזור שנועד למנוע בדיוק את זה.
+      // ‏isNoSendNow חוסם את שבת כולה, ולכן סוף החלון השמרני הוא ראשון ב-00:00 בירושלים.
+      const { wd, hm } = parts(now);
+      if (wd === 'Sat' || (wd === 'Fri' && hm >= '16:00')) {
+        let end = atJerusalemHour(now, 0);
+        while (end <= now || jerusalemDow(end) !== 0) end = new Date(end.getTime() + 86_400_000);
+        ends.push(end);
+      }
     }
   }
 
