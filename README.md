@@ -55,7 +55,7 @@ curl -fsSL https://github.com/achiya-automation/chatwoot-power-tools/archive/ref
 - **🔀 Visual flow builder** — a drag-and-drop conversation builder: trigger, message, template, question, buttons, condition, delay, action, webhook and handoff nodes
 - **🛡️ WhatsApp compliance guardrails** — consent records, opt-out detection in the customer's own words, live quality monitoring, and an automatic halt before Meta disables your number
 - **📊 Campaign analytics** — a delivery funnel, per-recipient outcomes with the reason each failure happened, and a read-rate comparison across campaigns
-- **✨ Dashboard upgrades** — a "Sequences" sidebar item, a supercharged campaign modal (variable chips + live preview), native Hebrew fixes, and campaign delivery analytics
+- **✨ Dashboard upgrades** — a "Sequences" sidebar item, a supercharged campaign modal (variable chips + live preview), native Hebrew fixes, campaign delivery analytics, and a WhatsApp-look skin for the agent dashboard (green palette, bubble tails, wallpaper, day separators, compact composer — light + dark)
 - **🧩 Modular** — install all three, or exactly the ones you want (`--modules=`)
 - **🔒 Least-privilege by design** — read-only access to required Chatwoot data plus three narrowly scoped assignment/cache columns (see [Security](#-security))
 - **♻️ Clean uninstall** — one flag reverses everything and preserves your data + any existing dashboard scripts
@@ -92,7 +92,7 @@ Automated WhatsApp Cloud API template-message sequences, managed entirely from i
 </table>
 
 ### ✨ Dashboard Enhancements
-Adds a "Sequences" item to the main sidebar, upgrades Chatwoot's native WhatsApp campaign modal with variable chips and a live message preview, fills reusable template media automatically, fixes missing native Hebrew strings, and adds campaign delivery analytics.
+Adds a "Sequences" item to the main sidebar, upgrades Chatwoot's native WhatsApp campaign modal with variable chips and a live message preview, fills reusable template media automatically, fixes missing native Hebrew strings, adds campaign delivery analytics, and re-skins the agent dashboard to look and feel like WhatsApp (chat wallpaper, bubble tails with in-bubble time stamps, per-day separators, round avatars, pill filters, a single-row composer with a round send button, WhatsApp green instead of Chatwoot blue — light and dark). Any agent can switch the skin off in their own browser with `localStorage.setItem('cwptWaTheme', 'off')`.
 
 <table>
 <tr><td width="50%" align="center"><b>🇬🇧 English</b></td><td width="50%" align="center"><b>🇮🇱 עברית</b></td></tr>
@@ -183,7 +183,7 @@ sudo bash install.sh             # install for real
 |---|---|---|
 | Smart Contact Import | `import` | CSV/Excel import wizard in the dashboard |
 | WhatsApp Sequences | `sequences` | The sidecar engine and its full dashboard: sequences, flow builder, template studio, compliance, campaign analytics, contacts — plus the sidebar entry |
-| Dashboard Enhancements | `dashboard` | Campaign modal upgrade, reusable template media, native Hebrew fixes and campaign analytics |
+| Dashboard Enhancements | `dashboard` | Campaign modal upgrade, reusable template media, native Hebrew fixes, campaign analytics and the WhatsApp-look skin |
 
 The `sequences` module is one install unit, not six — the screens above all live in the
 same sidecar app and share its engine and database schema.

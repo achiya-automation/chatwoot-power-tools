@@ -41,7 +41,7 @@ modules/
                                   owns its own migrations under engine/migrations/ instead
     inject/                     — dashboard-script part: sidebar "Sequences" nav
   dashboard-enhancements/
-    parts/                      — dashboard-script parts: campaign modal/stats and native i18n
+    parts/                      — dashboard-script parts: campaign modal/stats, native i18n, whatsapp-theme (skin)
 test/                            — bats tests for install.sh + lib/ (mocked docker/psql)
 ```
 
