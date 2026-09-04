@@ -130,6 +130,37 @@ test('artifact: דשבורד הקמפיינים מזריק KPI + כפתור סט
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 
+test('artifact: מסך השיחה — מפרידי היום נוספים ואף חלק לא זורק', async () => {
+  // שני התרחישים האחרים בודקים /contacts ו-/campaigns. הקוד של whatsapp-theme (מפרידי יום
+  // וחותמות שעה) רץ רק בתוך שיחה, ולכן עד 4.9.26 הוא נפרס בלי ששום שער הריץ אותו אפילו פעם.
+  //
+  // ⚠️ הבועות הן ילדים *ישירים* של .conversation-panel, בלי עטיפת <li>: MessageList.vue הוא
+  // ‏<ul> ו-Message.vue הוא <div class="… message-bubble-container">. ‏<li> מופיע שם רק
+  // בסלוטים (טעינת היסטוריה, תג "לא נקרא"). fixture עם <li> עוטף מחמיץ את כל הלוגיקה.
+  // הפורמט הוא messageTimestamp(..., 'LLL d, h:mm a') דרך date-fns, כלומר AM/PM באותיות
+  // גדולות — fixture עם am קטן פשוט לא מותאם, והבדיקה נכשלת על עצמה.
+  const { dom, errors } = makeDom('/app/accounts/1/conversations/42');
+  const w = await runDashboardScript(dom, (doc) =>
+    mountVueRoot(doc, `
+      <main><ul class="conversation-panel">
+        <div class="message-bubble-container" data-message-id="1">
+          <time datetime="2026-09-03T09:15:00Z">Sep 3, 9:15 AM</time>שלום</div>
+        <div class="message-bubble-container" data-message-id="2">
+          <time datetime="2026-09-04T11:20:00Z">Sep 4, 11:20 AM</time>מה נשמע</div>
+      </ul><div></div></main>`)
+  );
+
+  const doc = w.document;
+  const days = doc.querySelectorAll('.cwpt-wa-day');
+  assert.ok(days.length >= 2, 'שתי הודעות בשני ימים שונים חייבות לקבל שני מפרידים');
+  assert.match(
+    doc.querySelector('.conversation-panel').textContent,
+    /11:20/,
+    'חותמת השעה בתוך הבועה חייבת להיות HH:mm'
+  );
+  assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
+});
+
 test('artifact: אין backslash כפול בשום מקום — הוא לא שורד כתיבה חוזרת ל-InstallationConfig', () => {
   // מחרוזת Ruby בגרשיים בודדים מקפלת '\\' ל-'\'. כל '\\' ב-artifact הוא מוקש: אחרי כתיבה
   // חוזרת של הערך (ניקוי ידני, כלי אחר) הוא הופך ל-'\' והסלקטור/הביטוי נשבר בשקט.
