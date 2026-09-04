@@ -842,9 +842,15 @@ deploy_dashboard_script() {
   local server="$1" base tgz
   base="$(remote_addons_base "$server")"
   tgz="$(mktemp -t cwptinj).tgz"
-  tar --exclude='._*' -czf "$tgz" -C "$REPO_ROOT" \
+  # ‏git archive ולא tar: מקבע את אותו commit כמו שאר הפריסה, ובלי מאפייני xattr של macOS
+  # ש-tar בלינוקס יוצא עליהם בקוד שגיאה (LIBARCHIVE.xattr.com.apple.provenance) ומפיל
+  # את השרשרת אף שהחילוץ עצמו הצליח.
+  git -C "$REPO_ROOT" archive --format=tar.gz -o "$tgz" "$DEPLOY_COMMIT" \
     lib modules/smart-import/inject modules/sequences/inject \
-    modules/dashboard-enhancements/parts modules/sequences/webapp/dist/smart-import 2>/dev/null
+    modules/dashboard-enhancements/parts modules/sequences/webapp/dist/smart-import \
+    || die "could not build the dashboard-script archive from $DEPLOY_COMMIT"
+  archive_has_member "$tgz" 'lib/inject.sh' \
+    || die "dashboard-script archive has no lib/inject.sh"
   scp -q "$tgz" "$server:/tmp/cwpt-inject.tgz"
   rm -f "$tgz"
   ssh -n "$server" "sudo rm -rf /opt/chatwoot/.cwpt-inject \
