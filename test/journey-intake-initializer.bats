@@ -4,6 +4,10 @@
   initializer="$BATS_TEST_DIRNAME/../modules/sequences/deploy/chatwoot-initializers/journey_intake_contact_access.rb"
 
   run ruby - "$initializer" <<'RUBY'
+# encoding: utf-8
+# ‏ruby - קורא את התוכנית מ-stdin, ושם הוא לא מניח UTF-8 אלא הולך לפי ה-locale.
+# בלי ההערה הזאת עברית ואמוג"י בגוף הבדיקה נדחים כ-invalid multibyte character בכל
+# סביבה שה-locale שלה אינו UTF-8, והבדיקה נכשלת על הסביבה ולא על הקוד.
 class TestRailsConfig
   def to_prepare(&block)
     block.call
@@ -78,6 +82,10 @@ RUBY
   initializer="$BATS_TEST_DIRNAME/../modules/sequences/deploy/chatwoot-initializers/journey_intake_contact_access.rb"
 
   run ruby - "$initializer" <<'RUBY'
+# encoding: utf-8
+# ‏ruby - קורא את התוכנית מ-stdin, ושם הוא לא מניח UTF-8 אלא הולך לפי ה-locale.
+# בלי ההערה הזאת עברית ואמוג"י בגוף הבדיקה נדחים כ-invalid multibyte character בכל
+# סביבה שה-locale שלה אינו UTF-8, והבדיקה נכשלת על הסביבה ולא על הקוד.
 require 'pathname'
 
 class DeferredRailsConfig

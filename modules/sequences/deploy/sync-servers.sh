@@ -860,10 +860,14 @@ CWPT_REMOTE_PATCH
 # engine_build_is_pinned קובע אם אנחנו במצב הזה; repin_engine_image בונה עם קבצי ה-build
 # בלבד, ואז מעדכן את ה-sha הנעוץ כדי שההקשחה תישאר בתוקף מול ה-image החדש.
 engine_build_is_pinned() {
-  local server="$1" container="$2"
-  ! ssh -n "$server" "cd /opt/chatwoot && sudo docker compose -p chatwoot config --format json 2>/dev/null \
+  local server="$1" container="$2" answer
+  answer="$(ssh -n "$server" "cd /opt/chatwoot && sudo docker compose -p chatwoot config --format json 2>/dev/null \
     | python3 -c \"import json,sys; print('build' in (json.load(sys.stdin)['services'].get('$container') or {}))\"" \
-    2>/dev/null | grep -qx True
+    2>/dev/null | tr -d '[:space:]')"
+  # רק תשובה מפורשת False מוכיחה קיבוע. בדיקה שלא החזירה כלום (ssh נכשל, compose ישן,
+  # python חסר) חייבת ליפול חזרה למסלול הרגיל — אחרת כל סביבה שלא עונה נשלחת לבנייה
+  # וקיבוע מחדש בלי סיבה. נתפס בבדיקה 176 שנפלה ב-CI.
+  [[ "$answer" == "False" ]]
 }
 
 repin_engine_image() {
