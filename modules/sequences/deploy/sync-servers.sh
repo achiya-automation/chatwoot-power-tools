@@ -573,6 +573,10 @@ check_drift() {
         warn "Rails patch $base on $server matches NO commit — edited in place, and this is the only copy"
         warn "  review before overwriting:  ssh $server 'sudo cat $dest' | diff - <(git show $DEPLOY_COMMIT:$rel_patch)"
         blocking=1; patch_ok=0
+        # ‏--force הבטיח "re-run with --force to overwrite" אבל הענף הזה מעולם לא הוסיף את
+        # הקובץ ל-DEPLOY_PATCHES — כלומר הריצה המשיכה הלאה ודילגה עליו בשקט, ההפך ממה
+        # שהאזהרה מבטיחה. נתפס 4.9.26 על whatsapp_campaign_feature_flag.rb.
+        [[ $FORCE -eq 1 ]] && DEPLOY_PATCHES+="$base"$'\n'
       fi
     fi
     if ! grep -Fqx "$mount_target" <<< "$rails_initializer_mounts"; then
@@ -848,6 +852,43 @@ CWPT_REMOTE_PATCH
   ok "Rails initializers installed: $(printf '%s' "$DEPLOY_PATCHES" | tr '\n' ' ')"
 }
 
+# ‏docker-compose.security.yml (הקשחת 31.8) נועץ כל שירות ל-image sha ומאפס build ל-null.
+# התוצאה: `docker compose up -d --build` מדווח הצלחה בזמן שדוקר לא בונה כלום, וכל שינוי
+# בקוד המנוע נשאר על הדיסק בלי להגיע לקונטיינר — בשקט מוחלט. נתפס 4.9.26: ה-image שרץ
+# בייצור נבנה ב-31.8 והפריסות שאחריו לא שינו אותו.
+#
+# engine_build_is_pinned קובע אם אנחנו במצב הזה; repin_engine_image בונה עם קבצי ה-build
+# בלבד, ואז מעדכן את ה-sha הנעוץ כדי שההקשחה תישאר בתוקף מול ה-image החדש.
+engine_build_is_pinned() {
+  local server="$1" container="$2"
+  ! ssh -n "$server" "cd /opt/chatwoot && sudo docker compose -p chatwoot config --format json 2>/dev/null \
+    | python3 -c \"import json,sys; print('build' in (json.load(sys.stdin)['services'].get('$container') or {}))\"" \
+    2>/dev/null | grep -qx True
+}
+
+repin_engine_image() {
+  local server="$1" container="$2" build_files="$3"
+  ssh -n "$server" "cd /opt/chatwoot \
+    && sudo docker compose -p chatwoot $build_files build '$container' >/dev/null 2>&1 \
+    && IMG=\$(sudo docker inspect --format '{{.Id}}' 'chatwoot-$container:latest' 2>/dev/null \
+           || sudo docker inspect --format '{{.Id}}' 'chatwoot_$container:latest' 2>/dev/null) \
+    && [ -n \"\$IMG\" ] \
+    && sudo IMG=\"\$IMG\" python3 -c \"
+import os, re, sys
+p = '/opt/chatwoot/docker-compose.security.yml'
+s = open(p, encoding='utf-8').read()
+pat = re.compile(r'(^  $container:\n(?:(?!^  \S).*\n)*?^    image: )sha256:[0-9a-f]{64}', re.M)
+s2, n = pat.subn(lambda m: m.group(1) + os.environ['IMG'], s, count=1)
+sys.exit('pin line not found') if n != 1 else open(p, 'w', encoding='utf-8').write(s2)
+\" \
+    && sudo chown root:root /opt/chatwoot/docker-compose.security.yml \
+    && sudo chmod 600 /opt/chatwoot/docker-compose.security.yml \
+    && sudo docker compose -p chatwoot config --quiet \
+    && sudo docker compose -p chatwoot up -d --force-recreate --no-deps '$container'" \
+    >/dev/null 2>&1 || die "$server: $container build+repin failed"
+  ok "$container built and re-pinned in docker-compose.security.yml"
+}
+
 rebuild_engine() {
   local server="$1" layout="$2"
   case "$server" in chatwoot|chatwoot_admon) ;; *) die "refusing unknown server: $server" ;; esac
@@ -863,11 +904,19 @@ rebuild_engine() {
     have_compose="$(remote_md5 "$server" "$compose_root/docker-compose.addons.yml")"
     [[ "$want_compose" == "$have_compose" ]] \
       || die "$server: refusing build with docker-compose.addons.yml different from $DEPLOY_COMMIT"
+    if engine_build_is_pinned "$server" "$container"; then
+      repin_engine_image "$server" "$container" "-f docker-compose.yml -f '$compose_rel'"
+      return 0
+    fi
     ssh "$server" "cd /opt/chatwoot \
       && sudo docker compose -f docker-compose.yml -f '$compose_rel' -p chatwoot config --quiet \
       && sudo docker compose -f docker-compose.yml -f '$compose_rel' -p chatwoot up -d --build --no-deps $container" \
       >/dev/null 2>&1 || die "$server: $container rebuild failed"
   else
+    if engine_build_is_pinned "$server" "$container"; then
+      repin_engine_image "$server" "$container" "-f docker-compose.yml -f docker-compose.override.yml"
+      return 0
+    fi
     ssh "$server" "cd /opt/chatwoot \
       && sudo docker compose config --quiet \
       && sudo docker compose up -d --build --no-deps $container" \
