@@ -57,7 +57,18 @@ module WhatsappCampaignGraft417
     source_id = channel.send_template(to, template_info(name, namespace, lang_code, processed_parameters), nil)
     update_recipient_from_provider_response(recipient, source_id)
 
-    create_campaign_conversation_and_message(recipient.contact, source_id, template_params) if source_id.present?
+    # הרישום הוא אחרי המסירה, ולכן חייב rescue משלו. בלעדיו כשל כאן היה נתפס ב-rescue
+    # החיצוני ומסמן mark_failed! נמען שכבר סומן mark_sent! — כלומר הודעה שהלקוח קיבל
+    # מופיעה בדוח ככישלון, ו"שליחה מחדש לנכשלים" הייתה שולחת אותה שוב לאותו אדם.
+    # לא נצפה בייצור (כל 148 הכשלים שם הם קודי מסירה של מטא), אבל הסדר עצמו שביר.
+    if source_id.present?
+      begin
+        create_campaign_conversation_and_message(recipient.contact, source_id, template_params)
+      rescue StandardError => e
+        Rails.logger.error "WhatsApp campaign recording failed after a successful send " \
+                           "for recipient #{recipient.id}: #{e.class}"
+      end
+    end
     source_id
   rescue StandardError => e
     Rails.logger.error "WhatsApp campaign delivery failed for recipient #{recipient.id}: #{e.class}"
