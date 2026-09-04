@@ -35,26 +35,26 @@ test('הצילום מדווח רק על שורות של חשבון שאיננו'
   const rows = await query(
     "SELECT tbl, rows_left FROM drip.deleted_account_footprint() WHERE tbl = 'campaign_send_snapshots'"
   );
-  assert.equal(rows.rows.length, 1);
-  assert.equal(Number(rows.rows[0].rows_left), 2);
+  assert.equal(rows.length, 1);
+  assert.equal(Number(rows[0].rows_left), 2);
 });
 
 test('הניקוי מוחק את השורות היתומות ומשאיר את החשבון החי ללא פגע', async () => {
   await query('SELECT * FROM drip.purge_deleted_accounts()');
 
   const left = await query('SELECT account_id, phone FROM drip.campaign_send_snapshots ORDER BY account_id');
-  assert.equal(left.rows.length, 1, 'רק שורת החשבון החי אמורה לשרוד');
-  assert.equal(Number(left.rows[0].account_id), 901);
-  assert.equal(left.rows[0].phone, '972500000001');
+  assert.equal(left.length, 1, 'רק שורת החשבון החי אמורה לשרוד');
+  assert.equal(Number(left[0].account_id), 901);
+  assert.equal(left[0].phone, '972500000001');
 
   const after = await query('SELECT count(*)::int AS n FROM drip.deleted_account_footprint()');
-  assert.equal(after.rows[0].n, 0, 'הרצה שנייה כבר לא מוצאת מה למחוק');
+  assert.equal(after[0].n, 0, 'הרצה שנייה כבר לא מוצאת מה למחוק');
 });
 
 test('הניקוי אידמפוטנטי — הרצה חוזרת אינה מוחקת דבר נוסף', async () => {
   await query('SELECT * FROM drip.purge_deleted_accounts()');
   const second = await query('SELECT count(*)::int AS n FROM drip.purge_deleted_accounts()');
-  assert.equal(second.rows[0].n, 0);
+  assert.equal(second[0].n, 0);
   const live = await query('SELECT count(*)::int AS n FROM drip.campaign_send_snapshots');
-  assert.equal(live.rows[0].n, 1);
+  assert.equal(live[0].n, 1);
 });
