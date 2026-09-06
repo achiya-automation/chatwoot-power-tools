@@ -47,6 +47,8 @@
   // compact chat-list card only (it has the .border-line body); the expanded table layout
   // keeps its stock 48px rows — its columns have no room for the WhatsApp row anatomy
   var ROW = '#app .conversation:has(>div.border-line)';
+  // bubbles that get a WhatsApp tail + flat corner on the first message of a run
+  var TAILED = ':is([data-bubble-name="text"],[data-bubble-name="audio"],[data-bubble-name="attachment"],[data-bubble-name="image"],[data-bubble-name="video"],[data-bubble-name="fallback"])';
 
   var CSS = [
     /* ---------- tokens ---------- */
@@ -167,7 +169,8 @@
     '#app .message-bubble-container .right-bubble{background:var(--wa-outgoing)}',
     '#app .message-bubble-container .bg-n-solid-amber.left-bubble,#app .message-bubble-container .bg-n-solid-amber.right-bubble{background:var(--wa-note)}',
     '#app .message-bubble-container .bg-n-ruby-4.left-bubble,#app .message-bubble-container .bg-n-ruby-4.right-bubble{background:rgb(var(--ruby-4))}',
-    '#app .message-bubble-container [data-bubble-name="text"]{padding:6px 9px 8px;position:relative;overflow:visible}',
+    '#app .message-bubble-container ' + TAILED + '{position:relative;overflow:visible}',
+    '#app .message-bubble-container [data-bubble-name="text"]{padding:6px 9px 8px}',
     '#app .message-bubble-container [data-bubble-name="text"]>.gap-3{gap:6px}',
     '#app .message-bubble-container .prose-bubble{color:inherit}',
     '#app .message-bubble-container .prose-bubble a{color:var(--wa-link)}',
@@ -179,18 +182,45 @@
     '#app .message-bubble-container .right-bubble>.text-xs{color:var(--wa-meta-out)}',
     '#app .message-bubble-container .right-bubble [class~="text-[#7EB6FF]"]{color:var(--wa-tick-read)}',
     '#app .message-bubble-container .right-bubble .text-n-slate-10{color:var(--wa-meta-out)}',
-    '#app .message-bubble-container [data-bubble-name="text"]:before{content:"";position:absolute;top:0;width:8px;height:13px}',
-    '#app .message-bubble-container .left-bubble[data-bubble-name="text"]{border-start-start-radius:0}',
-    '#app .message-bubble-container .left-bubble[data-bubble-name="text"]:before{inset-inline-start:-8px;background:var(--wa-incoming);clip-path:polygon(0 0,100% 0,100% 100%)}',
-    '#app[dir=rtl] .message-bubble-container .left-bubble[data-bubble-name="text"]:before{clip-path:polygon(0 0,100% 0,0 100%)}',
-    '#app .message-bubble-container .right-bubble[data-bubble-name="text"]{border-start-end-radius:0}',
-    '#app .message-bubble-container .right-bubble[data-bubble-name="text"]:before{inset-inline-end:-8px;background:var(--wa-outgoing);clip-path:polygon(0 0,100% 0,0 100%)}',
-    '#app[dir=rtl] .message-bubble-container .right-bubble[data-bubble-name="text"]:before{clip-path:polygon(0 0,100% 0,100% 100%)}',
-    '#app .message-bubble-container .bg-n-solid-amber[data-bubble-name="text"]:before{background:var(--wa-note)}',
-    '#app .group-with-next+.message-bubble-container [data-bubble-name="text"]{border-start-start-radius:7.5px;border-start-end-radius:7.5px}',
-    '#app .group-with-next+.message-bubble-container [data-bubble-name="text"]:before{display:none}',
+    '#app .message-bubble-container ' + TAILED + ':before{content:"";position:absolute;top:0;width:8px;height:13px}',
+    '#app .message-bubble-container .left-bubble' + TAILED + '{border-start-start-radius:0}',
+    '#app .message-bubble-container .left-bubble' + TAILED + ':before{inset-inline-start:-8px;background:var(--wa-incoming);clip-path:polygon(0 0,100% 0,100% 100%)}',
+    '#app[dir=rtl] .message-bubble-container .left-bubble' + TAILED + ':before{clip-path:polygon(0 0,100% 0,0 100%)}',
+    '#app .message-bubble-container .right-bubble' + TAILED + '{border-start-end-radius:0}',
+    '#app .message-bubble-container .right-bubble' + TAILED + ':before{inset-inline-end:-8px;background:var(--wa-outgoing);clip-path:polygon(0 0,100% 0,0 100%)}',
+    '#app[dir=rtl] .message-bubble-container .right-bubble' + TAILED + ':before{clip-path:polygon(0 0,100% 0,100% 100%)}',
+    '#app .message-bubble-container .bg-n-solid-amber' + TAILED + ':before{background:var(--wa-note)}',
+    '#app .message-bubble-container .bg-n-ruby-4' + TAILED + ':before{background:rgb(var(--ruby-4))}',
+    '#app .group-with-next+.message-bubble-container ' + TAILED + '{border-start-start-radius:7.5px;border-start-end-radius:7.5px}',
+    '#app .group-with-next+.message-bubble-container ' + TAILED + ':before{display:none}',
     '#app .message-bubble-container .left-bubble>.bg-n-alpha-black1,#app .message-bubble-container .right-bubble>.bg-n-alpha-black1{background:var(--wa-quote-bg);border-inline-start:4px solid var(--wa-quote-bar);border-radius:7.5px;padding:6px 10px;margin:0 0 6px}',
-    '#app .message-bubble-container [data-bubble-name="image"],#app .message-bubble-container [data-bubble-name="video"]{padding:3px;border-radius:7.5px}',
+    '#app .message-bubble-container [data-bubble-name="image"],#app .message-bubble-container [data-bubble-name="video"]{padding:3px 3px 4px;border-radius:7.5px}',
+    '#app .message-bubble-container [data-bubble-name="image"]>.text-xs,#app .message-bubble-container [data-bubble-name="video"]>.text-xs{margin:2px 0 0;padding:0 5px}',
+    /* a captioned photo/video inside a text bubble: WhatsApp shows the media large above the caption, not a 72px thumbnail after it */
+    '#app .message-bubble-container [data-bubble-name="text"]:has([class~="size-[72px]"]){max-width:358px}',
+    '#app .message-bubble-container [data-bubble-name="text"]:has([class~="size-[72px]"])>.gap-3{gap:0}',
+    '#app .message-bubble-container [data-bubble-name="text"]:has([class~="size-[72px]"])>.gap-3>.prose-bubble{display:contents}',
+    '#app .message-bubble-container [data-bubble-name="text"]>.gap-3>div:has(>[class~="size-[72px]"]){order:-1;width:100%;margin:0 0 6px}',
+    '#app .message-bubble-container [data-bubble-name="text"]>.gap-3>.prose-bubble>p.cwpt-wa-sender{order:-2;margin-bottom:4px!important}',
+    '#app .message-bubble-container [data-bubble-name="text"]>.gap-3>div:has(>.h-9){margin-top:4px}',
+    '#app .message-bubble-container [data-bubble-name="text"] [class~="size-[72px]"]{width:100%;height:auto;border-radius:6px}',
+    '#app .message-bubble-container [data-bubble-name="text"] [class~="size-[72px]"]>img,#app .message-bubble-container [data-bubble-name="text"] [class~="size-[72px]"]>video{width:100%;height:auto;max-height:340px;object-fit:cover;display:block}',
+    /* voice note: the bubble itself is the player — the chip's own card (border/shadow/white) goes, the clock reads LTR even in a Hebrew page */
+    '#app .message-bubble-container [data-bubble-name="audio"]{padding:4px 8px 8px;min-width:300px}',
+    '#app .message-bubble-container [data-bubble-name="audio"]>.rounded-xl{background:transparent;border:0;box-shadow:none;border-radius:0;padding:2px 0 0;gap:6px}',
+    '#app .message-bubble-container .tabular-nums{direction:ltr;unicode-bidi:isolate;min-width:76px;text-align:center}',
+    '#app .message-bubble-container [data-bubble-name="audio"] .tabular-nums{color:var(--wa-text-2)}',
+    /* a file name like קבלה_718.pdf is bidi-scrambled by the RTL page ("pdf.718_קבלה") — isolate it LTR */
+    '#app[dir=rtl] .message-bubble-container .h-9>[class~="max-w-36"]{direction:ltr;unicode-bidi:isolate;text-align:right}',
+    /* contact / file / location card: the number, file name or address reads LTR too; the action reads like WhatsApp's text button */
+    '#app[dir=rtl] .message-bubble-container [data-bubble-name="attachment"] .space-y-1>.text-n-slate-11{direction:ltr;unicode-bidi:isolate;text-align:right}',
+    '#app .message-bubble-container [data-bubble-name="attachment"]>.grid{gap:10px}',
+    '#app .message-bubble-container [data-bubble-name="attachment"] .mb-2{margin-bottom:0}',
+    '#app .message-bubble-container [data-bubble-name="attachment"] .mb-2>a,#app .message-bubble-container [data-bubble-name="attachment"] .mb-2>button{background:transparent;border:0;border-top:1px solid var(--wa-divider);border-radius:0;color:var(--wa-primary-strong);font-weight:500;padding:8px 0 0}',
+    '#app .message-bubble-container [data-bubble-name="audio"]>.text-xs{margin-top:0}',
+    /* the bridge's "🗑️ ההודעה נמחקה בוואטסאפ" reads like WhatsApp's own tombstone: muted italic, not bold */
+    '#app .message-bubble-container[data-wa-deleted] .prose-bubble{color:var(--wa-text-2);font-style:italic}',
+    '#app .message-bubble-container[data-wa-deleted] .prose-bubble strong{font-weight:400}',
     '#app .message-bubble-container [data-bubble-name="activity"]{background:var(--wa-system);color:var(--wa-text-2);font-size:12.5px;line-height:20px;padding:4px 12px;border-radius:7.5px!important;box-shadow:0 1px .5px var(--wa-shadow)}',
     '#app .message-bubble-container [role=img]{border-radius:50%!important}',
     '#app .conversation-panel>li>span.bg-n-brand.rounded-full{background:var(--wa-system);color:var(--wa-text-2);box-shadow:0 1px .5px var(--wa-shadow);border-radius:7.5px;padding:5px 16px;min-width:50%;text-align:center;font-weight:500}',
@@ -199,19 +229,21 @@
     '#app .conversation-panel+div>.absolute>div{background:var(--wa-incoming);color:var(--wa-text-2);box-shadow:0 1px .5px var(--wa-shadow)}',
 
     /* ---------- composer: one WhatsApp-style row ---------- */
-    '#app .reply-box{margin:0;border:0;border-radius:0;background:var(--wa-app-bg);display:flex;flex-wrap:wrap;align-items:flex-end;padding:6px 10px 8px}',
+    '#app .reply-box{margin:0;border:0;border-radius:0;background:var(--wa-app-bg);display:flex;flex-wrap:wrap;align-items:flex-end;padding:8px 14px 10px}',
     '#app .reply-box.is-private{background:var(--wa-note)}',
     '#app .reply-box>div[class~="h-[3.25rem]"]{order:1;flex:0 0 100%;height:auto;min-height:32px;padding:0 0 6px}',
     /* stock sizing stays: the grab handle above the box and the expand button keep working — the handle just loses its gradient bar */
-    '#app .resizable-editor-wrapper>.cursor-row-resize{background:transparent}',
+    '#app .resizable-editor-wrapper>.cursor-row-resize{background:transparent;top:-8px;height:16px;align-items:center;backdrop-filter:none}',
+    '#app .resizable-editor-wrapper>.cursor-row-resize>div{width:40px;height:4px;margin-top:0;border-radius:4px;background:rgba(84,101,111,.3);transition:none;animation:none}',
+    '#app .resizable-editor-wrapper>.cursor-row-resize:hover>div{background:rgba(84,101,111,.55)}',
     '#app .reply-box>div[class~="h-[3.25rem]"]>button.rounded-full{background:var(--wa-chip);color:var(--wa-text-2);height:28px;font-size:13px}',
     '#app .reply-box>div[class~="h-[3.25rem]"]>button.rounded-full>div.bg-n-solid-1{background:var(--wa-input);height:22px}',
     '#app .reply-box>.reply-box__top{order:3;flex:1 1 0;min-width:0;background:var(--wa-input);border-radius:8px;padding:6px 12px;margin:0;box-shadow:0 1px .5px var(--wa-shadow)}',
     '#app .reply-box.is-private>.reply-box__top{background:rgba(255,255,255,.6)}',
     'body.dark #app .reply-box.is-private>.reply-box__top{background:rgba(0,0,0,.25)}',
     '#app .reply-box>div.p-3{display:contents}',
-    '#app .reply-box .left-wrap{order:2;display:flex;align-items:center;gap:2px;margin-inline-end:6px;padding-bottom:2px}',
-    '#app .reply-box .right-wrap{order:4;margin-inline-start:6px;padding-bottom:0}',
+    '#app .reply-box .left-wrap{order:2;display:flex;align-items:center;gap:2px;margin-inline-end:8px;padding-bottom:2px}',
+    '#app .reply-box .right-wrap{order:4;margin-inline-start:8px;padding-bottom:0}',
     '#app .reply-box .left-wrap>button,#app .reply-box .left-wrap>span>button,#app .reply-box .left-wrap .file-uploads button{background:transparent!important;color:var(--wa-icon);width:36px;height:36px;border-radius:50%;font-size:1.25rem;outline:0}',
     '#app .reply-box .left-wrap>button:hover,#app .reply-box .left-wrap>span>button:hover,#app .reply-box .left-wrap .file-uploads button:hover{background:rgba(134,150,160,.15)!important}',
     '#app .reply-box .right-wrap>button{width:38px;height:38px;padding:0;border-radius:50%;font-size:0;color:transparent;background:var(--wa-primary);justify-content:center;box-shadow:0 1px 2px rgba(11,20,26,.2);transition:opacity .15s,transform .1s}',
@@ -308,6 +340,17 @@
   function placeSeparators(panel) {
     var prevDay = null;
     var kids = Array.prototype.slice.call(panel.children);
+    // A bubble grouped with the next one (same sender, same minute) renders no stamp of its
+    // own, so it takes the day of the message it is grouped with — otherwise the day pill
+    // would land between the two halves of one group.
+    var nextDay = null;
+    for (var j = kids.length - 1; j >= 0; j--) {
+      var k = kids[j];
+      if (!k.classList.contains('message-bubble-container')) continue;
+      var own = k.getAttribute('data-wa-day');
+      if (own) nextDay = own;
+      else if (nextDay && k.classList.contains('group-with-next')) k.setAttribute('data-wa-day', nextDay);
+    }
     for (var i = 0; i < kids.length; i++) {
       var el = kids[i];
       if (el.classList.contains('cwpt-wa-day')) {
@@ -342,13 +385,19 @@
   // WhatsApp itself shows no such line: the bubble keeps a phone glyph by the time instead,
   // and the chat-list preview shows the message text itself.
   var ECHO_RE = /^\s*📱?\s*(?:נשלח\s+מוואטסאפ|sent\s+from\s+whatsapp)\s*[:—–-]?\s*/iu;
+  // the bridge's tombstone for a message deleted on the phone ("🗑️ **ההודעה נמחקה בוואטסאפ**")
+  var DELETED_RE = /^\s*🗑️?\s*(?:ההודעה\s+נמחקה|(?:this\s+)?message\s+(?:was\s+)?deleted)/iu;
+  // the bridge's sender line in a group ("👥 **Name**") — kept above a captioned photo like WhatsApp does
+  var SENDER_RE = /^\s*👥/u;
   function markPhoneEchoes(panel) {
     var lines = panel.querySelectorAll('.message-bubble-container .prose-bubble>p:first-child:not(.cwpt-wa-echo)');
     for (var i = 0; i < lines.length; i++) {
       var p = lines[i];
+      var box = p.closest('.message-bubble-container');
+      if (box && DELETED_RE.test(p.textContent)) box.setAttribute('data-wa-deleted', '1');
+      if (SENDER_RE.test(p.textContent)) p.classList.add('cwpt-wa-sender');
       if (!ECHO_RE.test(p.textContent) || p.textContent.replace(ECHO_RE, '').trim()) continue; // only a marker-only line
       p.classList.add('cwpt-wa-echo');
-      var box = p.closest('.message-bubble-container');
       if (box) box.setAttribute('data-wa-echo', '1');
     }
   }
