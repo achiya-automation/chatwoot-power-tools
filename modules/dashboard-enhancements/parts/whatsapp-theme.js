@@ -139,7 +139,9 @@
     ROW + ' h4.conversation--user+div,' + ROW + ' h4.conversation--user+p{font-size:14px;color:var(--wa-text-2)}',
     ROW + ' .text-xxs{font-size:12px;line-height:16px;color:var(--wa-text-2)}',
     ROW + ':has(h4.conversation--user.font-semibold) .text-xxs{color:var(--wa-primary-strong)}',
-    ROW + '>div.border-line>div.absolute{top:14px;align-items:flex-end}',
+    /* time + unread pill stay on the stock name line (top-8): the meta line above it carries the
+       inbox name AND, in the "all" tab, the assignee — pulling the time up onto it overlapped them */
+    ROW + '>div.border-line>div.absolute{align-items:flex-end}',
     '#app .conversation .bg-n-teal-9.rounded-full{background:var(--wa-unread);color:var(--wa-unread-text)}',
     ROW + ' .bg-n-teal-9.rounded-full{height:20px;min-width:20px;padding:0 6px;font-size:12px;font-weight:600;line-height:20px;margin-top:6px}',
 
@@ -214,10 +216,9 @@
     '#app[dir=rtl] .reply-box .right-wrap>button:before{transform:scaleX(-1)}',
     '#app .reply-box .ProseMirror{font-size:15px;line-height:20px;color:var(--wa-text)}',
     '#app .reply-box .ProseMirror.resizable-editor-body{height:auto!important;min-height:20px;max-height:35vh;overflow-y:auto;transition:none}',
-    '#app .reply-box .ProseMirror-menubar-wrapper{position:static}',
-    '#app .reply-box .ProseMirror-menubar{display:none;position:absolute;bottom:calc(100% + 6px);inset-inline-start:0;z-index:5;background:var(--wa-input);border-radius:8px;box-shadow:0 2px 8px rgba(11,20,26,.18);padding:2px 6px;margin:0}',
-    '#app .reply-box .reply-box__top:focus-within .ProseMirror-menubar{display:flex}',
-    '#app .reply-box .ProseMirror-menubar:not(:has(*)){display:none!important}',
+    /* the formatting bar stays the stock selection popover (shown only while text is selected);
+       forcing it open on focus parked it over the placeholder */
+    '#app .reply-box .ProseMirror p:last-child{margin-bottom:0!important}',
   ].join('\n');
 
   function mount() {
@@ -329,25 +330,55 @@
 
   var pending = false;
   var last = 0;
+  // Keep the reader's place. Chatwoot restores scrollTop itself after prepending older
+  // messages, but this pass runs ~150ms later and every separator it inserts (or removes)
+  // above the viewport shifted the messages under the reader's eyes — Safari has no CSS
+  // scroll anchoring to absorb it. Measure the first visible message before, re-align after.
   function pass() {
     var panel = document.querySelector('.conversation-panel');
     if (!panel) return;
+    var top = panel.getBoundingClientRect().top;
+    var anchor = null;
+    var boxes = panel.querySelectorAll('.message-bubble-container');
+    for (var i = 0; i < boxes.length; i++) {
+      if (boxes[i].getBoundingClientRect().bottom > top) {
+        anchor = boxes[i];
+        break;
+      }
+    }
+    var before = anchor ? anchor.getBoundingClientRect().top : 0;
     stampTimes(panel);
     placeSeparators(panel);
+    if (anchor) {
+      var delta = anchor.getBoundingClientRect().top - before;
+      if (delta) panel.scrollTop += delta;
+    }
   }
+  function run() {
+    try {
+      pass();
+    } catch (e) {
+      /* never break the dashboard over a cosmetic pass */
+    }
+  }
+  // Leading-edge throttle: the first change after a quiet spell is handled right inside the
+  // observer callback — same task as Vue's DOM patch, before the browser paints — so a
+  // prepended page of history gets its separators and the scroll re-alignment without a
+  // visible hop. Bursts (typing, streaming) collapse into one trailing pass 150ms later.
   function schedule() {
+    var now = Date.now();
+    if (now - last >= 150) {
+      last = now;
+      run();
+      return;
+    }
     if (pending) return;
     pending = true;
-    var wait = Math.max(0, 150 - (Date.now() - last));
     setTimeout(function () {
       pending = false;
       last = Date.now();
-      try {
-        pass();
-      } catch (e) {
-        /* never break the dashboard over a cosmetic pass */
-      }
-    }, wait);
+      run();
+    }, 150 - (now - last));
   }
   function watch() {
     var root = document.getElementById('app') || document.body;
