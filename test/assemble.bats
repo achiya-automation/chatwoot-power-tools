@@ -40,3 +40,10 @@ setup() { source lib/assemble-dashboard-script.sh; }
   # manually-launchable journey — see assemble-dashboard-script.sh for the rationale.
   [[ "$output" == *"__jrnLaunch"* ]]
 }
+
+@test "assemble enhancements bundles the video compressor on the core upload hook" {
+  run assemble_dashboard_script "/chatwoot-addons" enhancements
+  [[ "$output" == *"// part: modules/dashboard-enhancements/parts/video-compressor.js"* ]]
+  [[ "$output" == *"__cwptTransformUpload"* ]]   # the hook name the core build calls
+  [[ "$output" == *"/compressor.js"* ]]           # loads the served WebCodecs module lazily
+}
