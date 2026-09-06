@@ -217,10 +217,18 @@ make_full_flat_payload() {
 }
 
 @test "dashboard script drift is content-aware: a part whose bytes changed is named even when the part list matches" {
+  # the name listing and the digest listing are two different remote commands
   ssh() {
-    printf '%s\n' \
-      'modules/dashboard-enhancements/parts/whatsapp-theme.js 0000' \
-      'modules/smart-import/inject/import-button.js 1111'
+    case "$*" in
+      *Digest::MD5*)
+        printf '%s\n' \
+          'modules/dashboard-enhancements/parts/whatsapp-theme.js 0000' \
+          'modules/smart-import/inject/import-button.js 1111' ;;
+      *)
+        printf '%s\n' \
+          'modules/dashboard-enhancements/parts/whatsapp-theme.js' \
+          'modules/smart-import/inject/import-button.js' ;;
+    esac
   }
   committed_parts() {
     printf '%s\n' \
