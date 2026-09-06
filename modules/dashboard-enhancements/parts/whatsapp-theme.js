@@ -202,9 +202,8 @@
     '#app .reply-box{margin:0;border:0;border-radius:0;background:var(--wa-app-bg);display:flex;flex-wrap:wrap;align-items:flex-end;padding:6px 10px 8px}',
     '#app .reply-box.is-private{background:var(--wa-note)}',
     '#app .reply-box>div[class~="h-[3.25rem]"]{order:1;flex:0 0 100%;height:auto;min-height:32px;padding:0 0 6px}',
-    /* the editor auto-grows under this skin, so the drag handle above it and the expand button do nothing — hide the dead controls */
-    '#app .reply-box .resizable-editor-wrapper>.cursor-row-resize{display:none}',
-    '#app .reply-box>div[class~="h-[3.25rem]"] button:has(>.i-lucide-maximize-2){display:none}',
+    /* stock sizing stays: the grab handle above the box and the expand button keep working — the handle just loses its gradient bar */
+    '#app .resizable-editor-wrapper>.cursor-row-resize{background:transparent}',
     '#app .reply-box>div[class~="h-[3.25rem]"]>button.rounded-full{background:var(--wa-chip);color:var(--wa-text-2);height:28px;font-size:13px}',
     '#app .reply-box>div[class~="h-[3.25rem]"]>button.rounded-full>div.bg-n-solid-1{background:var(--wa-input);height:22px}',
     '#app .reply-box>.reply-box__top{order:3;flex:1 1 0;min-width:0;background:var(--wa-input);border-radius:8px;padding:6px 12px;margin:0;box-shadow:0 1px .5px var(--wa-shadow)}',
@@ -213,15 +212,13 @@
     '#app .reply-box>div.p-3{display:contents}',
     '#app .reply-box .left-wrap{order:2;display:flex;align-items:center;gap:2px;margin-inline-end:6px;padding-bottom:2px}',
     '#app .reply-box .right-wrap{order:4;margin-inline-start:6px;padding-bottom:0}',
-    '#app .reply-box .left-wrap>button,#app .reply-box .left-wrap>span>button{background:transparent!important;color:var(--wa-icon);width:32px;height:32px;font-size:1.25rem;outline:0}',
-    '#app .reply-box .left-wrap>button:hover,#app .reply-box .left-wrap>span>button:hover{background:rgba(134,150,160,.15)!important}',
-    '#app .reply-box .right-wrap>button{width:40px;height:40px;padding:0;border-radius:50%;font-size:0;color:transparent;background:var(--wa-primary);justify-content:center;box-shadow:0 1px 2px rgba(11,20,26,.2)}',
+    '#app .reply-box .left-wrap>button,#app .reply-box .left-wrap>span>button,#app .reply-box .left-wrap .file-uploads button{background:transparent!important;color:var(--wa-icon);width:36px;height:36px;border-radius:50%;font-size:1.25rem;outline:0}',
+    '#app .reply-box .left-wrap>button:hover,#app .reply-box .left-wrap>span>button:hover,#app .reply-box .left-wrap .file-uploads button:hover{background:rgba(134,150,160,.15)!important}',
+    '#app .reply-box .right-wrap>button{width:38px;height:38px;padding:0;border-radius:50%;font-size:0;color:transparent;background:var(--wa-primary);justify-content:center;box-shadow:0 1px 2px rgba(11,20,26,.2);transition:opacity .15s,transform .1s}',
     '#app .reply-box .right-wrap>button:hover:enabled{filter:brightness(1.08)}',
-    '#app .reply-box .right-wrap>button:disabled{background:#8696a0;opacity:.6}',
-    '#app .reply-box .right-wrap>button:before{content:"";display:block;width:22px;height:22px;background:#fff;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\'%3E%3Cpath d=\'M1.1 21.8 23.5 12 1.1 2.2 1 9.8l16 2.2-16 2.2z\'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\'%3E%3Cpath d=\'M1.1 21.8 23.5 12 1.1 2.2 1 9.8l16 2.2-16 2.2z\'/%3E%3C/svg%3E") center/contain no-repeat}',
-    '#app[dir=rtl] .reply-box .right-wrap>button:before{transform:scaleX(-1)}',
+    '#app .reply-box .right-wrap>button:disabled{opacity:.35;box-shadow:none}',
+    '#app .reply-box .right-wrap>button:before{content:"";display:block;width:20px;height:20px;background:#fff;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%23000\' stroke-width=\'2.6\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3E%3Cpath d=\'M12 19V5M5 12l7-7 7 7\'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%23000\' stroke-width=\'2.6\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3E%3Cpath d=\'M12 19V5M5 12l7-7 7 7\'/%3E%3C/svg%3E") center/contain no-repeat}',
     '#app .reply-box .ProseMirror{font-size:15px;line-height:20px;color:var(--wa-text)}',
-    '#app .reply-box .ProseMirror.resizable-editor-body{height:auto!important;min-height:20px;max-height:35vh;overflow-y:auto;transition:none}',
     /* the formatting bar stays the stock selection popover (shown only while text is selected);
        forcing it open on focus parked it over the placeholder */
     '#app .reply-box .ProseMirror p:first-child{margin-top:0!important}',
