@@ -616,6 +616,9 @@ check_drift() {
     [[ -n "$only_git" ]] && warn "dashboard parts missing on $server: $only_git"
     [[ -n "$only_server" ]] && warn "dashboard parts on $server that git no longer ships: $only_server"
     behind=1
+  elif [[ "$(remote_injected_part_digests "$server")" != "$(committed_part_digests)" ]]; then
+    warn "dashboard parts changed in git but not on $server: $(changed_part_names "$server")"
+    behind=1
   else
     ok "dashboard script matches git ($(printf '%s\n' "$want_parts" | wc -l | tr -d ' ') parts)"
   fi
@@ -842,11 +845,45 @@ committed_parts() {
   for mod in $CWPT_MODULES; do _cwpt_module_parts "$mod"; done | sort
 }
 
+# תוכן החלקים, לא רק שמותיהם. עד 6.9.26 ההשוואה הסתפקה ברשימת השמות, ולכן חלק שהשתנה
+# בגיט (ערכת וואטסאפ, למשל) עבר כ"תואם" ולא נפרס לאף שרת — אותו חור שהשמות סגרו ב-4.9,
+# קומה אחת למטה. ‏md5 לכל חלק, כפי שהוא יושב בפועל ב-InstallationConfig, מול הבלוב
+# ב-commit המקובע. ‏ASSET_VER מנורמל: הפריסה מחליפה את __CWI_VER__ בחתימת ה-bundle,
+# וזה ההבדל היחיד שמותר בין גיט לשרת.
+_cwpt_part_digest_normalize() {
+  sed -E "s/ASSET_VER = '[^']*'/ASSET_VER = ''/g"
+}
+
+remote_injected_part_digests() {
+  local server="$1"
+  ssh -n "$server" "docker exec -e RAILS_LOG_TO_STDOUT=false chatwoot-rails-1 bundle exec rails runner \
+    \"require 'digest'; v = InstallationConfig.find_by(name: 'DASHBOARD_SCRIPTS')&.value.to_s; \
+      v.scan(%r{// part: (\\S+)\\n(.*?)\\n</script>}m).each { |p, body| \
+        puts(p + ' ' + Digest::MD5.hexdigest(body.gsub(/ASSET_VER = '[^']*'/, %q(ASSET_VER = '')))) }\" 2>/dev/null" \
+    2>/dev/null | grep -E '^modules/' | sort
+}
+
+committed_part_digests() {
+  local rel
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    printf '%s %s\n' "$rel" \
+      "$(cd "$REPO_ROOT" && git show "$DEPLOY_COMMIT:$rel" | _cwpt_part_digest_normalize | md5_stdin)"
+  done < <(committed_parts) | sort
+}
+
+# שמות החלקים שתוכנם בשרת שונה מגיט (רק כשהרשימות עצמן זהות).
+changed_part_names() {
+  local server="$1"
+  comm -13 <(remote_injected_part_digests "$server") <(committed_part_digests) \
+    | awk '{print $1}' | xargs -n1 basename 2>/dev/null | tr '\n' ' '
+}
+
 deploy_dashboard_script() {
   local server="$1" base tgz
   # ‏DASHBOARD_SCRIPTS הוא ערך יחיד ששאר הדשבורד תלוי בו; כתיבה מיותרת היא סיכון בלי
   # תמורה. אם מה שמוזרק כבר זהה לקאנון — לא נוגעים.
-  if [[ "$(remote_injected_parts "$server")" == "$(committed_parts)" ]]; then
+  if [[ "$(remote_injected_part_digests "$server")" == "$(committed_part_digests)" ]]; then
     ok "dashboard script already matches the canon — nothing written"
     return 0
   fi
@@ -1097,7 +1134,7 @@ verify() {
   done < <(head_initializer_paths)
   ok "all repository initializers mounted in Rails + Sidekiq"
 
-  [[ "$(remote_injected_parts "$server")" == "$(committed_parts)" ]] \
+  [[ "$(remote_injected_part_digests "$server")" == "$(committed_part_digests)" ]] \
     || die "$server: injected dashboard parts differ from the committed canon"
   ok "dashboard script matches the committed canon"
 

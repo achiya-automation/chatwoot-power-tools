@@ -44,6 +44,10 @@
     );
   }
 
+  // compact chat-list card only (it has the .border-line body); the expanded table layout
+  // keeps its stock 48px rows — its columns have no room for the WhatsApp row anatomy
+  var ROW = '#app .conversation:has(>div.border-line)';
+
   var CSS = [
     /* ---------- tokens ---------- */
     ':root{',
@@ -116,27 +120,28 @@
     '#app .conversations-list-wrap ul.list-none>li>a.text-button[aria-pressed="true"],#app .conversations-list-wrap ul.list-none>li>a.text-button.text-n-blue-11{background:var(--wa-chip-active);color:var(--wa-primary-strong)}',
     '#app .conversations-list-wrap ul.list-none>li>a.text-button>div{background:transparent;color:inherit;padding:0;min-width:0;height:auto;margin-inline-start:4px;font-weight:500}',
 
-    '#app .conversation{border-bottom:0;align-items:center;min-height:72px;background:var(--wa-panel)}',
-    '#app .conversation:after{content:"";position:absolute;bottom:0;inset-inline-start:76px;inset-inline-end:0;height:1px;background:var(--wa-divider)}',
-    '#app .conversation:before{display:none}',
-    '#app .conversation:hover{background:var(--wa-hover)}',
-    '#app .conversation.active,#app .conversation.selected{background:var(--wa-selected)}',
-    '#app .conversation.active{animation:none}',
-    '#app .conversation>.relative{margin-inline-end:4px}',
-    '#app .conversation>.relative [class~="group/avatar"]{width:49px!important;height:49px!important;margin-top:0!important}',
-    '#app .conversation>.relative [class~="group/avatar"] [role=img]{width:49px!important;height:49px!important;border-radius:50%!important}',
-    '#app .conversation>.relative [class~="group/avatar"] [role=img]>span{font-size:18px!important}',
-    '#app .conversation>.relative [class~="group/avatar"] label{border-radius:50%}',
-    '#app .conversation>div.border-line{padding:10px 0;border:0}',
-    '#app .conversation .text-label-small{font-size:11px;line-height:14px;color:var(--wa-text-2)}',
-    '#app .conversation h4.conversation--user{font-size:16px;line-height:22px;color:var(--wa-text);text-transform:none;padding-top:0}',
-    '#app .conversation h4.conversation--user.font-medium{font-weight:400}',
-    '#app .conversation h4.conversation--user.font-semibold{font-weight:600}',
-    '#app .conversation h4.conversation--user+div,#app .conversation h4.conversation--user+p{font-size:14px;color:var(--wa-text-2)}',
-    '#app .conversation .text-xxs{font-size:12px;line-height:16px;color:var(--wa-text-2)}',
-    '#app .conversation:has(h4.conversation--user.font-semibold) .text-xxs{color:var(--wa-primary-strong)}',
-    '#app .conversation>div.border-line>div.absolute{top:14px;align-items:flex-end}',
-    '#app .conversation .bg-n-teal-9.rounded-full{background:var(--wa-unread);color:var(--wa-unread-text);height:20px;min-width:20px;padding:0 6px;font-size:12px;font-weight:600;line-height:20px;margin-top:6px}',
+    ROW + '{border-bottom:0;align-items:center;min-height:72px;background:var(--wa-panel)}',
+    ROW + ':after{content:"";position:absolute;bottom:0;inset-inline-start:76px;inset-inline-end:0;height:1px;background:var(--wa-divider)}',
+    ROW + ':before{display:none}',
+    ROW + ':hover{background:var(--wa-hover)}',
+    ROW + '.active,' + ROW + '.selected{background:var(--wa-selected)}',
+    ROW + '.active{animation:none}',
+    ROW + '>.relative{margin-inline-end:4px}',
+    ROW + '>.relative [class~="group/avatar"]{width:49px!important;height:49px!important;margin-top:0!important}',
+    ROW + '>.relative [class~="group/avatar"] [role=img]{width:49px!important;height:49px!important;border-radius:50%!important}',
+    ROW + '>.relative [class~="group/avatar"] [role=img]>span{font-size:18px!important}',
+    ROW + '>.relative [class~="group/avatar"] label{border-radius:50%}',
+    ROW + '>div.border-line{padding:10px 0;border:0}',
+    ROW + ' .text-label-small{font-size:11px;line-height:14px;color:var(--wa-text-2)}',
+    ROW + ' h4.conversation--user{font-size:16px;line-height:22px;color:var(--wa-text);text-transform:none;padding-top:0}',
+    ROW + ' h4.conversation--user.font-medium{font-weight:400}',
+    ROW + ' h4.conversation--user.font-semibold{font-weight:600}',
+    ROW + ' h4.conversation--user+div,' + ROW + ' h4.conversation--user+p{font-size:14px;color:var(--wa-text-2)}',
+    ROW + ' .text-xxs{font-size:12px;line-height:16px;color:var(--wa-text-2)}',
+    ROW + ':has(h4.conversation--user.font-semibold) .text-xxs{color:var(--wa-primary-strong)}',
+    ROW + '>div.border-line>div.absolute{top:14px;align-items:flex-end}',
+    '#app .conversation .bg-n-teal-9.rounded-full{background:var(--wa-unread);color:var(--wa-unread-text)}',
+    ROW + ' .bg-n-teal-9.rounded-full{height:20px;min-width:20px;padding:0 6px;font-size:12px;font-weight:600;line-height:20px;margin-top:6px}',
 
     /* ---------- conversation header ---------- */
     '#app .conversation-details-wrap{background:var(--wa-chat-bg);border-color:var(--wa-divider)}',
@@ -155,7 +160,7 @@
     '#app .conversation-panel+div{background:var(--wa-app-bg)}',
     '#app .message-bubble-container{margin-bottom:12px}',
     '#app .message-bubble-container.group-with-next{margin-bottom:2px}',
-    '#app .message-bubble-container .left-bubble,#app .message-bubble-container .right-bubble{max-width:min(65%,600px);border-radius:7.5px;box-shadow:0 1px .5px var(--wa-shadow);color:var(--wa-text);font-size:14.2px;line-height:19px}',
+    '#app .message-bubble-container .left-bubble,#app .message-bubble-container .right-bubble{max-width:600px;border-radius:7.5px;box-shadow:0 1px .5px var(--wa-shadow);color:var(--wa-text);font-size:14.2px;line-height:19px}',
     '#app .message-bubble-container .left-bubble{background:var(--wa-incoming)}',
     '#app .message-bubble-container .right-bubble{background:var(--wa-outgoing)}',
     '#app .message-bubble-container .bg-n-solid-amber.left-bubble,#app .message-bubble-container .bg-n-solid-amber.right-bubble{background:var(--wa-note)}',

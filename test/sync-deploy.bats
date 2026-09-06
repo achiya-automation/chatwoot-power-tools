@@ -215,3 +215,33 @@ make_full_flat_payload() {
   grep -q 'psql -v ON_ERROR_STOP=1' "$script"
   grep -q 'owner migrations failed — engine was not rebuilt' "$script"
 }
+
+@test "dashboard script drift is content-aware: a part whose bytes changed is named even when the part list matches" {
+  ssh() {
+    printf '%s\n' \
+      'modules/dashboard-enhancements/parts/whatsapp-theme.js 0000' \
+      'modules/smart-import/inject/import-button.js 1111'
+  }
+  committed_parts() {
+    printf '%s\n' \
+      'modules/dashboard-enhancements/parts/whatsapp-theme.js' \
+      'modules/smart-import/inject/import-button.js'
+  }
+  committed_part_digests() {
+    printf '%s\n' \
+      'modules/dashboard-enhancements/parts/whatsapp-theme.js aaaa' \
+      'modules/smart-import/inject/import-button.js 1111'
+  }
+
+  [ "$(remote_injected_parts example.invalid)" = "$(committed_parts)" ]
+  [ "$(remote_injected_part_digests example.invalid)" != "$(committed_part_digests)" ]
+  [ "$(changed_part_names example.invalid)" = "whatsapp-theme.js " ]
+}
+
+@test "part digests ignore only the ASSET_VER cache-bust that the deploy substitutes" {
+  local deployed committed
+  deployed="$(printf "var ASSET_VER = '9f2c1a';\nbody" | _cwpt_part_digest_normalize | md5_stdin)"
+  committed="$(printf "var ASSET_VER = '__CWI_VER__';\nbody" | _cwpt_part_digest_normalize | md5_stdin)"
+  [ "$deployed" = "$committed" ]
+  [ "$(printf "other\n" | _cwpt_part_digest_normalize | md5_stdin)" != "$committed" ]
+}
