@@ -32,6 +32,8 @@ export default defineConfig({
       input: {
         // האפליקציה הראשית (HTML entry, hashed)
         main: resolve(dir, 'index.html'),
+        // מודול דחיסה עצמאי ל-video-compressor של הדשבורד — שם פלט יציב <addons-base>/compressor.js
+        compressor: resolve(dir, 'src/compressor-entry.js'),
       },
       output: {
         // כל שם קובץ נושא גם את מזהה ה-build, לא רק את ה-hash של התוכן.
@@ -42,7 +44,9 @@ export default defineConfig({
         // ה-import היחסי אל אותו chunk ייכשל בשקט, גרף המודולים לא ירוץ, והמסך יישאר לבן.
         // בדיוק זה קרה כאן. build חדש = כתובות חדשות לכל הקבצים = אין רשומה ישנה להיתקע בה.
         // המחיר (הורדה מחדש של ~350KB בכל פריסה) זניח לדשבורד פנימי.
-        entryFileNames: `assets/[name]-[hash]-${BUILD_ID}.js`,
+        // compressor יוצא דופן: הדשבורד מייבא אותו מכתובת קבועה, אז השם שלו נשאר יציב.
+        entryFileNames: (chunk) =>
+          (chunk.name === 'compressor' ? 'compressor.js' : `assets/[name]-[hash]-${BUILD_ID}.js`),
         chunkFileNames: `assets/[name]-[hash]-${BUILD_ID}.js`,
         assetFileNames: `assets/[name]-[hash]-${BUILD_ID}[extname]`,
       },

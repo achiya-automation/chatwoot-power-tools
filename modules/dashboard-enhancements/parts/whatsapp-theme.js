@@ -113,7 +113,7 @@
     '#app .conversations-list-wrap>div:first-child h1{font-size:20px;font-weight:700;color:var(--wa-text)}',
     /* assignee tabs → WhatsApp filter pills. ul.list-none matches the stock Tabs.vue list and the
        chip-enhanced list of the custom build alike (both keep list-none + a.text-button). */
-    '#app .conversations-list-wrap ul.list-none{gap:6px;padding:6px 0 4px;align-items:center}',
+    '#app .conversations-list-wrap ul.list-none{gap:8px 6px;padding:8px 0 8px;align-items:center}',
     '#app .conversations-list-wrap ul.list-none>li{margin:0}',
     '#app .conversations-list-wrap ul.list-none>li>a.text-button{padding:3px 12px;border-radius:9999px;background:var(--wa-chip);color:var(--wa-text-2);font-size:13px;font-weight:500;line-height:20px}',
     '#app .conversations-list-wrap ul.list-none>li>a.text-button:after{display:none}',
@@ -172,6 +172,9 @@
     '#app .message-bubble-container .prose-bubble{color:inherit}',
     '#app .message-bubble-container .prose-bubble a{color:var(--wa-link)}',
     '#app .message-bubble-container .prose-bubble p{margin:0}',
+    /* "📱 נשלח מוואטסאפ" is the bridge's marker for a reply typed on the phone: the line goes, a small phone glyph next to the time stays */
+    '#app .message-bubble-container .cwpt-wa-echo{display:none}',
+    '#app .message-bubble-container[data-wa-echo] time:before{content:"📱";font-size:10px;margin-inline-end:3px;opacity:.8}',
     '#app .message-bubble-container .left-bubble>.text-xs,#app .message-bubble-container .right-bubble>.text-xs{justify-content:flex-end;margin-top:2px;margin-bottom:-4px;font-size:11px;line-height:15px;color:var(--wa-text-2)}',
     '#app .message-bubble-container .right-bubble>.text-xs{color:var(--wa-meta-out)}',
     '#app .message-bubble-container .right-bubble [class~="text-[#7EB6FF]"]{color:var(--wa-tick-read)}',
@@ -198,7 +201,10 @@
     /* ---------- composer: one WhatsApp-style row ---------- */
     '#app .reply-box{margin:0;border:0;border-radius:0;background:var(--wa-app-bg);display:flex;flex-wrap:wrap;align-items:flex-end;padding:6px 10px 8px}',
     '#app .reply-box.is-private{background:var(--wa-note)}',
-    '#app .reply-box>div[class~="h-[3.25rem]"]{order:1;flex:0 0 100%;height:auto;min-height:36px;padding:0 0 4px}',
+    '#app .reply-box>div[class~="h-[3.25rem]"]{order:1;flex:0 0 100%;height:auto;min-height:32px;padding:0 0 6px}',
+    /* the editor auto-grows under this skin, so the drag handle above it and the expand button do nothing — hide the dead controls */
+    '#app .reply-box .resizable-editor-wrapper>.cursor-row-resize{display:none}',
+    '#app .reply-box>div[class~="h-[3.25rem]"] button:has(>.i-lucide-maximize-2){display:none}',
     '#app .reply-box>div[class~="h-[3.25rem]"]>button.rounded-full{background:var(--wa-chip);color:var(--wa-text-2);height:28px;font-size:13px}',
     '#app .reply-box>div[class~="h-[3.25rem]"]>button.rounded-full>div.bg-n-solid-1{background:var(--wa-input);height:22px}',
     '#app .reply-box>.reply-box__top{order:3;flex:1 1 0;min-width:0;background:var(--wa-input);border-radius:8px;padding:6px 12px;margin:0;box-shadow:0 1px .5px var(--wa-shadow)}',
@@ -335,9 +341,34 @@
   // messages, but this pass runs ~150ms later and every separator it inserts (or removes)
   // above the viewport shifted the messages under the reader's eyes — Safari has no CSS
   // scroll anchoring to absorb it. Measure the first visible message before, re-align after.
+  // The bridge prefixes a reply typed on the phone with "📱 נשלח מוואטסאפ" (bold first line).
+  // WhatsApp itself shows no such line: the bubble keeps a phone glyph by the time instead,
+  // and the chat-list preview shows the message text itself.
+  var ECHO_RE = /^\s*📱?\s*(?:נשלח\s+מוואטסאפ|sent\s+from\s+whatsapp)\s*[:—–-]?\s*/iu;
+  function markPhoneEchoes(panel) {
+    var lines = panel.querySelectorAll('.message-bubble-container .prose-bubble>p:first-child:not(.cwpt-wa-echo)');
+    for (var i = 0; i < lines.length; i++) {
+      var p = lines[i];
+      if (!ECHO_RE.test(p.textContent) || p.textContent.replace(ECHO_RE, '').trim()) continue; // only a marker-only line
+      p.classList.add('cwpt-wa-echo');
+      var box = p.closest('.message-bubble-container');
+      if (box) box.setAttribute('data-wa-echo', '1');
+    }
+  }
+  function tidyPreviews(root) {
+    var previews = root.querySelectorAll('.conversation h4.conversation--user+div span');
+    for (var i = 0; i < previews.length; i++) {
+      var node = previews[i].firstChild;
+      if (!node || node.nodeType !== 3 || !ECHO_RE.test(node.nodeValue)) continue;
+      node.nodeValue = node.nodeValue.replace(ECHO_RE, '');
+    }
+  }
   function pass() {
+    var list = document.querySelector('.conversations-list');
+    if (list) tidyPreviews(list);
     var panel = document.querySelector('.conversation-panel');
     if (!panel) return;
+    markPhoneEchoes(panel);
     var top = panel.getBoundingClientRect().top;
     var anchor = null;
     var boxes = panel.querySelectorAll('.message-bubble-container');
