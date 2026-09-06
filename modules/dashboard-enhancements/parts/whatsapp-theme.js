@@ -360,7 +360,8 @@
     for (var i = 0; i < previews.length; i++) {
       var node = previews[i].firstChild;
       if (!node || node.nodeType !== 3 || !ECHO_RE.test(node.nodeValue)) continue;
-      node.nodeValue = node.nodeValue.replace(ECHO_RE, '');
+      var rest = node.nodeValue.replace(ECHO_RE, '');
+      if (rest.trim()) node.nodeValue = rest; // a marker-only preview keeps its text rather than going blank
     }
   }
   function pass() {
