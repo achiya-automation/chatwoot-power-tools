@@ -218,6 +218,7 @@
     '#app .reply-box .ProseMirror.resizable-editor-body{height:auto!important;min-height:20px;max-height:35vh;overflow-y:auto;transition:none}',
     /* the formatting bar stays the stock selection popover (shown only while text is selected);
        forcing it open on focus parked it over the placeholder */
+    '#app .reply-box .ProseMirror p:first-child{margin-top:0!important}',
     '#app .reply-box .ProseMirror p:last-child{margin-bottom:0!important}',
   ].join('\n');
 
