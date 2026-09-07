@@ -283,13 +283,18 @@
     '  #app .conversations-list{padding-bottom:88px}',
     /* on a phone the banner sits under the one-row header instead of over it */
     '  #app>div.fixed.z-50.top-2.left-2{top:62px}',
-    /* composer: toolbar icons share the top row with the reply/note toggle; the editor gets the full width */
+    '}',
+    /* composer in a narrow column — a phone, or a desktop with the contact panel open (the conversation column
+       drops to ~390px): the toolbar icons share the top row with the reply/note toggle and the editor gets
+       the full width instead of being squeezed to ~180px between the icons and the send button */
+    '#app .conversation-details-wrap{container-type:inline-size}',
+    '@container (max-width:640px){',
     '  #app .reply-box{padding:6px 10px 8px}',
     '  #app .reply-box>div[class~="h-[3.25rem]"]{flex:0 1 auto;min-height:0;padding:0 0 6px}',
     '  #app .reply-box .left-wrap{order:1;flex:1 1 auto;justify-content:flex-end;margin:0;padding:0 0 6px;gap:0}',
     '  #app .reply-box>.reply-box__top{order:3;flex:1 1 70%}',
     '  #app .reply-box .right-wrap{order:4}',
-    /* a phone keyboard leaves little room: start compact and grow with the text (the drag handle is a desktop tool) */
+    /* little room under a phone keyboard: start compact and grow with the text (the drag handle is a mouse tool) */
     '  #app .reply-box .resizable-editor-body{height:auto!important;min-height:40px;max-height:30vh}',
     '  #app .resizable-editor-wrapper>.cursor-row-resize{display:none}',
     '  #app .reply-box>.reply-box__top .border-dashed{max-height:none;padding:2px 8px;font-size:12px;line-height:16px}',
