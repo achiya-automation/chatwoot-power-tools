@@ -292,6 +292,11 @@
     '  #app .reply-box{padding:6px 10px 8px}',
     '  #app .reply-box>div[class~="h-[3.25rem]"]{flex:0 1 auto;min-height:0;padding:0 0 6px}',
     '  #app .reply-box .left-wrap{order:1;flex:1 1 auto;justify-content:flex-end;margin:0;padding:0 0 6px;gap:0}',
+    /* the empty 32px spacer between the toggle and the AI/expand buttons, and 36px icon buttons, pushed the
+       icons onto a third row at ~390px — hidden spacer + 32px icons keep everything on two rows */
+    '  #app .reply-box>div[class~="h-[3.25rem]"]{gap:4px;padding-inline:0}',
+    '  #app .reply-box>div[class~="h-[3.25rem]"]>div.mx-4{display:none}',
+    '  #app .reply-box .left-wrap>button,#app .reply-box .left-wrap>span>button,#app .reply-box .left-wrap .file-uploads button{width:32px;height:32px;font-size:1.15rem}',
     '  #app .reply-box>.reply-box__top{order:3;flex:1 1 70%}',
     '  #app .reply-box .right-wrap{order:4}',
     /* little room under a phone keyboard: start compact and grow with the text (the drag handle is a mouse tool) */
