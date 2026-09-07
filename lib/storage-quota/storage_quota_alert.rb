@@ -10,7 +10,10 @@
 #   QUOTA_BASE_GB=10    מה כלול במחיר
 #   QUOTA_STEP_GB=10    גודל מדרגת התוספת
 #   QUOTA_STEP_PRICE=30 ₪ למדרגה
-#   ALERT_COOLDOWN_DAYS=7  כל כמה זמן מותר להזכיר לאותו חשבון
+#   QUOTA_WARN_EVERY_DAYS=21   מרווח מינימלי בין תזכורות אזהרה
+#   QUOTA_OVER_EVERY_DAYS=14   מרווח מינימלי בין תזכורות חריגה
+#   QUOTA_WARN_GROWTH_PCT=5    כמה הצריכה צריכה לטפס (% מהמכסה) כדי להצדיק תזכורת
+#   QUOTA_FROM_NAME=...        שם השולח שהלקוח רואה (ברירת מחדל: אחיה אוטומציה)
 #   STATE_FILE=...      איפה נשמר מתי הותרע לאחרונה
 
 require 'json'
@@ -22,8 +25,15 @@ BASE_GB     = (ENV['QUOTA_BASE_GB']    || 10).to_f
 STEP_GB     = (ENV['QUOTA_STEP_GB']    || 10).to_f
 STEP_PRICE  = (ENV['QUOTA_STEP_PRICE'] || 30).to_i
 WARN_AT     = (ENV['QUOTA_WARN_PCT']   || 80).to_f
-COOLDOWN    = (ENV['ALERT_COOLDOWN_DAYS'] || 7).to_i
+WARN_EVERY  = (ENV['QUOTA_WARN_EVERY_DAYS'] || 21).to_i
+OVER_EVERY  = (ENV['QUOTA_OVER_EVERY_DAYS'] || 14).to_i
+WARN_GROWTH = (ENV['QUOTA_WARN_GROWTH_PCT'] || 5).to_f
 STATE_FILE  = ENV['STATE_FILE'] || '/app/tmp/storage-quota-state.json'
+
+# שם התצוגה של השולח. בלעדיו הלקוח רואה כתובת גולמית ("info@...") בראש
+# המייל במקום שם העסק. הכתובת עצמה נשארת זו של Chatwoot — רק עוטפים
+# אותה בשם, כדי לא לקבע כתובת בקוד שיושב בריפו ציבורי.
+FROM_NAME   = (ENV['QUOTA_FROM_NAME'].to_s.strip.empty? ? 'אחיה אוטומציה' : ENV['QUOTA_FROM_NAME'].strip).freeze
 
 # המייל עומד בפני עצמו: client_html מחזיר מסמך HTML שלם עם הנייר, הלוגו
 # והפוטר. ה-layout הגנרי של Chatwoot הוא כרטיס לבן בסגנון SaaS — הוא היה
@@ -48,9 +58,30 @@ class StorageQuotaMailer < ApplicationMailer
     end
 
     @html_body = html
-    mail(to: recipients, subject: subject) do |format|
+    opts = { to: recipients, subject: subject }
+    sender = named_sender
+    opts[:from] = sender if sender
+
+    mail(**opts) do |format|
       format.html { render inline: '<%= @html_body.html_safe %>', layout: false }
     end
+  end
+
+  private
+
+  # מרכיב "אחיה אוטומציה <כתובת>" מתוך ה-from שכבר מוגדר ב-ApplicationMailer.
+  # Mail::Address דואג ל-quoting ול-encoding של שם לא-לטיני (RFC 2047).
+  # אם משהו בשרשרת הזאת נופל — מחזירים nil וה-from הרגיל של Chatwoot נשאר.
+  def named_sender
+    address = Mail::Address.new(self.class.default[:from].to_s).address
+    return nil if address.to_s.empty?
+
+    addr = Mail::Address.new
+    addr.address = address
+    addr.display_name = FROM_NAME
+    addr.format
+  rescue StandardError
+    nil
   end
 end
 
@@ -316,9 +347,38 @@ usage = ActiveRecord::Base.connection.select_all(<<~SQL).to_a
   ) t GROUP BY account_id
 SQL
 
+# האם להזכיר שוב ללקוח שכבר קיבל מייל על אותו מצב.
+#
+# תזכורת בקצב קבוע היא חפירה: לקוח שיושב על 85% ולא זז קיבל מייל כל שבוע
+# בלי ששום דבר השתנה אצלו. כאן מזכירים רק כשיש **חדשות**:
+#   over — נכנס למדרגת חיוב חדשה (מיד, זה כסף), או שהחריגה גדלה ועברו
+#          OVER_EVERY ימים
+#   warn — הצריכה טיפסה עוד WARN_GROWTH אחוזים מהמכסה ועברו WARN_EVERY ימים
+# ירידה מ-over ל-warn לא מייצרת מייל: אחרת לקוח שמתנדנד סביב הגבול היה
+# מקבל הודעה בכל תנודה.
+def remind?(prev, level:, today:, used:, quota:, steps:)
+  return true if prev.nil? || prev.empty?
+
+  last = prev['last_sent']
+  return true if last.nil?
+
+  days = (today - Date.parse(last)).to_i
+  grew = used - prev['used_gb'].to_f
+
+  if level == 'over'
+    return true if steps > prev['extra_steps'].to_i
+    days >= OVER_EVERY && grew.positive?
+  else
+    days >= WARN_EVERY && grew >= quota * WARN_GROWTH / 100
+  end
+rescue StandardError
+  true # state פגום — עדיף מייל אחד מיותר מאשר לקוח שלא יודע שנגמר לו המקום
+end
+
 state  = File.exist?(STATE_FILE) ? (JSON.parse(File.read(STATE_FILE)) rescue {}) : {}
 today  = Date.current
 alerts = []
+below  = [] # ירדו מתחת לסף — מנקים מה-state כדי שחצייה עתידית תתחיל מדף חדש
 
 usage.each do |r|
   acc = Account.find_by(id: r['account_id'])
@@ -327,15 +387,17 @@ usage.each do |r|
   used  = r['bytes'].to_f / 1024**3
   quota = (acc.custom_attributes || {})['storage_quota_gb'].to_f
   quota = BASE_GB if quota <= 0
-  next if used < quota * WARN_AT / 100
+  if used < quota * WARN_AT / 100
+    below << acc.id.to_s
+    next
+  end
 
   over  = [used - quota, 0].max
   steps = over.positive? ? (over / STEP_GB).ceil : 0
   level = over.positive? ? 'over' : 'warn'
 
-  # cooldown: לא מציפים את אותו לקוח כל יום באותה הודעה
-  last = state.dig(acc.id.to_s, 'last_sent')
-  next if last && (today - Date.parse(last)).to_i < COOLDOWN && state.dig(acc.id.to_s, 'level') == level
+  next unless remind?(state[acc.id.to_s], level: level, today: today,
+                      used: used, quota: quota, steps: steps)
 
   alerts << {
     account_id: acc.id, name: acc.name, level: level,
@@ -348,7 +410,7 @@ end
 
 # --- שליחה ------------------------------------------------------------------
 sent = []
-if SEND && alerts.any?
+if SEND
   alerts.each do |a|
     next if a[:admin_emails].empty?
 
@@ -356,11 +418,18 @@ if SEND && alerts.any?
       subject = a[:level] == 'over' ? 'חריגה במכסת אחסון המדיה' : 'התקרבות למכסת אחסון המדיה'
       StorageQuotaMailer.alert(a[:admin_emails], subject, client_html(a), QUOTA_IMAGES[a[:level]]).deliver_now
       sent << a[:account_id]
-      state[a[:account_id].to_s] = { 'last_sent' => today.to_s, 'level' => a[:level] }
+      # used_gb ו-extra_steps נשמרים כדי שהתזכורת הבאה תוכל לשאול
+      # "האם משהו השתנה מאז", ולא רק "כמה זמן עבר"
+      state[a[:account_id].to_s] = {
+        'last_sent' => today.to_s, 'level' => a[:level],
+        'used_gb' => a[:used_gb], 'extra_steps' => a[:extra_steps]
+      }
     rescue StandardError => e
       a[:send_error] = "#{e.class}: #{e.message[0, 120]}"
     end
   end
+
+  below.each { |id| state.delete(id) }
 
   FileUtils.mkdir_p(File.dirname(STATE_FILE))
   File.write(STATE_FILE, JSON.pretty_generate(state))
