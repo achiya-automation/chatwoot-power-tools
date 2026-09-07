@@ -255,6 +255,45 @@
        forcing it open on focus parked it over the placeholder */
     '#app .reply-box .ProseMirror p:first-child{margin-top:0!important}',
     '#app .reply-box .ProseMirror p:last-child{margin-bottom:0!important}',
+
+    /* ---------- polish 7.9.26: bugs seen live on the phone ---------- */
+    /* the unread count was invisible: the "unread row → green time" rule (ROW:has(h4.font-semibold) .text-xxs)
+       also caught the badge (it carries .text-xxs) and painted green digits on a green pill */
+    ROW + ':has(h4.conversation--user.font-semibold) .bg-n-teal-9.rounded-full{color:var(--wa-unread-text)}',
+    /* the selection checkbox sat at the corner of the avatar: the overlay label keeps Chatwoot's inline 32px
+       while the avatar is 49px here — the overlay now covers the whole round avatar */
+    ROW + '>.relative [class~="group/avatar"] label{width:49px!important;height:49px!important;border-radius:50%!important}',
+    ROW + '>.relative [class~="group/avatar"] label>div{width:20px;height:20px}',
+    ROW + '>.relative [class~="group/avatar"] label>div>input{width:20px;height:20px;border-radius:6px}',
+    ROW + '>.relative [class~="group/avatar"] label>div>svg{width:16px;height:16px}',
+    /* the offline/reconnect banner is pinned to the top-LEFT of the screen — in a Hebrew (RTL) page that is exactly
+       where the conversation actions and their dropdown open, so it covered "block contact / send transcript".
+       Centered at the top it covers nothing that needs a click */
+    '#app>div.fixed.z-50.top-2.left-2{left:50%;transform:translateX(-50%);max-width:calc(100% - 16px);white-space:nowrap}',
+    /* system/activity rows read like WhatsApp: centered, not hugging the start edge */
+    '#app .conversation-panel .message-bubble-container:has(>[data-bubble-name="activity"]),#app .conversation-panel .message-bubble-container:has(>div>[data-bubble-name="activity"]){justify-content:center}',
+    /* one-row conversation header below xl (Chatwoot stacks it into two rows and burns 96px on a phone) */
+    '@media (max-width:1279px){',
+    '  #app .conversation-details-wrap>div:first-child{flex-direction:row;flex-wrap:nowrap;height:56px;gap:8px;padding:8px 12px}',
+    '  #app .conversation-details-wrap>div:first-child>div:first-child{flex:1 1 auto;width:auto;min-width:0}',
+    '  #app .conversation-details-wrap>div:first-child>div.header-actions-wrap{width:auto;flex:0 0 auto;justify-content:flex-end}',
+    '}',
+    '@media (max-width:767px){',
+    /* the last rows scroll out from under the floating menu button */
+    '  #app .conversations-list{padding-bottom:88px}',
+    /* on a phone the banner sits under the one-row header instead of over it */
+    '  #app>div.fixed.z-50.top-2.left-2{top:62px}',
+    /* composer: toolbar icons share the top row with the reply/note toggle; the editor gets the full width */
+    '  #app .reply-box{padding:6px 10px 8px}',
+    '  #app .reply-box>div[class~="h-[3.25rem]"]{flex:0 1 auto;min-height:0;padding:0 0 6px}',
+    '  #app .reply-box .left-wrap{order:1;flex:1 1 auto;justify-content:flex-end;margin:0;padding:0 0 6px;gap:0}',
+    '  #app .reply-box>.reply-box__top{order:3;flex:1 1 70%}',
+    '  #app .reply-box .right-wrap{order:4}',
+    /* a phone keyboard leaves little room: start compact and grow with the text (the drag handle is a desktop tool) */
+    '  #app .reply-box .resizable-editor-body{height:auto!important;min-height:40px;max-height:30vh}',
+    '  #app .resizable-editor-wrapper>.cursor-row-resize{display:none}',
+    '  #app .reply-box>.reply-box__top .border-dashed{max-height:none;padding:2px 8px;font-size:12px;line-height:16px}',
+    '}',
   ].join('\n');
 
   function mount() {
