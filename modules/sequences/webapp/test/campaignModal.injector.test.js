@@ -65,6 +65,75 @@ function addTemplate(window, name = 'welcome') {
   window.document.querySelector('main').appendChild(card);
 }
 
+test('native preview metadata stays visible while Liquid labels follow template changes', async () => {
+  const dom = pageDom('https://chatwoot.test/app/accounts/1/campaigns/whatsapp');
+  const w = dom.window;
+  addTemplate(w, 'welcome_customer');
+  const card = w.document.querySelector('.bg-n-alpha-black2');
+  const body = w.document.createElement('div');
+  body.className = 'whitespace-pre-wrap text-sm text-n-slate-11';
+  body.textContent = 'Hello {{contact.name}}';
+  card.appendChild(body);
+  const category = w.document.createElement('div');
+  category.textContent = 'Category: UTILITY';
+  card.appendChild(category);
+
+  await runInjector(dom);
+
+  const heading = card.querySelector('h3');
+  const language = heading.parentElement.querySelector('span');
+  assert.equal(heading.textContent, 'welcome_customer');
+  for (const element of [heading, language, category]) {
+    assert.notEqual(w.getComputedStyle(element).display, 'none');
+  }
+  assert.equal(card.querySelector('.drip-tpl-name, .drip-tpl-badges'), null);
+  assert.equal(card.querySelector('.drip-msg-body').textContent, 'Hello שם מלא');
+  assert.equal(card.querySelector('.drip-msg-body').hidden, false);
+  assert.equal(body.style.display, 'none');
+
+  heading.textContent = 'follow_up';
+  language.textContent = 'Language: he';
+  body.textContent = 'Plain message';
+  await settle();
+  assert.equal(heading.textContent, 'follow_up');
+  assert.equal(language.textContent, 'Language: he');
+  assert.equal(body.style.display, '');
+  assert.equal(card.querySelector('.drip-msg-body').hidden, true);
+
+  body.textContent = 'Email: {{contact.email}}';
+  await settle();
+  assert.equal(card.querySelector('.drip-msg-body').textContent, 'Email: אימייל');
+  assert.equal(card.querySelectorAll('.drip-msg-body').length, 1);
+});
+
+test('text headers and bodies retain Liquid labels independently when the header is removed', async () => {
+  const dom = pageDom('https://chatwoot.test/app/accounts/1/campaigns/whatsapp');
+  const w = dom.window;
+  addTemplate(w);
+  const card = w.document.querySelector('.bg-n-alpha-black2');
+  const header = w.document.createElement('div');
+  header.className = 'whitespace-pre-wrap text-base font-bold';
+  header.textContent = 'Hello {{contact.first_name}}';
+  card.appendChild(header);
+  const body = w.document.createElement('div');
+  body.className = 'whitespace-pre-wrap text-sm';
+  body.textContent = 'Email: {{contact.email}}';
+  card.appendChild(body);
+
+  await runInjector(dom);
+  assert.deepEqual([...card.querySelectorAll('.drip-msg-body')].map((node) => node.textContent),
+    ['Hello שם פרטי', 'Email: אימייל']);
+  assert.equal(header.style.display, 'none');
+  assert.equal(body.style.display, 'none');
+
+  header.remove();
+  body.textContent = 'Phone: {{contact.phone_number}}';
+  await settle();
+  assert.equal(card.querySelectorAll('.drip-msg-body').length, 1);
+  assert.equal(card.querySelector('.drip-msg-body').textContent, 'Phone: טלפון');
+  assert.notEqual(w.getComputedStyle(card.querySelector('h3')).display, 'none');
+});
+
 test('media loads lazily after entering an account and ignores a late previous-account response', async () => {
   const dom = pageDom('https://chatwoot.test/app/login');
   const w = dom.window;

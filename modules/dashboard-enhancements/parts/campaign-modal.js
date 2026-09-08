@@ -2,8 +2,8 @@
 // template variable field ({{N}}), shows chips that fill in a Chatwoot Liquid value
 // (contact.first_name etc.) and displays a friendly "token" pill instead of the raw {{...}}.
 // The Liquid value is written into the Vue model (dispatched input event) behind the scenes;
-// custom attributes are loaded from the API. Also prettifies the template preview card (name,
-// language, category badges).
+// custom attributes are loaded from the API. Template previews retain Chatwoot's original
+// metadata and layout, with readable labels for the added Liquid variables.
 (function () {
   if (window.__dripCampaignEnhance) return;
   window.__dripCampaignEnhance = true;
@@ -27,14 +27,10 @@
   var I18N = {
     he: { firstName: 'שם פרטי', fullName: 'שם מלא', phone: 'טלפון', email: 'אימייל',
           remove: 'הסר', addField: 'הוסף שדה:',
-          lang_he: 'עברית', lang_en: 'אנגלית', lang_ar: 'ערבית',
-          cat_MARKETING: 'שיווקי', cat_UTILITY: 'שירותי', cat_AUTHENTICATION: 'אימות',
           uploadBtn: 'העלאת קובץ', uploading: 'מעלה…', uploaded: '✓ הועלה', uploadFailed: '✗ נכשל',
           mediaSaved: 'המדיה מוכנה לשליחה', replace: 'החלפה' },
     en: { firstName: 'First name', fullName: 'Full name', phone: 'Phone', email: 'Email',
           remove: 'Remove', addField: 'Add field:',
-          lang_he: 'Hebrew', lang_en: 'English', lang_ar: 'Arabic',
-          cat_MARKETING: 'Marketing', cat_UTILITY: 'Utility', cat_AUTHENTICATION: 'Authentication',
           uploadBtn: 'Upload', uploading: 'Uploading…', uploaded: '✓ Uploaded', uploadFailed: '✗ Failed',
           mediaSaved: 'Media ready to send', replace: 'Replace' },
   };
@@ -79,12 +75,6 @@
       '.drip-token-pill .x:hover{opacity:1}',
       // same pill, inside the rendered message body (no ✕ there — the card is read-only)
       '.drip-token-pill.sm{font-size:12px;padding:2px 8px;border-radius:6px;line-height:1.35}',
-      '.drip-msg-body{font-size:.875rem;line-height:1.55;white-space:pre-wrap;color:rgb(var(--slate-12))}',
-      // preview card prettification
-      '.drip-tpl-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}',
-      '.drip-tpl-name{font-size:14px;font-weight:600;line-height:1.4;flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
-      '.drip-tpl-badges{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap}',
-      '.drip-badge{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:500;padding:2px 9px;border-radius:9999px;background:rgba(var(--alpha-2));color:rgb(var(--slate-11));white-space:nowrap}',
       // media upload button (sits below the campaign form's media_url field)
       '.drip-media-upload{margin:2px 0 10px;display:flex}',
       // media "uploaded" badge overlay — hides the raw URL, shows ✓ + replace/remove (like the sequences UI)
@@ -358,19 +348,8 @@
     }
   }
 
-  // ── prettify the template preview card ──
-  // פונקציות, לא קבועים — ראה baseFields(): t() בזמן טעינה קופא על אנגלית.
-  function langNames() { return { he: t('lang_he'), en: t('lang_en'), en_us: t('lang_en'), ar: t('lang_ar') }; }
-  function catNames() { return { MARKETING: t('cat_MARKETING'), UTILITY: t('cat_UTILITY'), AUTHENTICATION: t('cat_AUTHENTICATION') }; }
-  var LANG_FLAGS = { he: '🇮🇱', en: '🇺🇸', en_us: '🇺🇸', ar: '🇸🇦' };
-  function prettifyName(raw) {
-    return (raw || '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
-      .replace(/\b\w/g, function (c) { return c.toUpperCase(); });
-  }
-  // robust against Vue: we don't remove/alter elements Vue manages (that gets overwritten on
-  // every render and breaks reactivity). Instead: hide Vue's own elements (Vue keeps updating
-  // their text), and show our own overlay that updates idempotently on every run — survives a
-  // template swap too (same card element, text just gets refreshed).
+  // Render readable Liquid labels only where the added variables need them. Leave
+  // Chatwoot's name, language, category, and plain message rendering intact.
   function enhancePreviewCard() {
     var cards = document.querySelectorAll('div.bg-n-alpha-black2');
     for (var i = 0; i < cards.length; i++) {
@@ -380,80 +359,43 @@
       var head = h3.parentElement;
       if (!head) continue;
 
-      // one-time setup per card (the card stays the same element when the template changes —
-      // Vue updates it in place, doesn't replace it)
-      if (!card.__dripCard) {
-        var langSpan = head.querySelector('span');
-        if (!langSpan || langSpan.textContent.indexOf(':') === -1) continue;  // confirm this is a template card
-        h3.style.display = 'none';        // hide Vue's elements (their text is still kept up to date — we read from them)
-        langSpan.style.display = 'none';
-        head.classList.add('drip-tpl-head');
-        var myName = document.createElement('div');  // overlay not managed by Vue → survives re-render
-        myName.className = 'drip-tpl-name';
-        head.insertBefore(myName, h3);
-        var badges = document.createElement('div');
-        badges.className = 'drip-tpl-badges';
-        head.appendChild(badges);
-        var catRow = null;
-        for (var k = card.children.length - 1; k >= 0; k--) {
-          var row = card.children[k];
-          if (row !== head && !row.children.length && row.textContent.indexOf(':') !== -1) {
-            catRow = row; row.style.display = 'none'; break;
-          }
-        }
-        // גוף ההודעה: Chatwoot מרנדר כאן את התבנית אחרי החלפת {{1}} בערך שהוזן — כלומר
-        // ביטוי Liquid גולמי באמצע המשפט. מסתירים את ה-div שלו (Vue ממשיך לעדכן את הטקסט
-        // שבו — משם קוראים) ומציגים overlay משלנו עם המשתנים כ-pills.
-        var rawBody = card.querySelector('.whitespace-pre-wrap');
-        var myBody = null;
-        if (rawBody) {
-          rawBody.style.display = 'none';
-          myBody = document.createElement('div');
-          myBody.className = 'drip-msg-body';
+      var langSpan = head.querySelector('span');
+      if (!langSpan || langSpan.textContent.indexOf(':') === -1) continue;  // confirm this is a template card
+
+      // Text headers and bodies are separate native sections. Enhance each one so a
+      // header never prevents Liquid labels in the body; omit our own overlay nodes.
+      var sections = card.querySelectorAll('.whitespace-pre-wrap:not(.drip-msg-body)');
+      for (var j = 0; j < sections.length; j++) {
+        var rawBody = sections[j];
+        var d = rawBody.__dripPreview;
+        if (!d || !d.myBody.isConnected) {
+          var myBody = document.createElement('div');
+          myBody.className = rawBody.className + ' drip-msg-body';
+          myBody.hidden = true;
+          myBody.__dripRawBody = rawBody;
           rawBody.parentNode.insertBefore(myBody, rawBody.nextSibling);
+          d = { rawBody: rawBody, myBody: myBody, bodyDisplay: d ? d.bodyDisplay : rawBody.style.display };
+          rawBody.__dripPreview = d;
         }
-        card.__dripCard = { rawH3: h3, langSpan: langSpan, catRow: catRow, myName: myName, badges: badges,
-                            rawBody: rawBody, myBody: myBody };
-      }
 
-      // idempotent update on every run — reads from Vue's hidden elements (which Vue keeps
-      // updating), syncs to our overlay
-      var d = card.__dripCard;
-      var rawName = d.rawH3.textContent.trim();
-      var pretty = prettifyName(rawName);
-      if (d.myName.textContent !== pretty) { d.myName.textContent = pretty; d.myName.title = rawName; }
-
-      // ⚠️ sig ולא בנייה בכל ריצה: enhancePreviewCard נקרא מה-MutationObserver כל 150ms,
-      // ובנייה מחדש של ה-DOM בקצב הזה מהבהבת ומבזבזת. הטקסט הגולמי הוא החתימה הטבעית —
-      // הוא משתנה בדיוק כשהמשתמש מקליד בשדה משתנה או מחליף תבנית.
-      if (d.myBody) {
+        // Vue continues updating the original text. Re-render only when its content,
+        // custom-field labels, or locale changes to avoid observer feedback loops.
         var rawTxt = d.rawBody.textContent;
-        // אורך CUSTOM_FIELDS בחתימה — הטקסט הגולמי לא משתנה כשהשדות חוזרים מה-API, אבל
-        // התוויות כן (מפתח → שם תצוגה), וצריך רינדור מחדש.
-        var bodySig = rawTxt + ' ' + CUSTOM_FIELDS.length;
+        var bodySig = rawTxt + ' ' + CUSTOM_FIELDS.length + ' ' + dripLocale();
         if (d.myBody.__sig !== bodySig) {
           d.myBody.__sig = bodySig;
-          renderParts(d.myBody, splitTokens(rawTxt), 'drip-token-pill sm', null);
+          var parts = splitTokens(rawTxt);
+          var hasTokens = hasToken(parts);
+          d.rawBody.style.display = hasTokens ? 'none' : d.bodyDisplay;
+          d.myBody.hidden = !hasTokens;
+          if (hasTokens) renderParts(d.myBody, parts, 'drip-token-pill sm', null);
         }
       }
 
-      var lang = (d.langSpan.textContent.split(':')[1] || '').trim();
-      var cat = d.catRow ? (d.catRow.textContent.split(':')[1] || '').trim() : '';
-      var sig = lang + '|' + cat;
-      if (d.badges.__sig !== sig) {
-        d.badges.__sig = sig;
-        var langKey = lang.toLowerCase();
-        d.badges.innerHTML = '';
-        var lb = document.createElement('span');
-        lb.className = 'drip-badge';
-        lb.textContent = (LANG_FLAGS[langKey] || '🌐') + ' ' + (langNames()[langKey] || lang);
-        d.badges.appendChild(lb);
-        if (cat) {
-          var cb = document.createElement('span');
-          cb.className = 'drip-badge';
-          cb.textContent = (catNames()[cat.toUpperCase()] || cat);
-          d.badges.appendChild(cb);
-        }
+      // Vue may remove a TEXT header when another template is selected.
+      var overlays = card.querySelectorAll('.drip-msg-body');
+      for (var k = 0; k < overlays.length; k++) {
+        if (!card.contains(overlays[k].__dripRawBody)) overlays[k].remove();
       }
     }
   }

@@ -15,12 +15,10 @@ import HeaderMedia from './ui/HeaderMedia.jsx';
 import useT from '../useT.js';
 
 /*
- * TemplatePreview — live WhatsApp-style bubble render of the Builder's in-progress state
- * (the exact templateRules.emptyTemplate() shape — NOT the graph/API shape). Mirrors the
- * bubble tokens already used by SequencePreview.jsx (via MessageBubble/ChatBubble): teal
- * bubble, rounded-2xl, n-tokens only. Pure render — no dispatch, no editing here.
- * ⚠️ The green bubble is a deliberate WhatsApp mockup, not a copy of Chatwoot's own
- * neutral preview card: the point is seeing what the customer receives on their phone.
+ * TemplatePreview — live render of the Builder's in-progress state
+ * (the exact templateRules.emptyTemplate() shape, rather than the graph/API shape).
+ * Uses the neutral surface from Chatwoot's template-preview components while retaining
+ * media, variables, formatting, buttons, authentication, and carousel previews.
  */
 
 // Co-located dictionary (he/en) — chrome only; template content itself is never translated.
@@ -52,9 +50,9 @@ const M = {
 };
 
 const BUBBLE_SHELL =
-  'w-full max-w-sm rounded-2xl rounded-ss-md border border-n-teal-5/50 bg-n-teal-3 px-3.5 py-2.5 text-n-slate-12 shadow-sm';
+  'w-full max-w-80 rounded-xl bg-n-alpha-2 p-3 text-n-slate-12';
 const CARD_SHELL =
-  'w-48 shrink-0 rounded-xl border border-n-teal-5/50 bg-n-teal-3 px-3 py-2.5 text-n-slate-12 shadow-sm';
+  'w-48 shrink-0 rounded-xl bg-n-alpha-2 px-3 py-2.5 text-n-slate-12';
 
 const MEDIA_LABEL_KEY = { IMAGE: 'mediaImage', VIDEO: 'mediaVideo', DOCUMENT: 'mediaDocument' };
 const MEDIA_ICON = { IMAGE: ImageIcon, VIDEO: Video, DOCUMENT: FileText };
@@ -186,7 +184,7 @@ function ButtonsList({ buttons, t }) {
   const list = Array.isArray(buttons) ? buttons : [];
   if (list.length === 0) return null;
   return (
-    <div className="mt-2 flex flex-col gap-1 border-t border-n-teal-6/40 pt-2">
+    <div className="mt-2 flex flex-col gap-1 border-t border-n-weak pt-2">
       {list.map((b, i) => {
         const Icon = BUTTON_ICON[b.type] || CornerUpLeft;
         return (
@@ -244,7 +242,7 @@ function AuthBubble({ tpl, t }) {
       <p className="mt-2 text-[11px] text-n-slate-10">
         {t('authExpiresIn', { n: auth.expirationMinutes ?? 10 })}
       </p>
-      <div className="mt-2 flex flex-col gap-1 border-t border-n-teal-6/40 pt-2">
+      <div className="mt-2 flex flex-col gap-1 border-t border-n-weak pt-2">
         <span className="flex items-center justify-center gap-1.5 rounded-lg bg-n-alpha-1 px-2 py-1.5 text-center text-xs font-medium text-n-blue-11">
           <Copy size={13} aria-hidden="true" />
           {t('btnCopyCode')}

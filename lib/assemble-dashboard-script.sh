@@ -42,8 +42,8 @@ _cwpt_module_parts() {
       # video-compressor removed 20.8.26 — it was hard-disabled in code (vue-upload-component
       # ignores synthetic file injection) yet still shipped to every page load. native-i18n-he
       # added with the 4.17 upgrade: Hebrew overlay for the new native screens on stock builds.
-      # whatsapp-theme (4.9.26): WhatsApp-look skin (CSS + day separators); per-browser kill
-      # switch localStorage cwptWaTheme=off — see the file header.
+      # Native appearance is authoritative. Only isolated RTL readability and mobile
+      # list reachability fixes ship alongside the functional dashboard enhancements.
       # video-compressor is back (6.9.26) on a real hook: the core build's useFileUpload calls
       # window.__cwptTransformUpload before validating an upload, so the compressed file is
       # a first-class attachment (no synthetic change events, which vue-upload-component ignores).
@@ -52,7 +52,7 @@ _cwpt_module_parts() {
         "modules/dashboard-enhancements/parts/campaign-stats.js" \
         "modules/dashboard-enhancements/parts/native-i18n-he.js" \
         "modules/dashboard-enhancements/parts/video-compressor.js" \
-        "modules/dashboard-enhancements/parts/whatsapp-theme.js"
+        "modules/dashboard-enhancements/parts/native-ui-fixes.js"
       ;;
     *)
       return 1

@@ -5,10 +5,10 @@ import useT, { useLocale } from '../../useT.js';
 import { translate } from '../../i18n.js';
 
 /*
- * MessageBubble — בועת הודעה נכנסת בסגנון WhatsApp. מציגה את גוף התבנית
+ * MessageBubble — a template preview using Chatwoot's neutral preview surface.
+ * מציגה את גוף התבנית
  * כשכל {{N}} מוחלף בערך שהוזן (או בצ'יפ placeholder לשדה מערכת / דוגמה).
  * משותף לעורך (StepCard) ולתצוגת הרצף המלאה (SequencePreview).
- * ⚠️ המראה הירוק הוא מוקאפ מכוון של וואטסאפ (כמו ChatBubble) — לא העתק של Chatwoot.
  */
 
 // מילון co-located (he/en)
@@ -99,7 +99,7 @@ export default function MessageBubble({ template, params = [], mediaUrl = '', cl
 
   return (
     <div
-      className={`max-w-sm rounded-lg bg-n-teal-3 px-3 py-2 text-sm text-n-slate-12 shadow-sm ${className}`}
+      className={`max-w-80 rounded-xl bg-n-alpha-2 p-3 text-sm text-n-slate-12 ${className}`}
     >
       {/* header מדיה — המדיה עצמה כפי שהלקוח יראה אותה; בלי קישור (או בכישלון טעינה) חיווי */}
       {headerMediaFmt(template) ? (

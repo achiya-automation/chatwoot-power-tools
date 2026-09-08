@@ -769,7 +769,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
           />
         </aside>
         {viewMode === 'column' && outline.ok ? (
-          <div className="order-1 min-h-[34rem] min-w-0 grow overflow-y-auto bg-[radial-gradient(#ebf0f5_1.2px,transparent_0)] px-4 py-6 [background-size:1rem_1rem] dark:bg-[radial-gradient(#293f51_1.2px,transparent_0)] md:px-8 lg:order-2 lg:min-h-0 lg:px-10">
+          <div className="order-1 min-h-[34rem] min-w-0 grow overflow-y-auto bg-n-background px-4 py-6 md:px-8 lg:order-2 lg:min-h-0 lg:px-10">
             <JourneyColumn
               steps={outline.steps}
               nodes={nodes}
