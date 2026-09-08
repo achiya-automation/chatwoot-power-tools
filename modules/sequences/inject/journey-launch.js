@@ -1,5 +1,5 @@
 // journey-launch — injected as part of DASHBOARD_SCRIPTS. A small floating "הפעל פלואו"
-// pill that appears ONLY inside a conversation view, for every member of the account
+// button that appears ONLY inside a conversation view, for every member of the account
 // (agents launch flows; building them stays admin-only — see journeys-nav.js). Opens a
 // tiny popover listing the account's ACTIVE journeys; picking one calls jrn_launch on the
 // current conversation. Fixed-position on purpose: it anchors to the viewport, not to
@@ -49,8 +49,9 @@
     btn = document.createElement('button');
     btn.id = BTN_ID;
     btn.type = 'button';
-    btn.className = 'text-sm font-medium rounded-full shadow-lg border border-n-weak bg-n-background text-n-blue-11 hover:bg-n-alpha-2';
-    btn.style.cssText = 'position:fixed;bottom:92px;inset-inline-end:18px;z-index:9998;padding:6px 12px;display:none;cursor:pointer;';
+    // Native Button.vue slate/sm treatment; positioning remains independent of Vue.
+    btn.className = 'inline-flex items-center justify-center gap-2 h-8 px-3 text-sm rounded-lg border-0 outline outline-1 outline-n-container bg-n-button-color text-n-slate-12 hover:bg-n-alpha-2 focus-visible:outline-n-brand';
+    btn.style.cssText = 'position:fixed;bottom:92px;inset-inline-end:18px;z-index:9998;display:none;cursor:pointer;';
     btn.innerHTML = '<span class="i-lucide-zap size-3.5" style="display:inline-block;vertical-align:-2px;"></span> <span></span>';
     btn.addEventListener('click', togglePopover);
     document.body.appendChild(btn);
@@ -68,7 +69,7 @@
     if (!ctx) return;
     var pop = document.createElement('div');
     pop.id = POP_ID;
-    pop.className = 'rounded-xl shadow-xl border border-n-strong bg-n-background text-n-slate-12';
+    pop.className = 'rounded-xl shadow-lg outline outline-1 -outline-offset-1 outline-n-weak bg-n-alpha-3 backdrop-blur-[100px] text-n-slate-12';
     pop.style.cssText = 'position:fixed;bottom:132px;inset-inline-end:18px;z-index:9999;min-width:220px;max-width:300px;padding:6px;';
     pop.innerHTML = '<div class="text-xs text-n-slate-11" style="padding:4px 8px;">…</div>';
     document.body.appendChild(pop);

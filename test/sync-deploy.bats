@@ -222,28 +222,28 @@ make_full_flat_payload() {
     case "$*" in
       *Digest::MD5*)
         printf '%s\n' \
-          'modules/dashboard-enhancements/parts/whatsapp-theme.js 0000' \
+          'modules/dashboard-enhancements/parts/native-ui-fixes.js 0000' \
           'modules/smart-import/inject/import-button.js 1111' ;;
       *)
         printf '%s\n' \
-          'modules/dashboard-enhancements/parts/whatsapp-theme.js' \
+          'modules/dashboard-enhancements/parts/native-ui-fixes.js' \
           'modules/smart-import/inject/import-button.js' ;;
     esac
   }
   committed_parts() {
     printf '%s\n' \
-      'modules/dashboard-enhancements/parts/whatsapp-theme.js' \
+      'modules/dashboard-enhancements/parts/native-ui-fixes.js' \
       'modules/smart-import/inject/import-button.js'
   }
   committed_part_digests() {
     printf '%s\n' \
-      'modules/dashboard-enhancements/parts/whatsapp-theme.js aaaa' \
+      'modules/dashboard-enhancements/parts/native-ui-fixes.js aaaa' \
       'modules/smart-import/inject/import-button.js 1111'
   }
 
   [ "$(remote_injected_parts example.invalid)" = "$(committed_parts)" ]
   [ "$(remote_injected_part_digests example.invalid)" != "$(committed_part_digests)" ]
-  [ "$(changed_part_names example.invalid)" = "whatsapp-theme.js " ]
+  [ "$(changed_part_names example.invalid)" = "native-ui-fixes.js " ]
 }
 
 @test "part digests ignore only the ASSET_VER cache-bust that the deploy substitutes" {

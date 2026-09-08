@@ -3,9 +3,8 @@ import HeaderMedia from './HeaderMedia.jsx';
 import useT from '../../useT.js';
 
 /*
- * ChatBubble — בועת הודעת WhatsApp יוצאת. ⚠️ הבועה הירוקה היא *מוקאפ מכוון של וואטסאפ*
- * ולא העתק של כרטיס התצוגה הנייטרלי של Chatwoot: המטרה כאן היא שהנציג יראה את ההודעה
- * כפי שהלקוח יקבל אותה בטלפון (זו ההחלטה של בעל המערכת), ולכן דווקא כאן לא מיישרים למקור.
+ * ChatBubble — message content using Chatwoot's neutral template-preview surface
+ * (components-next/template-preview/WhatsAppTextTemplate.vue).
  * מציגה את ההודעה *המלאה*: כותרת-מדיה, כותרת טקסט,
  * גוף (עם שבירת שורות אמיתית), footer וכפתורים — ולמטה meta של זמן + טיקים.
  *
@@ -75,7 +74,7 @@ export default function ChatBubble({ text = '', template = null, mediaUrl = '', 
 
   return (
     <div
-      className={`relative w-fit max-w-[min(20rem,100%)] rounded-2xl rounded-ss-md border border-n-teal-5/50 bg-n-teal-3 px-3.5 py-2.5 text-n-slate-12 shadow-sm ${className}`}
+      className={`relative w-fit max-w-[min(20rem,100%)] rounded-xl bg-n-alpha-2 p-3 text-n-slate-12 ${className}`}
     >
       {/* כותרת מדיה — המדיה עצמה כפי שהלקוח יראה אותה; רק אם אין קישור (או שהטעינה
           נכשלה) יורדים לחיווי סוג המדיה */}
@@ -103,7 +102,7 @@ export default function ChatBubble({ text = '', template = null, mediaUrl = '', 
       ) : null}
 
       {buttons.length > 0 ? (
-        <div className="mt-2 flex flex-col gap-1 border-t border-n-teal-6/40 pt-2">
+        <div className="mt-2 flex flex-col gap-1 border-t border-n-weak pt-2">
           {buttons.map((b, i) => (
             <span
               key={i}

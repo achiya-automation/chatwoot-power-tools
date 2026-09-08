@@ -130,36 +130,28 @@ test('artifact: דשבורד הקמפיינים מזריק KPI + כפתור סט
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 
-test('artifact: מסך השיחה — מפרידי היום נוספים ואף חלק לא זורק', async () => {
-  // שני התרחישים האחרים בודקים /contacts ו-/campaigns. הקוד של whatsapp-theme (מפרידי יום
-  // וחותמות שעה) רץ רק בתוך שיחה, ולכן עד 4.9.26 הוא נפרס בלי ששום שער הריץ אותו אפילו פעם.
-  //
-  // ⚠️ הבועות הן ילדים *ישירים* של .conversation-panel, בלי עטיפת <li>: MessageList.vue הוא
-  // ‏<ul> ו-Message.vue הוא <div class="… message-bubble-container">. ‏<li> מופיע שם רק
-  // בסלוטים (טעינת היסטוריה, תג "לא נקרא"). fixture עם <li> עוטף מחמיץ את כל הלוגיקה.
-  // הפורמט הוא messageTimestamp(..., 'LLL d, h:mm a') דרך date-fns, כלומר AM/PM באותיות
-  // גדולות — fixture עם am קטן פשוט לא מותאם, והבדיקה נכשלת על עצמה.
+test('artifact: מסך השיחה שומר על תאריכים ותוכן מקוריים גם עם הגדרת עיצוב ישנה', async () => {
   const { dom, errors } = makeDom('/app/accounts/1/conversations/42');
+  dom.window.localStorage.setItem('cwptWaTheme', 'on');
   const w = await runDashboardScript(dom, (doc) =>
     mountVueRoot(doc, `
       <main><ul class="conversation-panel">
         <div class="message-bubble-container" data-message-id="1">
-          <time datetime="2026-09-03T09:15:00Z">Sep 3, 9:15 AM</time>שלום</div>
+          <time datetime="2026-09-03T09:15:00Z">Sep 3, 9:15 AM</time>
+          <div class="prose-bubble"><p>📱 נשלח מוואטסאפ</p><p>שלום</p></div>
+        </div>
         <div class="message-bubble-container" data-message-id="2">
           <time datetime="2026-09-04T11:20:00Z">Sep 4, 11:20 AM</time>מה נשמע</div>
       </ul><div></div></main>`)
   );
 
   const doc = w.document;
-  const days = doc.querySelectorAll('.cwpt-wa-day');
-  assert.ok(days.length >= 2, 'שתי הודעות בשני ימים שונים חייבות לקבל שני מפרידים');
-  const timestamp = new Date('2026-09-04T11:20:00Z');
-  const localTime = `${String(timestamp.getHours()).padStart(2, '0')}:${String(timestamp.getMinutes()).padStart(2, '0')}`;
-  assert.equal(
-    doc.querySelector('[data-message-id="2"] time').textContent,
-    localTime,
-    'חותמת השעה חייבת להיות HH:mm מקומי מתוך הזמן המדויק של ההודעה'
-  );
+  assert.equal(doc.querySelectorAll('.cwpt-wa-day').length, 0, 'Chatwoot מנהל את קבוצות ההודעות בעצמו');
+  assert.equal(doc.querySelector('#cwpt-wa-theme'), null, 'הגדרה ישנה אינה מפעילה מחדש את העיצוב');
+  assert.equal(doc.querySelector('[data-message-id="2"] time').textContent, 'Sep 4, 11:20 AM');
+  assert.equal(doc.querySelector('[data-message-id="2"] time').dateTime, '2026-09-04T11:20:00Z');
+  assert.equal(doc.querySelector('[data-message-id="1"] .prose-bubble p').textContent, '📱 נשלח מוואטסאפ');
+  assert.equal(doc.querySelector('[data-message-id="1"]').hasAttribute('data-wa-echo'), false);
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 
