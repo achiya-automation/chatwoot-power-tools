@@ -58,7 +58,7 @@ export default function ConfirmDialog({
   );
 
   return (
-    <Modal open={open} onClose={onClose} variant="center" size="sm" footer={footer} closeOnOverlay={!loading}>
+    <Modal open={open} onClose={loading ? undefined : onClose} aria-label={title} variant="center" size="sm" footer={footer} closeOnOverlay={!loading}>
       <div className="flex gap-3.5">
         <span
           className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${toneCfg.badge}`}

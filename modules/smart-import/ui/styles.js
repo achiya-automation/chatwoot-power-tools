@@ -2,7 +2,7 @@
 // Design tokens (bg-n-brand, text-n-slate-12, etc.) are compiled globally in
 // the Chatwoot page and auto-adapt to dark mode, so no body.dark overrides here.
 export const STYLES = `
-dialog.cwi-dlg{padding:0;border:0;background:transparent;width:100%;max-width:42rem;max-height:90vh;overflow:visible;color:inherit}
+dialog.cwi-dlg{padding:0;border:0;background:transparent;width:calc(100% - 32px);max-width:42rem;max-height:90vh;overflow:visible;color:inherit}
 /* הרקע מאחורי החלון — זהה ל-Dialog.vue של Chatwoot (bg-n-alpha-black1 + blur 4px).
    ‎--black-alpha-1 הוא 12% במצב בהיר ו-30% בכהה; קודם היה כאן 50% קבוע, כלומר כהה
    פי ארבעה מהמקור וללא התאמה לערכת הנושא. */
@@ -17,10 +17,16 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
    breaking viewport-relative positioning. The modal is a sibling of the panel, so its
    transform can't affect the panel. */
 .cwi-modal{max-height:90vh;overflow:auto;animation:cwiIn .2s ease-out}
+.cwi-table-scroll{overflow-x:auto;min-width:0;max-width:100%}
+.cwi-table-scroll table{min-width:32rem}
+.cwi-dlg :is(button,[role="button"]):focus-visible{outline:2px solid rgb(var(--blue-9));outline-offset:2px}
+.cwi-dlg h3:focus{outline:none}
+@media(prefers-reduced-motion:reduce){.cwi-modal,.cwi-pill,dialog.cwi-dlg::backdrop{animation:none}.cwi-cs-panel,.cwi-prog-fill{transition:none}}
 @keyframes cwiIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
 /* הרקע מגיע ממחלקת bg-n-brand של Chatwoot (הכחול הרשמי) — לא ממשתנה:
    --color-n-brand לא קיים ב-CSS המקומפל וה-fallback צבע את הפס באינדיגו זר. */
-.cwi-prog-fill{height:100%;transition:width .2s}
+.cwi-prog-fill{height:100%;transform-origin:left;transition:transform .2s}
+.cwi-pill[dir="rtl"] .cwi-prog-fill{transform-origin:right}
 /* ⚠️ border-bottom בלי צבע = currentColor לפי מפרט CSS, וכיוון שהגיליון הזה מוזרק
    ל-head בזמן ריצה הוא בא *אחרי* הגיליון של Chatwoot ומנצח את border-n-weak שעל התא.
    התוצאה הייתה קווי טבלה בצבע הטקסט — כהים בהרבה מכל טבלה אחרת בדשבורד. */

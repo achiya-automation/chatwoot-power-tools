@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 import useT from '../../useT.js';
 
@@ -36,6 +36,9 @@ export default function Dropdown({
   const rootRef = useRef(null);
   const btnRef = useRef(null);
   const listRef = useRef(null);
+  const generatedId = useId();
+  const dropdownId = id || generatedId;
+  const listId = `${dropdownId}-list`;
 
   const selected = options.find((o) => o.value === value) || null;
   const selectedIndex = options.findIndex((o) => o.value === value);
@@ -48,15 +51,31 @@ export default function Dropdown({
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
-  // כשנפתח — מתחילים מהאפשרות הנבחרת, וגוללים אליה
+  // The list owns keyboard focus; opening it must not add every option to Tab order.
   useEffect(() => {
-    if (open) {
-      setActive(selectedIndex >= 0 ? selectedIndex : 0);
-      window.setTimeout(() => {
-        listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
-      }, 0);
+    if (open) listRef.current?.focus({ preventScroll: true });
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
+  useEffect(() => {
+    const list = listRef.current;
+    const item = list?.querySelector('[data-active="true"]');
+    if (!item) return;
+    if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop;
+    else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
     }
-  }, [open, selectedIndex]);
+  }, [open, active]);
+
+  const enabledIndices = options.flatMap((option, index) => option.disabled ? [] : [index]);
+  const openList = (fromEnd = false) => {
+    setActive(enabledIndices.includes(selectedIndex) ? selectedIndex
+      : (fromEnd ? enabledIndices.at(-1) : enabledIndices[0]) ?? -1);
+    setOpen(true);
+  };
 
   const choose = (opt) => {
     if (!opt || opt.disabled) return;
@@ -68,28 +87,33 @@ export default function Dropdown({
   const onKeyDown = (e) => {
     if (disabled) return;
     if (!open) {
-      if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); }
+      if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) {
+        e.preventDefault(); openList(e.key === 'ArrowUp');
+      }
       return;
     }
-    if (e.key === 'Escape') { e.preventDefault(); setOpen(false); btnRef.current?.focus(); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(options.length - 1, i + 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)); }
-    else if (e.key === 'Home') { e.preventDefault(); setActive(0); }
-    else if (e.key === 'End') { e.preventDefault(); setActive(options.length - 1); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); btnRef.current?.focus(); }
+    else if (e.key === 'Tab') { setOpen(false); btnRef.current?.focus(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); setActive(enabledIndices.find((i) => i > active) ?? active); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive([...enabledIndices].reverse().find((i) => i < active) ?? active); }
+    else if (e.key === 'Home') { e.preventDefault(); setActive(enabledIndices[0] ?? -1); }
+    else if (e.key === 'End') { e.preventDefault(); setActive(enabledIndices.at(-1) ?? -1); }
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(options[active]); }
   };
 
   return (
-    <div ref={rootRef} className={`relative ${className}`}>
+    <div ref={rootRef} className={`relative min-w-0 ${className}`}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false); }}>
       <button
         ref={btnRef}
         type="button"
-        id={id}
+        id={dropdownId}
         disabled={disabled}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => !disabled && setOpen((o) => !o)}
+        aria-controls={open ? listId : undefined}
+        onClick={() => { if (!disabled) { if (open) setOpen(false); else openList(); } }}
         onKeyDown={onKeyDown}
         className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border-none bg-n-alpha-black2 px-3 text-start text-sm outline outline-1 outline-offset-[-1px] outline-n-weak hover:outline-n-slate-6 focus:outline-n-brand transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -106,9 +130,13 @@ export default function Dropdown({
       {open ? (
         <ul
           ref={listRef}
+          id={listId}
           role="listbox"
-          aria-activedescendant={active >= 0 ? `${id || 'dd'}-opt-${active}` : undefined}
-          className="mt-1 max-h-64 overflow-auto rounded-xl bg-n-alpha-3 backdrop-blur-[100px] outline outline-1 outline-n-container pt-2 pb-1 px-1 shadow-lg"
+          tabIndex={-1}
+          aria-label={ariaLabel || _placeholder}
+          onKeyDown={onKeyDown}
+          aria-activedescendant={active >= 0 && options[active] ? `${dropdownId}-opt-${active}` : undefined}
+          className="relative mt-1 max-h-64 overflow-auto rounded-xl bg-n-alpha-3 backdrop-blur-[100px] outline outline-1 outline-n-container pt-2 pb-1 px-1 shadow-lg"
         >
           {options.length === 0 ? (
             <li className="px-3 py-3 text-center text-xs text-n-slate-11">{t('noOptions')}</li>
@@ -117,13 +145,13 @@ export default function Dropdown({
               const sel = opt.value === value;
               const isActive = i === active;
               return (
-                <li key={opt.value ?? i} role="option" aria-selected={sel}>
+                <li key={opt.value ?? i} id={`${dropdownId}-opt-${i}`} role="option" aria-selected={sel} aria-disabled={opt.disabled || undefined} data-active={isActive}>
                   <button
                     type="button"
-                    id={`${id || 'dd'}-opt-${i}`}
-                    data-active={isActive}
+                    tabIndex={-1}
                     disabled={opt.disabled}
-                    onMouseEnter={() => setActive(i)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => { if (!opt.disabled) setActive(i); }}
                     onClick={() => choose(opt)}
                     className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 min-h-8 text-start transition-colors ${
                       opt.disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'

@@ -488,7 +488,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={saving ? undefined : onClose}
       title={sequence?.name ? t('editTitle', { name: sequence.name }) : t('newTitle')}
       variant="center"
       size="2xl"

@@ -40,14 +40,16 @@
   }
 
   var bundle = null;
+  var opening = false;
   function loadBundle() {
     if (window.__cwImport) return Promise.resolve(window.__cwImport);
     if (!bundle) {
       bundle = new Promise(function (res, rej) {
         var s = document.createElement('script');
         s.src = ADDONS_BASE + '/smart-import/import-tool.js?v=' + ASSET_VER;
-        s.onload = function () { res(window.__cwImport); };
-        s.onerror = function () { bundle = null; rej(new Error('import-tool load failed')); };
+        function failed() { s.remove(); bundle = null; rej(new Error('import-tool load failed')); }
+        s.onload = function () { if (window.__cwImport && window.__cwImport.openWizard) res(window.__cwImport); else failed(); };
+        s.onerror = failed;
         document.head.appendChild(s);
       });
     }
@@ -55,13 +57,23 @@
   }
 
   function openImport() {
+    if (opening) return;
+    var acc = accountId();
+    if (!acc) return;
     var headers = authHeaders();
     if (!headers) { alert(t('authError')); return; }
+    opening = true;
+    var btn = document.getElementById('cwi-open-btn');
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
     loadBundle().then(function (mod) {
+      if (accountId() !== acc || !/\/contacts(\/|$)/.test(location.pathname)) return;
       // assetBase is the raw addons base; the wizard derives its own vendor asset path from
       // it (see cw-import-tool/lib/basepath.js).
-      mod.openWizard({ accountId: accountId(), authHeaders: headers, assetBase: ADDONS_BASE });
-    }).catch(function (e) { alert(t('loadFailed') + e.message); });
+      mod.openWizard({ accountId: acc, authHeaders: headers, assetBase: ADDONS_BASE });
+    }).catch(function (e) { alert(t('loadFailed') + e.message); }).finally(function () {
+      opening = false;
+      if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+    });
   }
 
   // Inject "Smart import" into the stable Chatwoot contacts header action row. Idempotent +
@@ -75,6 +87,7 @@
       if (!btn) {
         btn = document.createElement('button');
         btn.id = 'cwi-open-btn';
+        btn.type = 'button';
         btn.className = 'cwi-open inline-flex items-center justify-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline disabled:opacity-50 h-8 px-3 text-sm bg-n-brand text-white hover:enabled:brightness-110 focus-visible:brightness-110 outline-transparent active:enabled:scale-[0.97]';
         btn.addEventListener('click', function (e) { e.preventDefault(); openImport(); });
         host.insertBefore(btn, host.firstChild); // first child = sits with the native header actions

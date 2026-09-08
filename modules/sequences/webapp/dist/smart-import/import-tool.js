@@ -761,7 +761,7 @@ var __cwImport = (() => {
 
   // ui/styles.js
   var STYLES = `
-dialog.cwi-dlg{padding:0;border:0;background:transparent;width:100%;max-width:42rem;max-height:90vh;overflow:visible;color:inherit}
+dialog.cwi-dlg{padding:0;border:0;background:transparent;width:calc(100% - 32px);max-width:42rem;max-height:90vh;overflow:visible;color:inherit}
 /* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D0\u05D7\u05D5\u05E8\u05D9 \u05D4\u05D7\u05DC\u05D5\u05DF \u2014 \u05D6\u05D4\u05D4 \u05DC-Dialog.vue \u05E9\u05DC Chatwoot (bg-n-alpha-black1 + blur 4px).
    \u200E--black-alpha-1 \u05D4\u05D5\u05D0 12% \u05D1\u05DE\u05E6\u05D1 \u05D1\u05D4\u05D9\u05E8 \u05D5-30% \u05D1\u05DB\u05D4\u05D4; \u05E7\u05D5\u05D3\u05DD \u05D4\u05D9\u05D4 \u05DB\u05D0\u05DF 50% \u05E7\u05D1\u05D5\u05E2, \u05DB\u05DC\u05D5\u05DE\u05E8 \u05DB\u05D4\u05D4
    \u05E4\u05D9 \u05D0\u05E8\u05D1\u05E2\u05D4 \u05DE\u05D4\u05DE\u05E7\u05D5\u05E8 \u05D5\u05DC\u05DC\u05D0 \u05D4\u05EA\u05D0\u05DE\u05D4 \u05DC\u05E2\u05E8\u05DB\u05EA \u05D4\u05E0\u05D5\u05E9\u05D0. */
@@ -776,10 +776,16 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
    breaking viewport-relative positioning. The modal is a sibling of the panel, so its
    transform can't affect the panel. */
 .cwi-modal{max-height:90vh;overflow:auto;animation:cwiIn .2s ease-out}
+.cwi-table-scroll{overflow-x:auto;min-width:0;max-width:100%}
+.cwi-table-scroll table{min-width:32rem}
+.cwi-dlg :is(button,[role="button"]):focus-visible{outline:2px solid rgb(var(--blue-9));outline-offset:2px}
+.cwi-dlg h3:focus{outline:none}
+@media(prefers-reduced-motion:reduce){.cwi-modal,.cwi-pill,dialog.cwi-dlg::backdrop{animation:none}.cwi-cs-panel,.cwi-prog-fill{transition:none}}
 @keyframes cwiIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
 /* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D2\u05D9\u05E2 \u05DE\u05DE\u05D7\u05DC\u05E7\u05EA bg-n-brand \u05E9\u05DC Chatwoot (\u05D4\u05DB\u05D7\u05D5\u05DC \u05D4\u05E8\u05E9\u05DE\u05D9) \u2014 \u05DC\u05D0 \u05DE\u05DE\u05E9\u05EA\u05E0\u05D4:
    --color-n-brand \u05DC\u05D0 \u05E7\u05D9\u05D9\u05DD \u05D1-CSS \u05D4\u05DE\u05E7\u05D5\u05DE\u05E4\u05DC \u05D5\u05D4-fallback \u05E6\u05D1\u05E2 \u05D0\u05EA \u05D4\u05E4\u05E1 \u05D1\u05D0\u05D9\u05E0\u05D3\u05D9\u05D2\u05D5 \u05D6\u05E8. */
-.cwi-prog-fill{height:100%;transition:width .2s}
+.cwi-prog-fill{height:100%;transform-origin:left;transition:transform .2s}
+.cwi-pill[dir="rtl"] .cwi-prog-fill{transform-origin:right}
 /* \u26A0\uFE0F border-bottom \u05D1\u05DC\u05D9 \u05E6\u05D1\u05E2 = currentColor \u05DC\u05E4\u05D9 \u05DE\u05E4\u05E8\u05D8 CSS, \u05D5\u05DB\u05D9\u05D5\u05D5\u05DF \u05E9\u05D4\u05D2\u05D9\u05DC\u05D9\u05D5\u05DF \u05D4\u05D6\u05D4 \u05DE\u05D5\u05D6\u05E8\u05E7
    \u05DC-head \u05D1\u05D6\u05DE\u05DF \u05E8\u05D9\u05E6\u05D4 \u05D4\u05D5\u05D0 \u05D1\u05D0 *\u05D0\u05D7\u05E8\u05D9* \u05D4\u05D2\u05D9\u05DC\u05D9\u05D5\u05DF \u05E9\u05DC Chatwoot \u05D5\u05DE\u05E0\u05E6\u05D7 \u05D0\u05EA border-n-weak \u05E9\u05E2\u05DC \u05D4\u05EA\u05D0.
    \u05D4\u05EA\u05D5\u05E6\u05D0\u05D4 \u05D4\u05D9\u05D9\u05EA\u05D4 \u05E7\u05D5\u05D5\u05D9 \u05D8\u05D1\u05DC\u05D4 \u05D1\u05E6\u05D1\u05E2 \u05D4\u05D8\u05E7\u05E1\u05D8 \u2014 \u05DB\u05D4\u05D9\u05DD \u05D1\u05D4\u05E8\u05D1\u05D4 \u05DE\u05DB\u05DC \u05D8\u05D1\u05DC\u05D4 \u05D0\u05D7\u05E8\u05EA \u05D1\u05D3\u05E9\u05D1\u05D5\u05E8\u05D3. */
@@ -792,10 +798,11 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
 `;
 
   // ui/wizard.js
-  var DRIP_LOCALE = (function() {
+  function pageLocale() {
     const a = document.querySelector("#app[dir]");
     return (a || document.documentElement).getAttribute("dir") === "rtl" ? "he" : "en";
-  })();
+  }
+  var DRIP_LOCALE = pageLocale();
   var I18N = {
     he: {
       // system-field labels (mapping dropdown)
@@ -977,19 +984,21 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
   function t(k) {
     return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k;
   }
-  var FIELD_LABELS = {
-    "": t("ignore"),
-    name: t("fName"),
-    first_name: t("fFirstName"),
-    last_name: t("fLastName"),
-    phone_number: t("fPhone"),
-    phone_number_alt: t("fPhoneAlt"),
-    email: t("fEmail"),
-    identifier: t("fIdentifier"),
-    company_name: t("fCompany"),
-    city: t("fCity"),
-    country: t("fCountry")
-  };
+  function fieldLabels() {
+    return {
+      "": t("ignore"),
+      name: t("fName"),
+      first_name: t("fFirstName"),
+      last_name: t("fLastName"),
+      phone_number: t("fPhone"),
+      phone_number_alt: t("fPhoneAlt"),
+      email: t("fEmail"),
+      identifier: t("fIdentifier"),
+      company_name: t("fCompany"),
+      city: t("fCity"),
+      country: t("fCountry")
+    };
+  }
   var XLSX_LOADING = null;
   function loadXlsx(assetBase) {
     if (window.XLSX) return Promise.resolve(window.XLSX);
@@ -997,17 +1006,32 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       XLSX_LOADING = new Promise((resolve, reject) => {
         const s = document.createElement("script");
         s.src = vendorUrl(assetBase);
-        s.onload = () => resolve(window.XLSX);
-        s.onerror = () => reject(new Error("SheetJS load failed"));
+        function failed() {
+          s.remove();
+          XLSX_LOADING = null;
+          reject(new Error("SheetJS load failed"));
+        }
+        s.onload = () => window.XLSX ? resolve(window.XLSX) : failed();
+        s.onerror = failed;
         document.head.appendChild(s);
       });
     }
     return XLSX_LOADING;
   }
   function openWizard({ accountId, authHeaders, assetBase }) {
+    const existingDialog = document.querySelector("dialog.cwi-dlg[open]");
+    if (existingDialog) {
+      existingDialog.focus();
+      return;
+    }
+    DRIP_LOCALE = pageLocale();
+    const FIELD_LABELS = fieldLabels();
     injectStyles();
     const api = createApiClient(accountId, authHeaders);
     const state = { table: null, mapping: [], customMap: [], labelTitle: "", labelNeedsCreation: false, waInboxId: null, serverMode: false };
+    const mappingTouched = /* @__PURE__ */ new Set();
+    let openPanelCloser = null, stepVersion = 0, closed = false;
+    const returnFocus = document.activeElement;
     api.listInboxes().then((r) => {
       const list = r?.payload || r || [];
       const wa = list.find((i) => /whatsapp/i.test(i?.channel_type || ""));
@@ -1016,6 +1040,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     });
     var dlg = document.createElement("dialog");
     dlg.className = "cwi-dlg";
+    dlg.setAttribute("aria-labelledby", "cwi-dialog-title");
     const pageIsDark = document.documentElement.classList.contains("dark") || document.body.classList.contains("dark");
     if (pageIsDark) dlg.classList.add("dark");
     const appDir = (document.querySelector("#app[dir]") || document.documentElement).getAttribute("dir");
@@ -1026,11 +1051,27 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     document.body.appendChild(dlg);
     dlg.showModal();
     function close() {
+      closed = true;
+      stepVersion += 1;
+      if (openPanelCloser) openPanelCloser();
       try {
         dlg.close();
       } catch (e) {
       }
       dlg.remove();
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+    }
+    function resetStep() {
+      if (openPanelCloser) openPanelCloser();
+      modal.replaceChildren();
+      const version = ++stepVersion;
+      requestAnimationFrame(() => {
+        if (!closed && version === stepVersion) modal.querySelector("h3")?.focus({ preventScroll: true });
+      });
+      return version;
+    }
+    function isCurrentStep(version) {
+      return !closed && version === stepVersion;
     }
     dlg.addEventListener("cancel", function(e) {
       e.preventDefault();
@@ -1041,7 +1082,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     });
     stepUpload();
     function stepUpload() {
-      modal.replaceChildren();
+      resetStep();
       const desc = el("p", "mb-0 text-sm text-n-slate-11");
       desc.append(t("uploadDesc"));
       const sample = el("a", "text-n-blue-11");
@@ -1059,6 +1100,9 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         "div",
         "flex flex-col items-center justify-center gap-2 p-6 rounded-lg outline-dashed outline-1 outline-n-weak bg-n-alpha-1 cursor-pointer hover:bg-n-alpha-2 transition-colors"
       );
+      drop.tabIndex = 0;
+      drop.setAttribute("role", "button");
+      drop.setAttribute("aria-label", t("dropText"));
       const body = el("div", "flex flex-col items-center justify-center gap-2");
       body.append(
         icon("upload", "size-6 text-n-slate-11"),
@@ -1067,6 +1111,12 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       );
       drop.appendChild(body);
       drop.addEventListener("click", () => input.click());
+      drop.addEventListener("keydown", (e) => {
+        if (e.target === drop && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          input.click();
+        }
+      });
       drop.addEventListener("dragover", (e) => {
         e.preventDefault();
       });
@@ -1077,6 +1127,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       modal.append(drop, input, footer({ onCancel: close }));
     }
     function showPickedFile(file, body) {
+      body.parentElement.setAttribute("role", "group");
+      body.parentElement.removeAttribute("tabindex");
       body.replaceChildren();
       body.className = "flex items-center gap-2 w-full";
       body.addEventListener("click", (e) => e.stopPropagation());
@@ -1107,25 +1159,30 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       body.append(left, right);
     }
     async function handleFile(file, drop, body) {
+      const version = ++stepVersion;
       if (drop && body) showPickedFile(file, body);
       try {
         const table = await readFileToTable(file, { loadXlsx: () => loadXlsx(assetBase) });
+        if (!isCurrentStep(version)) return;
         if (!table.headers.length) throw new Error(t("emptyFile"));
         state.table = table;
+        state.customMap = [];
+        mappingTouched.clear();
         state.mapping = detectColumns(table.headers, table.rows.slice(0, 20)).map((d) => ({ index: d.index, field: d.field }));
         stepMapping();
       } catch (e) {
-        showError(e.message);
+        if (isCurrentStep(version)) showError(e.message);
       }
     }
     async function stepMapping() {
-      modal.replaceChildren();
+      const version = resetStep();
       modal.appendChild(header(t("mappingTitle"), t("mappingDesc")));
       let customDefs = [];
       try {
         customDefs = await api.listCustomAttributes();
       } catch {
       }
+      if (!isCurrentStep(version)) return;
       const tbl = el("table", "w-full text-sm border-collapse");
       const thead = el("tr");
       [t("colInFile"), t("fieldInChatwoot"), t("example")].forEach((h) => {
@@ -1150,7 +1207,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         }
         options.push({ value: "__new__", label: t("createNewField"), icon: "plus" });
         const custom = state.customMap.find((c) => c.index === i);
-        const ownField = custom ? null : matchCustomField(colHeader, customDefs);
+        const ownField = custom || mappingTouched.has(i) ? null : matchCustomField(colHeader, customDefs);
         if (ownField) updateMapping(i, "custom:" + ownField);
         const initial = custom ? custom.create ? "__new__" : "custom:" + custom.attribute_key : ownField ? "custom:" + ownField : state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field) ? state.mapping[i].field : "";
         const row = el("tr");
@@ -1169,6 +1226,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
             }
           }
         });
+        cs.el.querySelector("button").setAttribute("aria-label", t("fieldInChatwoot") + ": " + colHeader);
         tdSel.appendChild(cs.el);
         if (custom?.create) showCommittedNewField(i, custom.create.display, tdSel, cs);
         const tdSample = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
@@ -1176,9 +1234,10 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         row.append(tdHeader, tdSel, tdSample);
         tbl.appendChild(row);
       });
-      modal.append(tbl, footer({ onBack: stepUpload, onNext: stepLabel, nextLabel: t("continue") }));
+      modal.append(tableScroller(tbl), footer({ onBack: stepUpload, onNext: stepLabel, nextLabel: t("continue") }));
     }
     function showInlineNewField(i, colHeader, tdSel, origCs) {
+      mappingTouched.add(i);
       state.mapping[i] = { index: i, field: null };
       state.customMap = state.customMap.filter((c) => c.index !== i);
       const wrap = el("div", "flex items-center gap-1");
@@ -1258,6 +1317,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       tdSel.replaceChildren(done);
     }
     function updateMapping(i, value) {
+      mappingTouched.add(i);
       state.mapping[i] = { index: i, field: null };
       state.customMap = state.customMap.filter((c) => c.index !== i);
       if (SYSTEM_FIELDS.includes(value)) {
@@ -1266,7 +1326,6 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         state.customMap.push({ index: i, attribute_key: value.slice(7) });
       }
     }
-    let openPanelCloser = null;
     function customSelect({ options, value, onSelect, placeholder, size }) {
       let currentValue = value == null ? "" : value;
       const heightCls = size === "field" ? "h-10" : "h-8";
@@ -1276,6 +1335,9 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         "inline-flex items-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline disabled:opacity-50 " + heightCls + " px-3 text-sm text-n-slate-12 font-normal justify-between w-full outline-n-weak hover:outline-n-slate-6 focus:outline-n-brand cursor-pointer"
       );
       trigger.type = "button";
+      trigger.setAttribute("aria-haspopup", "listbox");
+      trigger.setAttribute("role", "combobox");
+      trigger.setAttribute("aria-expanded", "false");
       const labelSpan = el("span", "truncate");
       const chevron = icon("chevron-down", "size-4 text-n-slate-11 shrink-0");
       trigger.append(labelSpan, chevron);
@@ -1289,6 +1351,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       function clearActive() {
         if (activeNode) activeNode.classList.remove("bg-n-alpha-3");
         activeNode = null;
+        (panel?.querySelector("input") || trigger).removeAttribute("aria-activedescendant");
       }
       function setActiveNode(node) {
         clearActive();
@@ -1297,6 +1360,9 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           node.classList.add("bg-n-alpha-3");
           node.scrollIntoView({ block: "nearest" });
         }
+        const focus = panel?.querySelector("input") || trigger;
+        if (node) focus.setAttribute("aria-activedescendant", node.id);
+        else focus.removeAttribute("aria-activedescendant");
       }
       function moveActive(delta) {
         const vis = visibleRows();
@@ -1326,6 +1392,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         chevron.className = "i-lucide-chevron-" + (open ? "up" : "down") + " size-4 text-n-slate-11 shrink-0";
       }
       function setTriggerOpen(open) {
+        trigger.setAttribute("aria-expanded", String(open));
         trigger.classList.toggle("outline-n-weak", !open);
         trigger.classList.toggle("hover:outline-n-slate-6", !open);
         trigger.classList.toggle("outline-n-brand", open);
@@ -1340,20 +1407,21 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         if (list) list.style.maxHeight = "";
         const dh = panel.offsetHeight || 240;
         panel.style.position = "fixed";
-        panel.style.width = r.width + "px";
+        const width = Math.min(r.width, Math.max(0, vw - MARGIN * 2));
+        panel.style.width = width + "px";
         const spaceBelow = vh - r.bottom, spaceAbove = r.top;
         const placeAbove = spaceBelow < dh + MARGIN && (spaceAbove >= dh + MARGIN || spaceAbove > spaceBelow);
         if (placeAbove) {
           panel.style.top = "auto";
           panel.style.bottom = vh - r.top + GAP + "px";
-          if (list) list.style.maxHeight = Math.max(80, Math.min(240, spaceAbove - GAP - MARGIN)) + "px";
         } else {
           panel.style.bottom = "auto";
           panel.style.top = r.bottom + GAP + "px";
-          if (list) list.style.maxHeight = Math.max(80, Math.min(240, spaceBelow - GAP - MARGIN)) + "px";
         }
+        const chromeHeight = list ? Math.max(0, panel.offsetHeight - list.offsetHeight) : 0;
+        if (list) list.style.maxHeight = Math.max(0, Math.min(240, (placeAbove ? spaceAbove : spaceBelow) - GAP - MARGIN - chromeHeight)) + "px";
         let left = r.left;
-        if (left + r.width > vw - MARGIN) left = vw - MARGIN - r.width;
+        if (left + width > vw - MARGIN) left = vw - MARGIN - width;
         if (left < MARGIN) left = MARGIN;
         panel.style.left = left + "px";
       }
@@ -1369,6 +1437,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         activeNode = null;
         openPanelCloser = null;
         setTriggerOpen(false);
+        trigger.removeAttribute("aria-activedescendant");
+        trigger.removeAttribute("aria-controls");
       }
       function onOutside(e) {
         if (panel && !panel.contains(e.target) && !trigger.contains(e.target)) closePanel();
@@ -1378,6 +1448,12 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           e.preventDefault();
           e.stopPropagation();
           closePanel();
+          trigger.focus({ preventScroll: true });
+          return;
+        }
+        if (e.key === "Tab") {
+          closePanel();
+          trigger.focus({ preventScroll: true });
           return;
         }
         if (e.key === "ArrowDown") {
@@ -1402,6 +1478,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           "flex items-center justify-between w-full gap-2 px-3 py-2 text-sm transition-colors duration-150 cursor-pointer hover:bg-n-alpha-2" + (isSel ? " bg-n-alpha-2" : "")
         );
         row.setAttribute("role", "option");
+        row.id = "cwi-option-" + ++controlId;
+        row.setAttribute("aria-selected", String(isSel));
         const lead = el("span", "flex items-center min-w-0 gap-2");
         if (opt.icon) lead.appendChild(icon(opt.icon, "size-4 text-n-slate-11 shrink-0"));
         const txt = el("span", "truncate text-n-slate-12" + (isSel ? " font-medium" : ""));
@@ -1413,6 +1491,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           currentValue = opt.value;
           renderTriggerLabel();
           closePanel();
+          trigger.focus({ preventScroll: true });
           onSelect(opt.value);
         });
         return row;
@@ -1439,11 +1518,17 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           );
           searchInput.type = "search";
           searchInput.placeholder = t("search");
+          searchInput.setAttribute("aria-label", t("search"));
+          searchInput.setAttribute("role", "combobox");
+          searchInput.setAttribute("aria-expanded", "true");
           searchWrap.appendChild(searchInput);
           panel.appendChild(searchWrap);
         }
         const list = el("ul", "py-1 mb-0 overflow-auto max-h-60");
         list.setAttribute("role", "listbox");
+        list.id = "cwi-listbox-" + ++controlId;
+        trigger.setAttribute("aria-controls", list.id);
+        if (searchInput) searchInput.setAttribute("aria-controls", list.id);
         const groupNodes = [];
         const rowNodes = [];
         let lastGroup;
@@ -1514,13 +1599,14 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       };
     }
     async function stepLabel() {
-      modal.replaceChildren();
+      const version = resetStep();
       modal.appendChild(header(t("labelStepTitle"), t("labelStepDesc")));
       let labels = [];
       try {
         labels = await api.listLabels().then((r) => r.payload || r);
       } catch {
       }
+      if (!isCurrentStep(version)) return;
       const options = [{ value: "", label: t("noLabel") }];
       (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
       const existingLabelTitles = new Set((labels || []).map((l) => String(l.title).toLowerCase()));
@@ -1534,6 +1620,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       newInput.placeholder = t("newLabelPlaceholder");
       if (prior && !priorIsExisting) newInput.value = prior;
       const labelError = el("div", "min-h-5 text-sm text-n-ruby-11");
+      labelError.setAttribute("role", "alert");
       newInput.addEventListener("input", () => {
         labelError.textContent = "";
       });
@@ -1577,7 +1664,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       );
     }
     async function stepPreview() {
-      modal.replaceChildren();
+      const version = resetStep();
       modal.appendChild(header(t("previewTitle"), ""));
       const badMaps = validateMapping(state.table.headers, state.table.rows, state.mapping);
       if (badMaps.length) {
@@ -1593,6 +1680,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       status.textContent = t("checkingDupes");
       modal.appendChild(status);
       await ensureCustomAttributes();
+      if (!isCurrentStep(version)) return;
       try {
         await ensureLabel();
       } catch {
@@ -1600,6 +1688,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         modal.appendChild(footer({ onBack: stepLabel }));
         return;
       }
+      if (!isCurrentStep(version)) return;
       const headerEchoRows = [];
       const contacts = state.table.rows.map((row, idx) => ({
         ...buildContactPayload(row, state.mapping, state.customMap),
@@ -1619,6 +1708,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
         state.serverMode = true;
       } catch {
       }
+      if (!isCurrentStep(version)) return;
       if (!state.serverMode) {
         try {
           await batchDedup(contacts, api, (d, tot) => {
@@ -1632,6 +1722,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
           });
         }
       }
+      if (!isCurrentStep(version)) return;
       const dupes = state.serverMode ? serverCounts.dup_in_file || 0 : contacts.filter((c) => c.__dupTail).length;
       const existing = state.serverMode ? serverCounts.existing : contacts.filter((c) => c.__match).length;
       const created = N - existing - dupes;
@@ -1639,7 +1730,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       modal.append(headerEchoNotice(headerEchoRows));
       modal.append(phoneWarning(contacts));
       modal.append(
-        previewTable(contacts.slice(0, 10)),
+        tableScroller(previewTable(contacts.slice(0, 10))),
         footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t("importVerb")} ${N} ${t("contactsWord")}` })
       );
     }
@@ -1742,6 +1833,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     }
     function showError(msg) {
       const e = el("div", "text-sm text-n-ruby-11");
+      e.setAttribute("role", "alert");
       e.textContent = msg;
       modal.appendChild(e);
     }
@@ -1794,7 +1886,17 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       const wrap = el("div", "flex flex-col gap-1");
       const lbl = el("label", "text-sm text-n-slate-12 mb-1");
       lbl.textContent = labelText;
+      const input = control.matches("input,button,select") ? control : control.querySelector("input,button,select");
+      if (input) {
+        input.id ||= "cwi-control-" + ++controlId;
+        lbl.htmlFor = input.id;
+      }
       wrap.append(lbl, control);
+      return wrap;
+    }
+    function tableScroller(table) {
+      const wrap = el("div", "cwi-table-scroll");
+      wrap.appendChild(table);
       return wrap;
     }
   }
@@ -1805,6 +1907,7 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     s.textContent = STYLES;
     document.head.appendChild(s);
   }
+  var controlId = 0;
   function mountPill(job, { dark, rtl }) {
     injectStyles();
     document.getElementById("cwi-pill")?.remove();
@@ -1814,12 +1917,13 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     pill.setAttribute("dir", rtl ? "rtl" : "ltr");
     const head = el("div", "flex items-center justify-between gap-3");
     const title = el("span", "text-sm font-medium text-n-slate-12");
+    title.setAttribute("role", "status");
     const xBtn = el("button", BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-6 w-6 p-0 shrink-0 cursor-pointer");
     xBtn.appendChild(icon("x", "size-4"));
     head.append(title, xBtn);
     const track = el("div", "h-1.5 w-full rounded-full bg-n-alpha-2 overflow-hidden");
     const fill = el("div", "cwi-prog-fill bg-n-brand");
-    fill.style.width = "0%";
+    fill.style.transform = "scaleX(0)";
     track.appendChild(fill);
     const detail = el("div", "text-xs text-n-slate-11");
     const hint = elWithText(
@@ -1848,17 +1952,19 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
       else if (st !== "cancelling") dismiss();
     });
     function render(p) {
-      fill.style.width = (p.total ? Math.round(p.done / p.total * 100) : 100) + "%";
+      fill.style.transform = "scaleX(" + (p.total ? Math.min(1, Math.max(0, p.done / p.total)) : 1) + ")";
       const counts = `${t("createdWord")} ${p.created} \xB7 ${t("updatedWord")} ${p.updated}` + (p.skipped ? ` \xB7 ${t("skippedWord")} ${p.skipped}` : "") + (p.failed ? ` \xB7 ${t("failedWord")} ${p.failed}` : "");
       if (p.state === "running" || p.state === "cancelling") {
         title.textContent = p.state === "running" ? t("bgImporting") : t("bgCancelling");
         xBtn.title = t("stopImport");
+        xBtn.setAttribute("aria-label", t("stopImport"));
         detail.textContent = `${p.done}/${p.total} \xB7 ${counts}`;
         if (job.serverMode) hint.textContent = t("bgHintServer")(job.emailTo);
         return;
       }
       window.removeEventListener("beforeunload", warnUnload);
       xBtn.title = t("close");
+      xBtn.setAttribute("aria-label", t("close"));
       hint.remove();
       title.textContent = p.state === "done" ? t("importDone") : p.state === "cancelled" ? `${t("bgCancelled")} (${p.done}/${p.total})` : t("bgError");
       detail.textContent = counts;
@@ -1887,6 +1993,8 @@ dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
     const wrap = el("div", "flex flex-col gap-2");
     const h = el("h3", "text-base font-medium leading-6 text-n-slate-12 m-0");
     h.textContent = title;
+    h.id = "cwi-dialog-title";
+    h.tabIndex = -1;
     wrap.appendChild(h);
     if (subtitle != null && subtitle !== "") {
       if (typeof subtitle === "string") {

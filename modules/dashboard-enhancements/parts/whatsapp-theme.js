@@ -55,7 +55,7 @@
     ':root{',
     '  --wa-app-bg:#f0f2f5;--wa-panel:#ffffff;--wa-chat-bg:#efeae2;--wa-incoming:#ffffff;--wa-outgoing:#d9fdd3;',
     '  --wa-note:#fff6c8;--wa-text:#111b21;--wa-text-2:#667781;--wa-icon:#54656f;--wa-primary:#00a884;',
-    '  --wa-primary-strong:#008069;--wa-unread:#25d366;--wa-unread-text:#ffffff;--wa-tick-read:#53bdeb;',
+    '  --wa-primary-strong:#008069;--wa-unread:#25d366;--wa-unread-text:#111b21;--wa-tick-read:#53bdeb;',
     '  --wa-divider:#e9edef;--wa-hover:#f5f6f6;--wa-selected:#f0f2f5;--wa-system:#ffffff;--wa-input:#ffffff;',
     '  --wa-quote-bg:rgba(11,20,26,.05);--wa-quote-bar:#06cf9c;--wa-shadow:rgba(11,20,26,.13);--wa-link:#027eb5;',
     '  --wa-chip:#f0f2f5;--wa-chip-active:#e7fce3;--wa-meta-out:rgba(17,27,33,.6);',
@@ -117,10 +117,10 @@
        chip-enhanced list of the custom build alike (both keep list-none + a.text-button). */
     '#app .conversations-list-wrap ul.list-none{gap:8px 6px;padding:8px 0 8px;align-items:center}',
     '#app .conversations-list-wrap ul.list-none>li{margin:0}',
-    '#app .conversations-list-wrap ul.list-none>li>a.text-button{padding:3px 12px;border-radius:9999px;background:var(--wa-chip);color:var(--wa-text-2);font-size:13px;font-weight:500;line-height:20px}',
-    '#app .conversations-list-wrap ul.list-none>li>a.text-button:after{display:none}',
-    '#app .conversations-list-wrap ul.list-none>li>a.text-button[aria-pressed="true"],#app .conversations-list-wrap ul.list-none>li>a.text-button.text-n-blue-11{background:var(--wa-chip-active);color:var(--wa-primary-strong)}',
-    '#app .conversations-list-wrap ul.list-none>li>a.text-button>div{background:transparent;color:inherit;padding:0;min-width:0;height:auto;margin-inline-start:4px;font-weight:500}',
+    '#app .conversations-list-wrap ul.list-none>li>:is(a,button).text-button{padding:3px 12px;border-radius:9999px;background:var(--wa-chip);color:var(--wa-text-2);font-size:13px;font-weight:500;line-height:20px}',
+    '#app .conversations-list-wrap ul.list-none>li>:is(a,button).text-button:after{display:none}',
+    '#app .conversations-list-wrap ul.list-none>li>:is(a,button).text-button[aria-pressed="true"],#app .conversations-list-wrap ul.list-none>li>:is(a,button).text-button.text-n-blue-11{background:var(--wa-chip-active);color:var(--wa-primary-strong)}',
+    '#app .conversations-list-wrap ul.list-none>li>:is(a,button).text-button>div{background:transparent;color:inherit;padding:0;min-width:0;height:auto;margin-inline-start:4px;font-weight:500}',
 
     ROW + '{border-bottom:0;align-items:center;min-height:72px;background:var(--wa-panel)}',
     ROW + ':after{content:"";position:absolute;bottom:0;inset-inline-start:76px;inset-inline-end:0;height:1px;background:var(--wa-divider)}',
@@ -164,7 +164,7 @@
     '#app .conversation-panel+div{background:var(--wa-app-bg)}',
     '#app .message-bubble-container{margin-bottom:12px}',
     '#app .message-bubble-container.group-with-next{margin-bottom:2px}',
-    '#app .message-bubble-container .left-bubble,#app .message-bubble-container .right-bubble{max-width:600px;border-radius:7.5px;box-shadow:0 1px .5px var(--wa-shadow);color:var(--wa-text);font-size:14.2px;line-height:19px}',
+    '#app .message-bubble-container .left-bubble,#app .message-bubble-container .right-bubble{max-width:min(600px,100%);border-radius:7.5px;box-shadow:0 1px .5px var(--wa-shadow);color:var(--wa-text);font-size:14.2px;line-height:19px}',
     '#app .message-bubble-container .left-bubble{background:var(--wa-incoming)}',
     '#app .message-bubble-container .right-bubble{background:var(--wa-outgoing)}',
     '#app .message-bubble-container .bg-n-solid-amber.left-bubble,#app .message-bubble-container .bg-n-solid-amber.right-bubble{background:var(--wa-note)}',
@@ -197,7 +197,7 @@
     '#app .message-bubble-container [data-bubble-name="image"],#app .message-bubble-container [data-bubble-name="video"]{padding:3px 3px 4px;border-radius:7.5px}',
     '#app .message-bubble-container [data-bubble-name="image"]>.text-xs,#app .message-bubble-container [data-bubble-name="video"]>.text-xs{margin:2px 0 0;padding:0 5px}',
     /* a captioned photo/video inside a text bubble: WhatsApp shows the media large above the caption, not a 72px thumbnail after it */
-    '#app .message-bubble-container [data-bubble-name="text"]:has([class~="size-[72px]"]){max-width:358px}',
+    '#app .message-bubble-container [data-bubble-name="text"]:has([class~="size-[72px]"]){max-width:min(358px,100%)}',
     '#app .message-bubble-container [data-bubble-name="text"]:has([class~="size-[72px]"])>.gap-3{gap:0}',
     '#app .message-bubble-container [data-bubble-name="text"]:has([class~="size-[72px]"])>.gap-3>.prose-bubble{display:contents}',
     '#app .message-bubble-container [data-bubble-name="text"]>.gap-3>div:has(>[class~="size-[72px]"]){order:-1;width:100%;margin:0 0 6px}',
@@ -206,7 +206,7 @@
     '#app .message-bubble-container [data-bubble-name="text"] [class~="size-[72px]"]{width:100%;height:auto;border-radius:6px}',
     '#app .message-bubble-container [data-bubble-name="text"] [class~="size-[72px]"]>img,#app .message-bubble-container [data-bubble-name="text"] [class~="size-[72px]"]>video{width:100%;height:auto;max-height:340px;object-fit:cover;display:block}',
     /* voice note: the bubble itself is the player — the chip's own card (border/shadow/white) goes, the clock reads LTR even in a Hebrew page */
-    '#app .message-bubble-container [data-bubble-name="audio"]{padding:4px 8px 8px;min-width:300px}',
+    '#app .message-bubble-container [data-bubble-name="audio"]{padding:4px 8px 8px;width:360px;max-width:100%;min-width:0}',
     '#app .message-bubble-container [data-bubble-name="audio"]>.rounded-xl{background:transparent;border:0;box-shadow:none;border-radius:0;padding:2px 0 0;gap:6px}',
     '#app .message-bubble-container .tabular-nums{direction:ltr;unicode-bidi:isolate;min-width:76px;text-align:center}',
     '#app .message-bubble-container [data-bubble-name="audio"] .tabular-nums{color:var(--wa-text-2)}',
@@ -246,6 +246,7 @@
     '#app .reply-box .right-wrap{order:4;margin-inline-start:8px;padding-bottom:0}',
     '#app .reply-box .left-wrap>button,#app .reply-box .left-wrap>span>button,#app .reply-box .left-wrap .file-uploads button{background:transparent!important;color:var(--wa-icon);width:36px;height:36px;border-radius:50%;font-size:1.25rem;outline:0}',
     '#app .reply-box .left-wrap>button:hover,#app .reply-box .left-wrap>span>button:hover,#app .reply-box .left-wrap .file-uploads button:hover{background:rgba(134,150,160,.15)!important}',
+    '#app .reply-box .left-wrap button:focus-visible{outline:2px solid var(--wa-primary-strong);outline-offset:2px}',
     '#app .reply-box .right-wrap>button{width:38px;height:38px;padding:0;border-radius:50%;font-size:0;color:transparent;background:var(--wa-primary);justify-content:center;box-shadow:0 1px 2px rgba(11,20,26,.2);transition:opacity .15s,transform .1s}',
     '#app .reply-box .right-wrap>button:hover:enabled{filter:brightness(1.08)}',
     '#app .reply-box .right-wrap>button:disabled{opacity:.35;box-shadow:none}',
@@ -303,6 +304,11 @@
     '  #app .reply-box .resizable-editor-body{height:auto!important;min-height:40px;max-height:30vh}',
     '  #app .resizable-editor-wrapper>.cursor-row-resize{display:none}',
     '  #app .reply-box>.reply-box__top .border-dashed{max-height:none;padding:2px 8px;font-size:12px;line-height:16px}',
+    '}',
+    /* Keep every voice-note control reachable when the conversation has a narrow column. */
+    '@container (max-width:420px){',
+    '  #app .message-bubble-container [data-bubble-name="audio"]>.rounded-xl>div.flex{display:grid;grid-template-columns:32px minmax(76px,1fr) 40px 32px 32px;gap:4px}',
+    '  #app .message-bubble-container [data-bubble-name="audio"]>.rounded-xl>div.flex>div:has(>input[type="range"]){grid-column:1/-1;grid-row:2;min-width:0;padding:6px 0}',
     '}',
   ].join('\n');
 
@@ -363,12 +369,20 @@
     for (var i = 0; i < times.length; i++) {
       var t = times[i];
       var raw = t.textContent;
-      if (t.getAttribute('data-wa-out') === raw) continue; // already ours
-      var d = parseStamp(raw);
+      var machine = t.getAttribute('datetime');
+      var previousMachine = t.getAttribute('data-wa-source');
+      if (t.getAttribute('data-wa-out') === raw && previousMachine === machine) continue;
+      // The native timestamp preserves the year and timezone that the display string omits.
+      if (machine && (!previousMachine || machine !== previousMachine)) t.setAttribute('data-wa-native-time', '1');
+      // In older builds we supplied datetime ourselves: a changed text node must be reparsed.
+      var d = machine && t.getAttribute('data-wa-native-time') === '1'
+        ? new Date(machine) : null;
+      if (!d || Number.isNaN(d.getTime())) d = parseStamp(raw);
       if (!d) continue;
       var out = pad(d.getHours()) + ':' + pad(d.getMinutes());
-      t.setAttribute('title', raw.trim());
+      t.setAttribute('title', d.toLocaleString(isHe() ? 'he-IL' : 'en-GB', { dateStyle: 'long', timeStyle: 'short' }));
       t.setAttribute('datetime', d.toISOString());
+      t.setAttribute('data-wa-source', d.toISOString());
       t.setAttribute('data-wa-out', out);
       t.textContent = out;
       var box = t.closest('.message-bubble-container');
@@ -419,6 +433,11 @@
         var before = el.previousElementSibling;
         var ok = before && before.classList.contains('cwpt-wa-day') && before.getAttribute('data-for') === el.getAttribute('data-message-id');
         if (!ok) panel.insertBefore(separatorFor(el), el);
+        else {
+          // Vue can reuse a message node, and account language arrives after the first render.
+          var label = dayLabel(day);
+          if (before.firstChild.textContent !== label) before.firstChild.textContent = label;
+        }
       }
       prevDay = day;
     }
@@ -511,7 +530,10 @@
   function watch() {
     var root = document.getElementById('app') || document.body;
     if (!root) return;
-    new MutationObserver(schedule).observe(root, { childList: true, subtree: true });
+    new MutationObserver(schedule).observe(root, {
+      childList: true, subtree: true, characterData: true,
+      attributes: true, attributeFilter: ['dir', 'datetime'],
+    });
     schedule();
   }
 

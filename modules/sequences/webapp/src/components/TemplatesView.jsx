@@ -490,7 +490,7 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
       {/* Delete — double confirmation: typing the exact template name enables the button. */}
       <Modal
         open={!!deleteTarget}
-        onClose={closeDelete}
+        onClose={deleting ? undefined : closeDelete}
         title={t('deleteTitle')}
         size="sm"
         closeOnOverlay={!deleting}

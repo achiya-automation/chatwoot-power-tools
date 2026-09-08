@@ -153,10 +153,12 @@ test('artifact: מסך השיחה — מפרידי היום נוספים ואף 
   const doc = w.document;
   const days = doc.querySelectorAll('.cwpt-wa-day');
   assert.ok(days.length >= 2, 'שתי הודעות בשני ימים שונים חייבות לקבל שני מפרידים');
-  assert.match(
-    doc.querySelector('.conversation-panel').textContent,
-    /11:20/,
-    'חותמת השעה בתוך הבועה חייבת להיות HH:mm'
+  const timestamp = new Date('2026-09-04T11:20:00Z');
+  const localTime = `${String(timestamp.getHours()).padStart(2, '0')}:${String(timestamp.getMinutes()).padStart(2, '0')}`;
+  assert.equal(
+    doc.querySelector('[data-message-id="2"] time').textContent,
+    localTime,
+    'חותמת השעה חייבת להיות HH:mm מקומי מתוך הזמן המדויק של ההודעה'
   );
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
