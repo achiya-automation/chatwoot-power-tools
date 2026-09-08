@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import useRequestScope from '../../lib/useRequestScope.js';
 import {
   Plus,
   Pencil,
@@ -145,20 +146,35 @@ export default function JourneysScreen({ accountId }) {
   const [pauseTarget, setPauseTarget] = useState(null);
   const [runsTarget, setRunsTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const actionPending = useRef(false);
+  const beginLoad = useRequestScope(accountId);
+  const beginAction = useRequestScope(accountId);
+
+  useEffect(() => {
+    actionPending.current = false;
+    setBusyId(null);
+    setDeleting(false);
+    setScreen({ mode: 'list' });
+    setDeleteTarget(null);
+    setPauseTarget(null);
+    setRunsTarget(null);
+  }, [accountId]);
 
   const load = useCallback(() => {
     if (accountId == null) return;
+    const current = beginLoad();
     setRows(null);
     setError('');
     setForbidden(false);
     listJourneys(accountId)
-      .then((list) => setRows(list || []))
+      .then((list) => { if (current()) setRows(list || []); })
       .catch((e) => {
+        if (!current()) return;
         if (e.forbidden) setForbidden(true);
         else setError(e.message || translate(M, 'errLoad'));
         setRows([]);
       });
-  }, [accountId]);
+  }, [accountId, beginLoad]);
 
   useEffect(() => {
     load();
@@ -171,87 +187,110 @@ export default function JourneysScreen({ accountId }) {
 
   // List rows come without the graph — fetch the full journey before editing.
   const openEdit = async (row) => {
+    if (actionPending.current) return;
+    actionPending.current = true;
+    const current = beginAction();
     setBusyId(row.id);
     setError('');
     try {
       const full = await getJourney(accountId, row.id);
+      if (!current()) return;
       setScreen({ mode: 'editor', journey: full });
     } catch (e) {
-      setError(e.message || translate(M, 'errOpen'));
+      if (current()) setError(e.message || translate(M, 'errOpen'));
     } finally {
-      setBusyId(null);
+      if (current()) { actionPending.current = false; setBusyId(null); }
     }
   };
 
   // Activation from the list still validates the graph (same rules as the editor).
   const activate = async (row) => {
+    if (actionPending.current) return;
+    actionPending.current = true;
+    const current = beginAction();
     setBusyId(row.id);
     setError('');
     try {
       const full = await getJourney(accountId, row.id);
+      if (!current()) return;
       const errs = validateGraph(full.graph);
       if (errs.length) {
         toast({ message: t('notReady', { n: errs.length }), variant: 'error' });
         return;
       }
       const j = await setJourneyStatus(accountId, row.id, 'active');
+      if (!current()) return;
       mergeRow({ id: row.id, status: j.status });
       toast({ message: t('activated'), variant: 'success' });
     } catch (e) {
-      setError(e.message || translate(M, 'errStatus'));
+      if (current()) setError(e.message || translate(M, 'errStatus'));
     } finally {
-      setBusyId(null);
+      if (current()) { actionPending.current = false; setBusyId(null); }
     }
   };
 
   const pause = async (row) => {
+    if (actionPending.current) return;
+    actionPending.current = true;
+    const current = beginAction();
     setPauseTarget(null);
     setBusyId(row.id);
     setError('');
     try {
       const j = await setJourneyStatus(accountId, row.id, 'paused');
+      if (!current()) return;
       // Pausing stops live runs engine-side — reflect it without a reload.
       mergeRow({ id: row.id, status: j.status }, { live_runs: 0 });
       toast({ message: t('pausedToast'), variant: 'success' });
     } catch (e) {
-      setError(e.message || translate(M, 'errStatus'));
+      if (current()) setError(e.message || translate(M, 'errStatus'));
     } finally {
-      setBusyId(null);
+      if (current()) { actionPending.current = false; setBusyId(null); }
     }
   };
 
   // שכפול: טוענים את הפלואו המלא ושומרים עותק חדש כטיוטה (בלי id — save יוצר).
   const duplicate = async (row) => {
+    if (actionPending.current) return;
+    actionPending.current = true;
+    const current = beginAction();
     setBusyId(row.id);
     setError('');
     try {
       const full = await getJourney(accountId, row.id);
+      if (!current()) return;
       await saveJourney(accountId, {
         name: `${row.name} ${t('copySuffix')}`,
         trigger: full.trigger || {},
         graph: full.graph,
       });
+      if (!current()) return;
       toast({ message: t('duplicated'), variant: 'success' });
       load();
     } catch (e) {
-      setError(e.message || translate(M, 'errDuplicate'));
+      if (current()) setError(e.message || translate(M, 'errDuplicate'));
     } finally {
-      setBusyId(null);
+      if (current()) { actionPending.current = false; setBusyId(null); }
     }
   };
 
   const confirmDelete = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || actionPending.current) return;
+    actionPending.current = true;
+    const current = beginAction();
     setDeleting(true);
     setError('');
     try {
       await deleteJourney(accountId, deleteTarget.id);
+      if (!current()) return;
       setRows((rs) => (rs || []).filter((r) => r.id !== deleteTarget.id));
       setDeleteTarget(null);
     } catch (e) {
+      if (!current()) return;
+      setDeleteTarget(null);
       setError(e.message || translate(M, 'errDelete'));
     } finally {
-      setDeleting(false);
+      if (current()) { actionPending.current = false; setDeleting(false); }
     }
   };
 
@@ -260,6 +299,7 @@ export default function JourneysScreen({ accountId }) {
     return (
       <Suspense fallback={<EditorFallback />}>
         <JourneyEditor
+          key={accountId}
           accountId={accountId}
           journey={screen.journey}
           onBack={() => {
@@ -292,10 +332,10 @@ export default function JourneysScreen({ accountId }) {
           {t('title')}
         </h2>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" color="slate" size="sm" icon={RefreshCw} onClick={load}>
+          <Button variant="ghost" color="slate" size="sm" icon={RefreshCw} onClick={load} disabled={busyId != null || deleting}>
             {t('refresh')}
           </Button>
-          <Button variant="solid" color="blue" size="sm" icon={Plus} onClick={openNew}>
+          <Button variant="solid" color="blue" size="sm" icon={Plus} onClick={openNew} disabled={busyId != null || deleting}>
             {t('newJourney')}
           </Button>
         </div>
@@ -307,7 +347,7 @@ export default function JourneysScreen({ accountId }) {
             <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
             {error}
           </span>
-          <Button variant="faded" color="ruby" size="sm" onClick={load}>
+          <Button variant="faded" color="ruby" size="sm" onClick={load} disabled={busyId != null || deleting}>
             {t('retry')}
           </Button>
         </div>
@@ -324,7 +364,7 @@ export default function JourneysScreen({ accountId }) {
             <p className="text-base font-medium text-n-slate-12">{t('emptyTitle')}</p>
             <p className="mx-auto mt-1 max-w-md text-sm text-n-slate-11">{t('emptyBody')}</p>
           </div>
-          <Button variant="solid" color="blue" icon={Plus} onClick={openNew}>
+          <Button variant="solid" color="blue" icon={Plus} onClick={openNew} disabled={busyId != null || deleting}>
             {t('newJourney')}
           </Button>
         </div>
@@ -370,6 +410,7 @@ export default function JourneysScreen({ accountId }) {
                       iconOnly
                       icon={Pencil}
                       loading={busyId === row.id}
+                      disabled={busyId != null || deleting}
                       aria-label={t('editAria', { name: row.name })}
                       title={t('editAria', { name: row.name })}
                       onClick={() => openEdit(row)}
@@ -381,7 +422,7 @@ export default function JourneysScreen({ accountId }) {
                         size="sm"
                         iconOnly
                         icon={Pause}
-                        disabled={busyId === row.id}
+                        disabled={busyId != null || deleting}
                         aria-label={t('pauseAria', { name: row.name })}
                         title={t('pauseAria', { name: row.name })}
                         onClick={() => (Number(row.live_runs) > 0 ? setPauseTarget(row) : pause(row))}
@@ -393,7 +434,7 @@ export default function JourneysScreen({ accountId }) {
                         size="sm"
                         iconOnly
                         icon={Play}
-                        disabled={busyId === row.id}
+                        disabled={busyId != null || deleting}
                         aria-label={t('activateAria', { name: row.name })}
                         title={t('activateAria', { name: row.name })}
                         onClick={() => activate(row)}
@@ -405,7 +446,7 @@ export default function JourneysScreen({ accountId }) {
                       size="sm"
                       iconOnly
                       icon={Copy}
-                      disabled={busyId === row.id}
+                      disabled={busyId != null || deleting}
                       aria-label={t('duplicateAria', { name: row.name })}
                       title={t('duplicateAria', { name: row.name })}
                       onClick={() => duplicate(row)}
@@ -416,6 +457,7 @@ export default function JourneysScreen({ accountId }) {
                       size="sm"
                       iconOnly
                       icon={Activity}
+                      disabled={busyId != null || deleting}
                       aria-label={t('runsAria', { name: row.name })}
                       title={t('runsAria', { name: row.name })}
                       onClick={() => setRunsTarget(row)}
@@ -426,6 +468,7 @@ export default function JourneysScreen({ accountId }) {
                       size="sm"
                       iconOnly
                       icon={Trash2}
+                      disabled={busyId != null || deleting}
                       aria-label={t('deleteAria', { name: row.name })}
                       title={t('deleteAria', { name: row.name })}
                       onClick={() => setDeleteTarget(row)}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 import Modal from './ui/Modal.jsx';
 import Badge from './ui/Badge.jsx';
@@ -9,6 +9,7 @@ import { useToast } from './ui/Toast.jsx';
 import { listTemplateAccess, saveTemplateAccess, listAccountAgents } from '../api/templatesApi.js';
 import useT from '../useT.js';
 import { translate } from '../i18n.js';
+import useRequestScope from '../lib/useRequestScope.js';
 
 /*
  * TemplateAccessModal — who, besides the account's administrators, may open the Template
@@ -30,6 +31,7 @@ const M = {
     cancel: 'ביטול',
     saved: 'ההרשאות עודכנו',
     errLoad: 'טעינת הנציגים נכשלה',
+    retry: 'ניסיון נוסף',
     errSave: 'שמירת ההרשאות נכשלה',
     noSession: 'רשימת הנציגים זמינה רק מהדפדפן שבו מחוברים ל-Chatwoot.',
   },
@@ -42,6 +44,7 @@ const M = {
     cancel: 'Cancel',
     saved: 'Access updated',
     errLoad: 'Failed to load agents',
+    retry: 'Retry',
     errSave: 'Failed to save access',
     noSession: 'The agent list is only available from the browser you are signed in to Chatwoot with.',
   },
@@ -55,21 +58,32 @@ export default function TemplateAccessModal({ open, accountId, onClose }) {
   const [granted, setGranted] = useState(() => new Set());
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const savingRef = useRef(false);
+  const beginLoad = useRequestScope(`${accountId}:${open}`);
+  const beginSave = useRequestScope(`${accountId}:${open}`);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!open || accountId == null) return;
+    const current = beginLoad();
     setError('');
+    setLoaded(false);
+    setGranted(new Set());
     setAgents(null);
     Promise.all([listAccountAgents(accountId), listTemplateAccess(accountId)])
       .then(([list, access]) => {
+        if (!current()) return;
         setAgents(Array.isArray(list) ? list : []);
         setGranted(new Set(((access && access.user_ids) || []).map(Number)));
+        setLoaded(true);
       })
       .catch((e) => {
+        if (!current()) return;
         setAgents([]);
         setError(e.message === 'no-session' ? translate(M, 'noSession') : translate(M, 'errLoad'));
       });
-  }, [open, accountId]);
+  }, [open, accountId, beginLoad]);
+  useEffect(() => { load(); }, [load]);
 
   const toggle = (id) => {
     setGranted((prev) => {
@@ -81,6 +95,9 @@ export default function TemplateAccessModal({ open, accountId, onClose }) {
   };
 
   const save = async () => {
+    if (!loaded || savingRef.current) return;
+    savingRef.current = true;
+    const current = beginSave();
     setSaving(true);
     setError('');
     try {
@@ -88,11 +105,13 @@ export default function TemplateAccessModal({ open, accountId, onClose }) {
       // would leave a stale row behind the day their role changes.
       const adminIds = new Set((agents || []).filter(isAdmin).map((a) => Number(a.id)));
       await saveTemplateAccess(accountId, [...granted].filter((id) => !adminIds.has(id)));
+      if (!current()) return;
       toast({ message: t('saved'), variant: 'success' });
       onClose?.();
     } catch (e) {
-      setError(e.message || translate(M, 'errSave'));
+      if (current()) setError(e.message || translate(M, 'errSave'));
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -106,7 +125,7 @@ export default function TemplateAccessModal({ open, accountId, onClose }) {
       footer={(
         <div className="flex justify-end gap-2">
           <Button variant="ghost" color="slate" onClick={onClose} disabled={saving}>{t('cancel')}</Button>
-          <Button variant="solid" color="blue" onClick={save} disabled={saving || agents === null}>
+          <Button variant="solid" color="blue" onClick={save} disabled={saving || !loaded}>
             {t('save')}
           </Button>
         </div>
@@ -115,9 +134,10 @@ export default function TemplateAccessModal({ open, accountId, onClose }) {
       <p className="mb-4 text-sm text-n-slate-11">{t('intro')}</p>
 
       {error ? (
-        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
+        <div role="alert" className="mb-4 flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
           <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
           {error}
+          {!loaded ? <Button variant="ghost" color="ruby" size="sm" onClick={load}>{t('retry')}</Button> : null}
         </div>
       ) : null}
 
@@ -147,6 +167,7 @@ export default function TemplateAccessModal({ open, accountId, onClose }) {
                 ) : (
                   <Switch
                     checked={granted.has(id)}
+                    disabled={saving}
                     onChange={() => toggle(id)}
                     aria-label={a.name || a.email}
                   />

@@ -56,6 +56,7 @@ import {
 } from '../../lib/journeyOutline.js';
 import useT, { useLocale } from '../../useT.js';
 import { translate } from '../../i18n.js';
+import { UploadStatusContext } from '../../lib/uploadStatus.js';
 
 /*
  * JourneyEditor — a canvas-first flow editor with the macro-style list retained
@@ -93,6 +94,7 @@ const M = {
     confirmForkDelete: 'מחיקת הצומת תמחק גם את כל הצעדים במסלולים שיוצאים ממנו. להמשיך?',
     errSave: 'השמירה נכשלה',
     errStatus: 'עדכון הסטטוס נכשל',
+    changedDuringSave: 'הפלואו השתנה בזמן השמירה. בדקו את השינויים ולחצו שוב על הפעלה.',
     errorsTitle: 'הפלואו לא מוכן להפעלה:',
     err_name: 'חסר שם לפלואו',
     err_no_start: 'הטריגר לא מחובר לצומת ראשון — גררו קו מהטריגר',
@@ -147,6 +149,7 @@ const M = {
     confirmForkDelete: 'Deleting this node also deletes every step on its outgoing paths. Continue?',
     errSave: 'Save failed',
     errStatus: 'Status update failed',
+    changedDuringSave: 'The flow changed while saving. Review the changes and activate again.',
     errorsTitle: 'The flow is not ready to activate:',
     err_name: 'The flow needs a name',
     err_no_start: 'The trigger is not connected to a first node — drag a line from it',
@@ -272,6 +275,8 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
   const [dirty, setDirty] = useState(!journey?.id); // a brand-new flow starts unsaved
   const [saving, setSaving] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
+  const [pendingUploads, setPendingUploads] = useState(0);
+  const reportUpload = useCallback((delta) => setPendingUploads((n) => n + delta), []);
   const [errors, setErrors] = useState([]); // [{code, nodeId?}] from validateGraph
   const [apiError, setApiError] = useState('');
   const [meta, setMeta] = useState({ inboxes: [], agents: [], teams: [], labels: [], attrDefs: [], templates: [] });
@@ -280,6 +285,8 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
   // if nothing changed while the request was in flight — so an edit made mid-save
   // isn't mistaken for "saved". markDirty is stable, safe to omit from deps.
   const editVersion = useRef(0);
+  const savePending = useRef(false);
+  const statusPending = useRef(false);
   const markDirty = useCallback(() => {
     editVersion.current += 1;
     setDirty(true);
@@ -294,13 +301,15 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
   // labels/attr definitions) — all best-effort: the editor works with empty pickers.
   useEffect(() => {
     if (accountId == null) return;
+    let current = true;
     getJourneyMeta(accountId)
-      .then((m) => setMeta((prev) => ({ ...prev, inboxes: m?.inboxes || [] })))
+      .then((m) => { if (current) setMeta((prev) => ({ ...prev, inboxes: m?.inboxes || [] })); })
       .catch(() => {});
-    fetchChatwootMeta(accountId).then((m) => setMeta((prev) => ({ ...prev, ...m }))).catch(() => {});
+    fetchChatwootMeta(accountId).then((m) => { if (current) setMeta((prev) => ({ ...prev, ...m })); }).catch(() => {});
     listTemplates(accountId)
-      .then((tpls) => setMeta((prev) => ({ ...prev, templates: tpls || [] })))
+      .then((tpls) => { if (current) setMeta((prev) => ({ ...prev, templates: tpls || [] })); })
       .catch(() => {});
+    return () => { current = false; };
   }, [accountId]);
 
   // Native safety net for a browser tab close/refresh with unsaved changes
@@ -387,7 +396,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
       }
     }
 
-    setNodes((ns) => ns.map((node) => (String(node.id) === String(id) ? updated : node)));
+    setNodes((ns) => ns.map((node) => (String(node.id) === String(id) ? { ...node, data: { ...node.data, ...patch } } : node)));
     markDirty();
   }, [applyOutline, markDirty, nodes, outline, t, viewMode]);
 
@@ -506,11 +515,13 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === e.nodeId })));
   };
 
-  const doSave = async () => {
+  const doSave = async (forActivation = false) => {
+    if (pendingUploads || savePending.current || (statusPending.current && !forActivation)) return null;
     if (!name.trim()) {
       setErrors([{ code: 'name' }]);
       return null;
     }
+    savePending.current = true;
     setSaving(true);
     setApiError('');
     const versionAtSave = editVersion.current;
@@ -537,32 +548,42 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
       setApiError(e.message || translate(M, 'errSave'));
       return null;
     } finally {
+      savePending.current = false;
       setSaving(false);
     }
   };
 
   const doActivate = async () => {
+    if (pendingUploads || savePending.current || statusPending.current) return;
     const errs = validateGraph(toGraph(nodes, edges));
     if (!name.trim()) errs.unshift({ code: 'name' });
     setErrors(errs);
     if (errs.length) return;
-    const saved = dirty || !jid ? await doSave() : { id: jid };
-    if (!saved) return;
+    const versionAtActivation = editVersion.current;
+    statusPending.current = true;
     setStatusBusy(true);
     setApiError('');
     try {
+      const saved = dirty || !jid ? await doSave(true) : { id: jid };
+      if (!saved) return;
+      if (versionAtActivation !== editVersion.current) {
+        setApiError(t('changedDuringSave'));
+        return;
+      }
       const j = await setJourneyStatus(accountId, saved.id, 'active');
       setStatus(j.status);
       toast({ message: t('activated'), variant: 'success' });
     } catch (e) {
       setApiError(e.message || translate(M, 'errStatus'));
     } finally {
+      statusPending.current = false;
       setStatusBusy(false);
     }
   };
 
   const doPause = async () => {
-    if (!jid) return;
+    if (!jid || savePending.current || statusPending.current) return;
+    statusPending.current = true;
     setStatusBusy(true);
     setApiError('');
     try {
@@ -572,12 +593,14 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
     } catch (e) {
       setApiError(e.message || translate(M, 'errStatus'));
     } finally {
+      statusPending.current = false;
       setStatusBusy(false);
     }
   };
 
   // Back guards unsaved work — the one exit point where edits could be silently lost.
   const handleBack = () => {
+    if (savePending.current || statusPending.current) return;
     if (dirty && !window.confirm(t('confirmLeave'))) return;
     onBack();
   };
@@ -595,10 +618,11 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
   ].join(' ');
 
   return (
+    <UploadStatusContext.Provider value={reportUpload}>
     <div className="flex flex-col gap-3">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" color="slate" size="sm" icon={BackIcon} onClick={handleBack}>
+        <Button variant="ghost" color="slate" size="sm" icon={BackIcon} onClick={handleBack} disabled={saving || statusBusy}>
           {t('back')}
         </Button>
         <input
@@ -647,15 +671,15 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
           </button>
         </div>
         <div className="ms-auto flex items-center gap-2">
-          <Button variant="faded" color="slate" size="sm" icon={Save} loading={saving} onClick={doSave}>
+          <Button variant="faded" color="slate" size="sm" icon={Save} loading={saving} disabled={statusBusy || pendingUploads > 0} onClick={() => doSave()}>
             {t('save')}
           </Button>
           {status === 'active' ? (
-            <Button variant="faded" color="amber" size="sm" icon={Pause} loading={statusBusy} onClick={doPause}>
+            <Button variant="faded" color="amber" size="sm" icon={Pause} loading={statusBusy} disabled={saving} onClick={doPause}>
               {t('pause')}
             </Button>
           ) : (
-            <Button variant="solid" color="teal" size="sm" icon={Play} loading={statusBusy} disabled={saving} onClick={doActivate}>
+            <Button variant="solid" color="teal" size="sm" icon={Play} loading={statusBusy} disabled={saving || pendingUploads > 0} onClick={doActivate}>
               {t('activate')}
             </Button>
           )}
@@ -724,6 +748,7 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
       <div className="flex min-h-[560px] flex-col overflow-hidden rounded-xl border border-n-weak bg-n-solid-1 shadow-sm lg:h-[calc(100vh-300px)] lg:flex-row">
         <aside className="order-2 max-h-[46vh] w-full shrink-0 overflow-y-auto border-t border-n-weak bg-n-solid-2 p-4 lg:order-1 lg:max-h-none lg:w-[22rem] lg:border-e lg:border-t-0">
           <Inspector
+            key={`${accountId}:${selectedNode?.id || triggerId}`}
             node={selectedNode}
             name={name}
             onName={(v) => {
@@ -783,5 +808,6 @@ export default function JourneyEditor({ accountId, journey, onBack }) {
         )}
       </div>
     </div>
+    </UploadStatusContext.Provider>
   );
 }

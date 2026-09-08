@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import useRequestScope from '../lib/useRequestScope.js';
+import { templateParamCount } from '../lib/sequenceDraft.js';
+import { UploadStatusContext, useUploadStatus } from '../lib/uploadStatus.js';
 import {
   Plus,
   Trash2,
@@ -59,8 +62,6 @@ import { translate } from '../i18n.js';
  * שיפורי נוחות: שכפול שלב, גרירה עם קו-יעד, ציר זמן מצטבר ("כעבור X"),
  * סיכום משך הרצף, קיפול שלבים (accordion), שמירה ב-Cmd/Ctrl+S.
  */
-
-const VAR_RE = /\{\{\s*\d+\s*\}\}/g;
 
 // מילון co-located (he/en) — משותף לכל רכיבי המשנה בקובץ.
 const M = {
@@ -218,9 +219,7 @@ const REPEAT_UNITS = [
 
 // מספר המשתנים בתבנית — לפי params_count אם קיים, אחרת ספירת {{N}} בגוף
 function countVars(t) {
-  if (!t) return 0;
-  if (typeof t.params_count === 'number') return t.params_count;
-  return (String(t.body || '').match(VAR_RE) || []).length;
+  return templateParamCount(t);
 }
 
 // תבנית עם header מדיה (IMAGE/VIDEO/DOCUMENT) דורשת קישור (media_url) בשליחה —
@@ -241,7 +240,13 @@ function collapsedByDefault(sequence) {
 }
 
 export default function SequenceEditor({ open, sequence, templates = [], onSave, onClose, accountId }) {
-  const { toast } = useToast();
+  const { toast, dismiss } = useToast();
+  const undoToasts = useRef(new Set());
+  const undoScope = useRef({ sequence, open });
+  if (undoScope.current.sequence !== sequence || undoScope.current.open !== open) undoScope.current = { sequence, open };
+  const savePending = useRef(false);
+  const [pendingUploads, setPendingUploads] = useState(0);
+  const reportUpload = useCallback((delta) => setPendingUploads((n) => n + delta), []);
   const t = useT(M);
   const locale = useLocale();
   // תאריך עברי/אנגלי קצר לתצוגת "אם יתחיל היום" (ללא שעה — אומדן)
@@ -268,6 +273,11 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
     setShowPreview(false);
   }, [sequence]);
 
+  useEffect(() => () => {
+    undoToasts.current.forEach(dismiss);
+    undoToasts.current.clear();
+  }, [sequence, open, dismiss]);
+
   // מפת תבניות לפי שם (לקטגוריה / שפה / גוף / משתנים)
   const templateByName = useMemo(() => {
     const m = {};
@@ -291,7 +301,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, draft, saving]);
+  }, [open, draft, saving, pendingUploads]);
 
   if (!draft) return null;
 
@@ -322,26 +332,29 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
 
   // מחיקת שלב עם אפשרות ביטול (Undo) — שומר את השלב ואת מיקומו, מחזיר ב-toast
   const removeStep = (stepId) => {
-    setDraft((d) => {
-      const i = d.steps.findIndex((s) => s.id === stepId);
-      if (i < 0) return d;
-      const removed = d.steps[i];
-      const steps = d.steps.filter((s) => s.id !== stepId);
-      toast({
+    const i = draft.steps.findIndex((s) => s.id === stepId);
+    if (i < 0) return;
+    const removed = draft.steps[i];
+    const scope = undoScope.current;
+    setDraft((d) => ({ ...d, steps: d.steps.filter((s) => s.id !== stepId) }));
+    // Notifications are effects, never part of a state updater (StrictMode may replay it).
+    const id = toast({
         message: translate(M, 'stepDeleted'),
         action: {
           label: translate(M, 'cancel'),
-          onClick: () =>
+          onClick: () => {
+            if (undoScope.current !== scope) return;
             setDraft((cur) => {
+              if (!cur) return cur;
               if (cur.steps.some((s) => s.id === removed.id)) return cur; // כבר הוחזר
               const next = [...cur.steps];
               next.splice(Math.min(i, next.length), 0, removed);
               return { ...cur, steps: next };
-            }),
+            });
+          },
         },
-      });
-      return { ...d, steps };
     });
+    undoToasts.current.add(id);
   };
 
   const moveStep = (index, dir) => {
@@ -406,10 +419,8 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
         // מילוי אוטומטי של מדיה: לתבנית עם header מדיה, אם אין עדיין קישור בשלב,
         // נשתמש בקישור ש"נזכר" לתבנית הזו (t.media_url מהמנוע) — בלי צורך להזין שוב.
         const isMedia = mediaHeaderFormat(t);
-        const mediaUrl =
-          isMedia && !String(s.mediaUrl || '').trim() && t?.media_url
-            ? t.media_url
-            : s.mediaUrl;
+        const previousMedia = mediaHeaderFormat(templateByName[s.template]) === isMedia ? s.mediaUrl : '';
+        const mediaUrl = isMedia ? (String(previousMedia || '').trim() || t?.media_url || '') : '';
         return {
           ...s,
           template: name,
@@ -445,11 +456,14 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
             !String(s.mediaUrl || '').trim()
         )
       ? t('errStepMedia')
+      : draft.steps.some((s) => mediaHeaderFormat(templateByName[s.template]) && !/^https:\/\/\S+$/i.test(String(s.mediaUrl || '').trim()))
+      ? t('invalidHttps')
       : '';
   const hasError = !!(nameError || stepsError);
 
   async function handleSave() {
-    if (hasError || saving) return;
+    if (hasError || pendingUploads || savePending.current) return;
+    savePending.current = true;
     setSaving(true);
     setSaveError('');
     try {
@@ -461,6 +475,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
     } catch (e) {
       setSaveError(e.message || translate(M, 'saveFailed'));
     } finally {
+      savePending.current = false;
       setSaving(false);
     }
   }
@@ -479,13 +494,14 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
       <Button variant="ghost" color="slate" onClick={onClose} disabled={saving}>
         {t('cancel')}
       </Button>
-      <Button variant="solid" color="blue" onClick={handleSave} loading={saving} disabled={hasError}>
+      <Button variant="solid" color="blue" onClick={handleSave} loading={saving} disabled={hasError || pendingUploads > 0}>
         {t('save')}
       </Button>
     </>
   );
 
   return (
+    <UploadStatusContext.Provider value={reportUpload}>
     <Modal
       open={open}
       onClose={saving ? undefined : onClose}
@@ -495,7 +511,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
       footer={footer}
       closeOnOverlay={false}
     >
-      <div className="flex flex-col gap-6">
+      <fieldset disabled={saving} className="m-0 min-w-0 border-0 p-0 flex flex-col gap-6">
         {/* פרטי הרצף */}
         <section className="flex flex-col gap-4">
           <Input
@@ -676,7 +692,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
             <span>{saveError}</span>
           </div>
         ) : null}
-      </div>
+      </fieldset>
 
       {/* תצוגת רצף מלא — כל ההודעות כשיחת WhatsApp רציפה */}
       <SequencePreview
@@ -688,6 +704,7 @@ export default function SequenceEditor({ open, sequence, templates = [], onSave,
         duration={duration}
       />
     </Modal>
+    </UploadStatusContext.Provider>
   );
 }
 
@@ -1054,6 +1071,7 @@ function StepCard({
               {/* מדיה — גרירה/העלאה (יוצר קישור לבד) לתבניות עם header IMAGE/VIDEO/DOCUMENT */}
               {mediaHeaderFormat(templateInfo) ? (
                 <MediaUrlField
+                  key={`${step.template}:${mediaHeaderFormat(templateInfo)}:${accountId}`}
                   format={mediaHeaderFormat(templateInfo)}
                   value={step.mediaUrl || ''}
                   accountId={accountId}
@@ -1263,7 +1281,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
   const t = useT(M);
   const label = t(MEDIA_LABEL_KEY[format] || 'mediaGeneric');
   const trimmed = String(value || '').trim();
-  const invalid = trimmed !== '' && !/^https:\/\/\S+/i.test(trimmed);
+  const invalid = trimmed !== '' && !/^https:\/\/\S+$/i.test(trimmed);
   const maxBytes = WA_MEDIA[format]?.maxBytes || 0;
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState('');
@@ -1274,9 +1292,15 @@ function MediaUrlField({ format, value, accountId, onChange }) {
   const [stage, setStage] = useState('');
   const [sizeNote, setSizeNote] = useState('');
   const inputRef = useRef(null);
+  const beginUpload = useRequestScope(`${accountId}:${format}`);
+  const currentValue = useRef(value);
+  currentValue.current = value;
+  useUploadStatus(uploading || compressing);
 
   const handleFile = async (file) => {
-    if (!file) return;
+    if (!file || uploading || compressing) return;
+    const current = beginUpload();
+    const originalValue = value;
     setErr('');
     setSizeNote('');
     if (accountId == null) { setErr(translate(M, 'noAccountUpload')); return; }
@@ -1291,9 +1315,11 @@ function MediaUrlField({ format, value, accountId, onChange }) {
       setStage('probe');
       try {
         const r = await compressVideo(file, { onProgress: setProgress, onStage: setStage });
+        if (!current()) return;
         toUpload = r.file;
         setSizeNote(translate(M, 'compressedIn', { before: formatBytes(r.before), after: formatBytes(r.after) }));
       } catch (e) {
+        if (!current()) return;
         setCompressing(false);
         setErr(e.message || translate(M, 'compressFailed'));
         return;
@@ -1308,15 +1334,16 @@ function MediaUrlField({ format, value, accountId, onChange }) {
     setUploading(true);
     try {
       const res = await uploadMedia(toUpload, format, accountId);
-      onChange(res.url);
+      if (current() && currentValue.current === originalValue) onChange(res.url);
     } catch (e) {
-      setErr(e.message || translate(M, 'uploadFailed'));
+      if (current()) setErr(e.message || translate(M, 'uploadFailed'));
     } finally {
       setUploading(false);
     }
   };
 
   const cancelCompress = () => {
+    beginUpload();
     terminateCompression();
     setCompressing(false);
     setProgress(0);
@@ -1345,7 +1372,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
             <span className="truncate">{t('mediaUploaded')}</span>
           </span>
           <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={() => inputRef.current?.click()} className="text-xs font-medium text-n-blue-11 hover:underline">
+            <button type="button" disabled={busy} onClick={() => inputRef.current?.click()} className="text-xs font-medium text-n-blue-11 hover:underline">
               {t('replace')}
             </button>
             <button type="button" onClick={() => { onChange(''); setSizeNote(''); }} aria-label={t('remove')} className="text-n-slate-10 hover:text-n-ruby-11">
@@ -1385,7 +1412,7 @@ function MediaUrlField({ format, value, accountId, onChange }) {
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!busy) handleFile(e.dataTransfer?.files?.[0]); }}
           onClick={() => !busy && inputRef.current?.click()}
-          onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !busy) inputRef.current?.click(); }}
+          onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !busy) { e.preventDefault(); inputRef.current?.click(); } }}
           role="button"
           tabIndex={0}
           aria-disabled={busy || undefined}

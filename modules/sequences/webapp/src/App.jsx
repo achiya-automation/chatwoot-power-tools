@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus,
   Pencil,
@@ -48,6 +48,8 @@ import {
   listTemplates,
 } from './api/sequencesApi.js';
 import { makeEmptySequence } from './data/mockSequences.js';
+import { duplicateSequence } from './lib/sequenceDraft.js';
+import useRequestScope from './lib/useRequestScope.js';
 import { resolveAccountId, isEmbedded, isSideNav } from './config.js';
 import useT, { useLocale } from './useT.js';
 import { dirFor, translate } from './i18n.js';
@@ -186,6 +188,8 @@ export default function App() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const toggleRequests = useRef(new Set());
+  const [savingSequenceIds, setSavingSequenceIds] = useState(() => new Set());
 
   // עורך
   const [editorOpen, setEditorOpen] = useState(false);
@@ -261,6 +265,7 @@ export default function App() {
   // context מ-Chatwoot (כשרצים כ-Dashboard App)
   const { conversation, contact, agent, isEmbedded: inIframe } = useChatwootContext();
   const [accountId, setAccountId] = useState(() => resolveAccountId(null));
+  const beginReload = useRequestScope(`${accountId}:${sequencesEnabled}`);
 
   // מצב מוטמע (?embed=1) — מציגים כותרת בסגנון Chatwoot במקום הכותרת הגדולה
   const embedded = isEmbedded();
@@ -291,18 +296,19 @@ export default function App() {
   const reload = useCallback(
     async (acc) => {
       if (acc == null) return;
+      const current = beginReload();
       setLoading(true);
       setError('');
       try {
         const data = await listSequences(acc);
-        setSequences(data);
+        if (current()) setSequences(data);
       } catch (e) {
-        setError(e.message || translate(M, 'errLoad'));
+        if (current()) setError(e.message || translate(M, 'errLoad'));
       } finally {
-        setLoading(false);
+        if (current()) setLoading(false);
       }
     },
-    []
+    [beginReload]
   );
 
   // טעינת רצפים + תבניות כשה-account ידוע
@@ -316,9 +322,11 @@ export default function App() {
       return;
     }
     reload(accountId);
+    let current = true;
     listTemplates(accountId)
-      .then(setTemplates)
-      .catch(() => setTemplates([]));
+      .then((data) => { if (current) setTemplates(data); })
+      .catch(() => { if (current) setTemplates([]); });
+    return () => { current = false; };
   }, [accountId, modulesReady, sequencesEnabled, reload]);
 
   const totalActive = useMemo(
@@ -368,6 +376,9 @@ export default function App() {
   // שני מתגי כיבוי נפרדים: 'enrollEnabled' (כניסות חדשות) ו-'sendEnabled' (שליחה לרצפים
   // שכבר התחילו). enabled נגזר משניהם (פעיל במשהו) ונשמר מסונכרן לתצוגה/ספירה.
   const handleToggleField = async (seq, field, value) => {
+    if (toggleRequests.current.has(seq.id)) return;
+    toggleRequests.current.add(seq.id);
+    setSavingSequenceIds(new Set(toggleRequests.current));
     setError('');
     const apply = (s, v) => {
       const next = { ...s, [field]: v };
@@ -376,10 +387,14 @@ export default function App() {
     };
     setSequences((prev) => prev.map((s) => (s.id === seq.id ? apply(s, value) : s)));
     try {
-      await saveSequence(apply(seq, value), accountId);
+      const saved = await saveSequence(apply(seq, value), accountId);
+      setSequences((prev) => prev.map((s) => s.id === seq.id ? saved : s));
     } catch (e) {
       setError(e.message || translate(M, 'errStatus'));
-      setSequences((prev) => prev.map((s) => (s.id === seq.id ? apply(s, !value) : s)));
+      setSequences((prev) => prev.map((s) => (s.id === seq.id ? seq : s)));
+    } finally {
+      toggleRequests.current.delete(seq.id);
+      setSavingSequenceIds(new Set(toggleRequests.current));
     }
   };
 
@@ -387,15 +402,7 @@ export default function App() {
   // השמירה בפועל נעשית דרך handleSave (יצירה חדשה ב-DB).
   const handleDuplicate = (seq) => {
     setError('');
-    setEditingSequence({
-      ...structuredClone(seq),
-      id: null,
-      key: `${seq.key}_copy`,
-      name: `${seq.name} ${translate(M, 'copySuffix')}`,
-      enabled: false,
-      enrollEnabled: false,
-      sendEnabled: false,
-    });
+    setEditingSequence(duplicateSequence(seq, translate(M, 'copySuffix')));
     setEditorOpen(true);
   };
 
@@ -649,6 +656,7 @@ export default function App() {
                       >
                         <Switch
                           checked={seq.enrollEnabled}
+                          disabled={savingSequenceIds.has(seq.id)}
                           onChange={(v) => handleToggleField(seq, 'enrollEnabled', v)}
                           aria-label={t('enrollAria', { name: seq.name })}
                         />
@@ -660,6 +668,7 @@ export default function App() {
                       >
                         <Switch
                           checked={seq.sendEnabled}
+                          disabled={savingSequenceIds.has(seq.id)}
                           onChange={(v) => handleToggleField(seq, 'sendEnabled', v)}
                           aria-label={t('sendAria', { name: seq.name })}
                         />
@@ -685,6 +694,7 @@ export default function App() {
                         size="sm"
                         iconOnly
                         icon={Pencil}
+                        disabled={savingSequenceIds.has(seq.id)}
                         aria-label={t('editAria', { name: seq.name })}
                         onClick={() => handleEdit(seq)}
                       />
@@ -694,6 +704,7 @@ export default function App() {
                         size="sm"
                         iconOnly
                         icon={Copy}
+                        disabled={savingSequenceIds.has(seq.id)}
                         aria-label={t('duplicateAria', { name: seq.name })}
                         onClick={() => handleDuplicate(seq)}
                       />
@@ -703,6 +714,7 @@ export default function App() {
                         size="sm"
                         iconOnly
                         icon={Trash2}
+                        disabled={savingSequenceIds.has(seq.id)}
                         aria-label={t('deleteAria', { name: seq.name })}
                         onClick={() => setDeleteTarget(seq)}
                       />
