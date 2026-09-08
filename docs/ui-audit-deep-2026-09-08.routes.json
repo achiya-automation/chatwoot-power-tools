@@ -174,5 +174,38 @@
         }
       ]
     }
+  },
+  {
+    "expected": "settings/security",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/security\",\"width\":390,\"heading\":[\"אבטחה\"],\"overflow\":false,\"buttons\":[{\"text\":\"שדרג עכשיו\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":220}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "settings/conversation-workflow",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/conversation-workflow\",\"width\":390,\"heading\":[\"Conversation Workflows\"],\"overflow\":false,\"buttons\":[{\"text\":\"מתג הפעלה/כיבוי\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":208}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "captain/captain_assistants_overview_index",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/captain/assistants\",\"width\":390,\"heading\":[],\"overflow\":false,\"buttons\":[{\"text\":\"שדרג עכשיו\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":152}}]"
+        }
+      ]
+    }
   }
 ]
