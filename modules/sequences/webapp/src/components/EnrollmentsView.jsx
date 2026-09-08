@@ -10,6 +10,7 @@ import { deliveryErrorLabel } from '../lib/deliveryError.js';
 import AssignSequenceModal from './AssignSequenceModal.jsx';
 import useT from '../useT.js';
 import { translate } from '../i18n.js';
+import useRequestScope from '../lib/useRequestScope.js';
 
 // מילון co-located (he/en) — כל הטקסטים הגלויים של תצוגת אנשי הקשר.
 const M = {
@@ -123,16 +124,18 @@ export default function EnrollmentsView({ accountId }) {
   const [sequences, setSequences] = useState([]);
   // יעד שיוך: null = סגור · {} = הוספת ליד חדש · שורת-ליד = ניהול הליד הזה
   const [assignTarget, setAssignTarget] = useState(null);
+  const beginLoad = useRequestScope(accountId);
 
   const load = useCallback(() => {
     if (accountId == null) return;
+    const current = beginLoad();
     setLoading(true);
     setError('');
     listEnrollments(accountId)
-      .then(setRows)
-      .catch((e) => setError(e.message || translate(M, 'errLoad')))
-      .finally(() => setLoading(false));
-  }, [accountId]);
+      .then((data) => { if (current()) setRows(data || []); })
+      .catch((e) => { if (current()) setError(e.message || translate(M, 'errLoad')); })
+      .finally(() => { if (current()) setLoading(false); });
+  }, [accountId, beginLoad]);
 
   useEffect(() => {
     load();
@@ -141,7 +144,11 @@ export default function EnrollmentsView({ accountId }) {
   // סדרות לבורר — נטענות פעם אחת לכל חשבון
   useEffect(() => {
     if (accountId == null) return;
-    listSequences(accountId).then(setSequences).catch(() => setSequences([]));
+    let current = true;
+    setAssignTarget(null);
+    setSequences([]);
+    listSequences(accountId).then((data) => { if (current) setSequences(data || []); }).catch(() => {});
+    return () => { current = false; };
   }, [accountId]);
 
   // יעד השיוך כ-contact עבור החלון (שורת-ליד → איש קשר; {} → חיפוש ליד חדש)
@@ -216,9 +223,10 @@ export default function EnrollmentsView({ accountId }) {
 
   if (error) {
     return (
-      <div className="flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
+      <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
         <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
         <span>{error}</span>
+        <Button variant="ghost" color="ruby" onClick={load}>{t('refresh')}</Button>
       </div>
     );
   }

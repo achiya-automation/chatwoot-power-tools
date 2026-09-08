@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import useRequestScope from '../lib/useRequestScope.js';
+import { UploadStatusContext, useUploadStatus } from '../lib/uploadStatus.js';
 import {
   Megaphone,
   Wrench,
@@ -245,13 +247,17 @@ function MediaDropzone({ format, mediaHandle, accountId, inboxId, onUploaded, tr
   //    האחרונה משחרר העורך ביציאה (trackObjectUrl) — ולא הרכיב הזה בפירוק, כי מעבר בין
   //    כרטיסי קרוסלה מפרק את אזור ההעלאה, ושחרור כאן היה מוחק את המדיה מהתצוגה המקדימה.
   const objectUrl = useRef('');
+  const beginUpload = useRequestScope(`${accountId}:${inboxId}:${format}`);
+  useUploadStatus(uploading);
 
   const handleFile = async (file) => {
-    if (!file) return;
+    if (!file || uploading) return;
+    const current = beginUpload();
     setErr('');
     setUploading(true);
     try {
       const res = await uploadExample(accountId, inboxId, file);
+      if (!current()) return;
       // ה-handle של מטא אטום ואינו ניתן להצגה; רק ה-File שכרגע בדפדפן מאפשר להראות
       // בתצוגה המקדימה את המדיה האמיתית.
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
@@ -260,7 +266,7 @@ function MediaDropzone({ format, mediaHandle, accountId, inboxId, onUploaded, tr
       setFileName(file.name);
       onUploaded(res.handle, objectUrl.current);
     } catch (e) {
-      setErr(e.message || t('uploadFailed'));
+      if (current()) setErr(e.message || t('uploadFailed'));
     } finally {
       setUploading(false);
     }
@@ -276,6 +282,7 @@ function MediaDropzone({ format, mediaHandle, accountId, inboxId, onUploaded, tr
           </span>
           <button
             type="button"
+            disabled={uploading}
             onClick={() => inputRef.current?.click()}
             className="shrink-0 text-xs font-medium text-n-blue-11 hover:underline"
           >
@@ -291,7 +298,7 @@ function MediaDropzone({ format, mediaHandle, accountId, inboxId, onUploaded, tr
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!uploading) handleFile(e.dataTransfer?.files?.[0]); }}
           onClick={() => !uploading && inputRef.current?.click()}
-          onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !uploading) inputRef.current?.click(); }}
+          onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !uploading) { e.preventDefault(); inputRef.current?.click(); } }}
           role="button"
           tabIndex={0}
           aria-disabled={uploading || undefined}
@@ -371,6 +378,7 @@ function HeaderSection({ tpl, dispatch, accountId, inboxId, wabaCtx, locale, tra
         {isMedia ? (
           mediaUploadOk ? (
             <MediaDropzone
+              key={`${accountId}:${inboxId}:${tpl.header.format}`}
               format={tpl.header.format}
               mediaHandle={tpl.header.mediaHandle}
               accountId={accountId}
@@ -613,7 +621,7 @@ function ButtonsSection({ tpl, dispatch, flows, flowsReason, t }) {
   );
 }
 
-function CarouselCardEditor({ index, card, dispatch, accountId, inboxId, wabaCtx, canRemove, onRemove, onDuplicate, trackObjectUrl, t }) {
+function CarouselCardEditor({ index, card, dispatch, accountId, inboxId, wabaCtx, canRemove, canDuplicate, onRemove, onDuplicate, trackObjectUrl, t }) {
   const vars = bodyVars(card.body);
   const mediaUploadOk = wabaCtx?.capabilities?.mediaUpload !== false;
   const patchCard = (p) => dispatch({ type: 'carousel_update_card', index, patch: p });
@@ -622,7 +630,7 @@ function CarouselCardEditor({ index, card, dispatch, accountId, inboxId, wabaCtx
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-n-weak bg-n-alpha-1 p-3">
       <div className="flex items-center justify-end gap-2">
-        <Button variant="ghost" color="slate" size="xs" icon={Copy} onClick={onDuplicate}>{t('duplicateCard')}</Button>
+        <Button variant="ghost" color="slate" size="xs" icon={Copy} disabled={!canDuplicate} onClick={onDuplicate}>{t('duplicateCard')}</Button>
         <Button variant="ghost" color="ruby" size="xs" icon={Trash2} disabled={!canRemove} onClick={onRemove}>{t('removeCard')}</Button>
       </div>
 
@@ -801,6 +809,7 @@ function CarouselSection({ tpl, dispatch, accountId, inboxId, wabaCtx, trackObje
 
             {cards[active] ? (
               <CarouselCardEditor
+                key={`${active}:${cards.length}:${sharedFormat}:${accountId}:${inboxId}`}
                 index={active}
                 card={cards[active]}
                 dispatch={dispatch}
@@ -808,6 +817,7 @@ function CarouselSection({ tpl, dispatch, accountId, inboxId, wabaCtx, trackObje
                 inboxId={inboxId}
                 wabaCtx={wabaCtx}
                 canRemove={cards.length > LIMITS.carouselCardsMin}
+                canDuplicate={cards.length < LIMITS.carouselCards}
                 onRemove={() => { dispatch({ type: 'carousel_remove_card', index: active }); setActiveCard(0); }}
                 onDuplicate={() => duplicateCard(active)}
                 trackObjectUrl={trackObjectUrl}
@@ -957,6 +967,9 @@ export default function TemplateBuilder({
   const locale = useLocale();
   const [tpl, dispatch] = useReducer(builderReducer, null, () => (initial ? structuredClone(initial) : emptyTemplate()));
   const [submitting, setSubmitting] = useState(false);
+  const submitPending = useRef(false);
+  const [pendingUploads, setPendingUploads] = useState(0);
+  const reportUpload = useCallback((delta) => setPendingUploads((n) => n + delta), []);
   const [serverError, setServerError] = useState('');
   const [flows, setFlows] = useState([]);
 
@@ -994,7 +1007,8 @@ export default function TemplateBuilder({
   const isCarousel = !!tpl.carousel;
 
   const handleSubmit = async () => {
-    if (errors.length > 0 || submitting) return;
+    if (errors.length > 0 || pendingUploads || submitPending.current) return;
+    submitPending.current = true;
     setSubmitting(true);
     setServerError('');
     try {
@@ -1020,12 +1034,15 @@ export default function TemplateBuilder({
     } catch (e) {
       setServerError(e.message || t('submitFailed'));
     } finally {
+      submitPending.current = false;
       setSubmitting(false);
     }
   };
 
   return (
+    <UploadStatusContext.Provider value={reportUpload}>
     <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="flex flex-col gap-5">
+      <fieldset disabled={submitting} className="m-0 min-w-0 border-0 p-0 flex flex-col gap-5">
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.4fr_1fr] lg:items-start">
         <div className="flex min-w-0 flex-col gap-4">
           <Card>
@@ -1095,11 +1112,13 @@ export default function TemplateBuilder({
       ) : null}
 
       <div className="flex items-center justify-end gap-2 border-t border-n-weak pt-4">
-        <Button type="button" variant="ghost" color="slate" onClick={onCancel}>{t('cancel')}</Button>
-        <Button type="submit" variant="solid" color="blue" loading={submitting} disabled={errors.length > 0 || submitting}>
+        <Button type="button" variant="ghost" color="slate" disabled={submitting} onClick={onCancel}>{t('cancel')}</Button>
+        <Button type="submit" variant="solid" color="blue" loading={submitting} disabled={errors.length > 0 || submitting || pendingUploads > 0}>
           {t('submit')}
         </Button>
       </div>
+      </fieldset>
     </form>
+    </UploadStatusContext.Provider>
   );
 }

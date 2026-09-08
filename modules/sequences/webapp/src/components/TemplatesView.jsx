@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import useRequestScope from '../lib/useRequestScope.js';
 import {
   RefreshCw,
   Plus,
@@ -184,33 +185,52 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteInput, setDeleteInput] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [loadedAccountId, setLoadedAccountId] = useState(null);
+  const selectionAccount = useRef(accountId);
+  const deletingRef = useRef(false);
+  const beginLoad = useRequestScope(accountId);
+  const beginDelete = useRequestScope(accountId);
+
+  useEffect(() => {
+    setPreviewTpl(null);
+    setDeleteTarget(null);
+    setAccessOpen(false);
+    setExpandedRows(new Set());
+  }, [accountId]);
 
   const storageKey = `tpl_waba_${accountId}`;
 
   const load = useCallback(() => {
     if (accountId == null) return;
+    const current = beginLoad();
     setLoading(true);
+    setWabas([]);
     setError('');
     setForbidden(false);
     listTemplates(accountId)
       .then((res) => {
+        if (!current()) return;
+        const keepSelection = selectionAccount.current === accountId;
+        selectionAccount.current = accountId;
+        setLoadedAccountId(accountId);
         const list = (res && res.wabas) || [];
         setWabas(list);
         setIsAdmin(!!(res && res.is_admin));
         setSelectedWabaId((prev) => {
           const ids = list.map((w) => String(w.wabaId));
-          if (ids.includes(prev)) return prev;
+          if (keepSelection && ids.includes(prev)) return prev;
           let saved = null;
           try { saved = localStorage.getItem(storageKey); } catch { /* ignore */ }
           return ids.includes(saved) ? saved : (ids[0] ?? null);
         });
       })
       .catch((e) => {
+        if (!current()) return;
         if (e.forbidden) setForbidden(true);
         else setError(e.message || translate(M, 'errLoad'));
       })
-      .finally(() => setLoading(false));
-  }, [accountId, storageKey]);
+      .finally(() => { if (current()) setLoading(false); });
+  }, [accountId, storageKey, beginLoad]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -218,9 +238,9 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
   // (per-account key, so an admin managing several Chatwoot accounts doesn't leak a
   // selection across accounts).
   useEffect(() => {
-    if (selectedWabaId == null) return;
+    if (selectedWabaId == null || loadedAccountId !== accountId) return;
     try { localStorage.setItem(storageKey, selectedWabaId); } catch { /* ignore */ }
-  }, [selectedWabaId, storageKey]);
+  }, [selectedWabaId, storageKey, loadedAccountId, accountId]);
 
   const selectedWaba = useMemo(
     () => (wabas || []).find((w) => String(w.wabaId) === selectedWabaId) || null,
@@ -241,19 +261,23 @@ export default function TemplatesView({ accountId, onEdit, onCreate, onDuplicate
   const closeDelete = () => { setDeleteTarget(null); setDeleteInput(''); };
 
   const confirmDelete = async () => {
-    if (!deleteTarget || deleteInput !== deleteTarget.name) return;
+    if (!deleteTarget || deleteInput !== deleteTarget.name || deletingRef.current) return;
+    deletingRef.current = true;
+    const current = beginDelete();
     setDeleting(true);
     setError('');
     try {
       const inboxId = selectedWaba?.inboxes?.[0]?.inboxId;
       // No hsm_id: deletes by name only — matches the warning copy ("all languages").
       await deleteTemplate(accountId, inboxId, deleteTarget.name);
+      if (!current()) return;
       toast({ message: t('deleted'), variant: 'success' });
       closeDelete();
       load();
     } catch (e) {
-      setError(e.message || translate(M, 'errDelete'));
+      if (current()) setError(e.message || translate(M, 'errDelete'));
     } finally {
+      deletingRef.current = false;
       setDeleting(false);
     }
   };

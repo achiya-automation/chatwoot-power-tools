@@ -7,6 +7,7 @@ import { SkeletonRows } from '../ui/Skeleton.jsx';
 import { Table, THead, TBody, TR, TH, TD } from '../ui/Table.jsx';
 import { listJourneyRuns, stopJourneyRun } from '../../api/journeysApi.js';
 import useT, { useLocale } from '../../useT.js';
+import useRequestScope from '../../lib/useRequestScope.js';
 
 /*
  * RunsModal — the latest runs of one journey: conversation, run status, the
@@ -24,6 +25,7 @@ const M = {
     empty: 'אין עדיין ריצות לפלואו הזה.',
     stop: 'עצירת הריצה',
     errLoad: 'שגיאה בטעינת הריצות',
+    retry: 'ניסיון נוסף',
     errStop: 'עצירת הריצה נכשלה',
     st_active: 'פעילה',
     st_waiting_answer: 'ממתינה לתשובה',
@@ -43,6 +45,7 @@ const M = {
     empty: 'No runs for this flow yet.',
     stop: 'Stop run',
     errLoad: 'Failed to load runs',
+    retry: 'Retry',
     errStop: 'Failed to stop the run',
     st_active: 'Active',
     st_waiting_answer: 'Waiting for answer',
@@ -77,34 +80,41 @@ export default function RunsModal({ open, onClose, journey, accountId }) {
 
   // Guards against a stale response landing after the modal was reopened for a
   // different journey — only the latest request may write state.
-  const reqRef = useRef(0);
+  const beginLoad = useRequestScope(`${accountId}:${journey?.id}:${open}`);
+  const beginStop = useRequestScope(`${accountId}:${journey?.id}:${open}`);
+  const stopPending = useRef(false);
   const load = useCallback(() => {
     if (!open || !journey) return;
-    const reqId = ++reqRef.current;
+    const current = beginLoad();
     setRuns(null);
     setError('');
     listJourneyRuns(accountId, journey.id)
-      .then((rows) => { if (reqRef.current === reqId) setRuns(rows || []); })
+      .then((rows) => { if (current()) setRuns(rows || []); })
       .catch((e) => {
-        if (reqRef.current !== reqId) return;
+        if (!current()) return;
         setError(e.message || t('errLoad'));
         setRuns([]);
       });
-  }, [open, journey, accountId]); // t is stable enough for error copy — not a dep
+  }, [open, journey?.id, accountId, beginLoad]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const stop = async (run) => {
+    if (stopPending.current) return;
+    stopPending.current = true;
+    const current = beginStop();
     setStoppingId(run.id);
     setError('');
     try {
       await stopJourneyRun(accountId, run.id);
+      if (!current()) return;
       setRuns((rs) => (rs || []).map((r) => (r.id === run.id ? { ...r, status: 'stopped' } : r)));
     } catch (e) {
-      setError(e.message || t('errStop'));
+      if (current()) setError(e.message || t('errStop'));
     } finally {
+      stopPending.current = false;
       setStoppingId(null);
     }
   };
@@ -112,16 +122,17 @@ export default function RunsModal({ open, onClose, journey, accountId }) {
   return (
     <Modal open={open} onClose={onClose} title={t('title', { name: journey?.name || '' })} size="wide-lg">
       {error ? (
-        <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
+        <div role="alert" className="mb-3 flex items-start gap-2.5 rounded-xl border border-n-ruby-7 bg-n-ruby-3 px-4 py-3 text-sm text-n-ruby-11">
           <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span>{error}</span>
+          <Button variant="ghost" color="ruby" size="sm" onClick={load} disabled={stoppingId != null}>{t('retry')}</Button>
         </div>
       ) : null}
 
       {runs === null ? (
         <SkeletonRows rows={4} cols={4} />
       ) : runs.length === 0 ? (
-        <p className="py-8 text-center text-sm text-n-slate-11">{t('empty')}</p>
+        !error && <p className="py-8 text-center text-sm text-n-slate-11">{t('empty')}</p>
       ) : (
         <Table>
           <THead>
@@ -175,6 +186,7 @@ export default function RunsModal({ open, onClose, journey, accountId }) {
                         iconOnly
                         icon={OctagonX}
                         loading={stoppingId === run.id}
+                        disabled={stoppingId != null}
                         aria-label={t('stop')}
                         title={t('stop')}
                         onClick={() => stop(run)}

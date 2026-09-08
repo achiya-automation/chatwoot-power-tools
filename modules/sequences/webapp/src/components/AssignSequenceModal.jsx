@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import useRequestScope from '../lib/useRequestScope.js';
 import { Search, Loader2, Check, UserRound } from 'lucide-react';
 import Modal from './ui/Modal.jsx';
 import Button from './ui/Button.jsx';
@@ -52,6 +53,8 @@ const M = {
     searching: 'מחפש…',
     noContactsFound: 'לא נמצאו אנשי קשר',
     noContacts: 'אין אנשי קשר',
+    searchFailed: 'חיפוש אנשי הקשר נכשל',
+    retry: 'ניסיון נוסף',
     inSeqBadge: 'בסדרה',
     seqLabel: 'סדרה',
     seqPlaceholder: 'בחר סדרה…',
@@ -87,6 +90,8 @@ const M = {
     searching: 'Searching…',
     noContactsFound: 'No contacts found',
     noContacts: 'No contacts',
+    searchFailed: 'Contact search failed',
+    retry: 'Retry',
     inSeqBadge: 'In sequence',
     seqLabel: 'Sequence',
     seqPlaceholder: 'Select sequence…',
@@ -117,6 +122,10 @@ export default function AssignSequenceModal({ open, onClose, accountId, sequence
   const [confirm, setConfirm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [searchError, setSearchError] = useState('');
+  const [searchAttempt, setSearchAttempt] = useState(0);
+  const savingRef = useRef(false);
+  const beginAssign = useRequestScope(`${accountId}:${open}:${fixedContact?.contact_id ?? ''}`);
 
   // איפוס בכל פתיחה (וכשמחליפים את הליד הקבוע)
   useEffect(() => {
@@ -127,25 +136,26 @@ export default function AssignSequenceModal({ open, onClose, accountId, sequence
     setResults([]);
     setError('');
     setConfirm(null);
-  }, [open, fixedContact]);
+  }, [open, accountId, fixedContact?.contact_id, fixedContact?.sequence]);
 
   // חיפוש אנשי קשר (debounced) — רק במצב "ליד חדש"
   useEffect(() => {
     if (!open || fixedContact) return;
     let alive = true;
     setSearching(true);
+    setSearchError('');
     const t = setTimeout(async () => {
       try {
         const r = await searchContacts(q, accountId);
         if (alive) setResults(Array.isArray(r) ? r : []);
       } catch {
-        if (alive) setResults([]);
+        if (alive) { setResults([]); setSearchError(translate(M, 'searchFailed')); }
       } finally {
         if (alive) setSearching(false);
       }
     }, 250);
     return () => { alive = false; clearTimeout(t); };
-  }, [q, open, fixedContact, accountId]);
+  }, [q, open, fixedContact?.contact_id, accountId, searchAttempt]);
 
   // ⚠️ הסימון הוא על "האם הליד יצטרף", ולכן enrollEnabled בלבד. `enabled` הוא נגזרת
   // (enrollEnabled || sendEnabled) ורצף שנסגר לצירוף אך ממשיך לשלוח לקיימים נראה דרכה תקין.
@@ -160,21 +170,26 @@ export default function AssignSequenceModal({ open, onClose, accountId, sequence
 
   // ביצוע בפועל (אחרי אישור)
   const doAssign = useCallback(async () => {
-    if (!picked) return;
+    if (!picked || savingRef.current) return;
+    savingRef.current = true;
+    const current = beginAssign();
     setSaving(true);
     setError('');
     try {
       await setSequenceByContact(picked.contact_id, seqKey, accountId);
+      if (!current()) return;
       setConfirm(null);
       onDone?.();
       onClose?.();
     } catch (e) {
+      if (!current()) return;
       setError(e.message || translate(M, 'actionFailed'));
       setConfirm(null);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [picked, seqKey, accountId, onDone, onClose]);
+  }, [picked, seqKey, accountId, onDone, onClose, beginAssign]);
 
   // בקשת אישור — נוסח לפי סוג הפעולה (שיוך / החלפה / הסרה)
   const requestAssign = () => {
@@ -262,6 +277,11 @@ export default function AssignSequenceModal({ open, onClose, accountId, sequence
                 {searching ? (
                   <div className="flex items-center justify-center gap-2 py-8 text-sm text-n-slate-11">
                     <Loader2 size={16} className="animate-spin" aria-hidden="true" /> {t('searching')}
+                  </div>
+                ) : searchError ? (
+                  <div role="alert" className="flex flex-col items-center gap-2 py-6 text-sm text-n-ruby-11">
+                    {searchError}
+                    <Button variant="ghost" color="ruby" onClick={() => setSearchAttempt((n) => n + 1)}>{t('retry')}</Button>
                   </div>
                 ) : results.length === 0 ? (
                   <div className="py-8 text-center text-sm text-n-slate-11">

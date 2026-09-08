@@ -62,6 +62,7 @@ export function builderReducer(state, action) {
       const { field, value } = action;
       if (field === 'name') return { ...state, name: slugifyName(value) };
       if (field === 'category') {
+        if (state.category === value) return state;
         const wasAuth = state.category === 'AUTHENTICATION';
         const isAuth = value === 'AUTHENTICATION';
         if (isAuth || wasAuth) {
@@ -90,6 +91,7 @@ export function builderReducer(state, action) {
     case 'set_header': {
       const { field, value } = action;
       if (field === 'format') {
+        if (state.header.format === value) return state;
         return { ...state, header: { format: value, text: '', example: '', mediaHandle: '' } };
       }
       return { ...state, header: { ...state.header, [field]: value } };

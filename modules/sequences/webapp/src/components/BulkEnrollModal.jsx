@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import useRequestScope from '../lib/useRequestScope.js';
 import { Tag, AlertCircle, Users, Send, Loader2 } from 'lucide-react';
 import Modal from './ui/Modal.jsx';
 import Button from './ui/Button.jsx';
@@ -80,20 +81,25 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
+  const runningRef = useRef(false);
+  const beginLoad = useRequestScope(`${accountId}:${open}`);
+  const beginRun = useRequestScope(`${accountId}:${open}`);
 
   // טעינת התוויות בכל פתיחה (איפוס מצב)
   useEffect(() => {
     if (!open || accountId == null) return;
+    const current = beginLoad();
+    setLabels([]);
     setLoadingLabels(true);
     setError('');
     setResult(null);
     setLabel('');
     setSeqKey('');
     listLabels(accountId)
-      .then(setLabels)
-      .catch((e) => setError(e.message || translate(M, 'errLoadLabels')))
-      .finally(() => setLoadingLabels(false));
-  }, [open, accountId]);
+      .then((data) => { if (current()) setLabels(data || []); })
+      .catch((e) => { if (current()) setError(e.message || translate(M, 'errLoadLabels')); })
+      .finally(() => { if (current()) setLoadingLabels(false); });
+  }, [open, accountId, beginLoad]);
 
   // ⚠️ `enabled` הוא נגזרת (enrollEnabled || sendEnabled) — רצף שנסגר לצירוף לידים חדשים
   // אבל ממשיך לשלוח לקיימים נראה דרכה "פעיל", וכאן ההחלטה היא בדיוק "מי יצטרף". המנוע
@@ -104,16 +110,20 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
   const count = selectedLabel?.count || 0;
 
   const run = async () => {
-    if (!label || !seqKey) return;
+    if (!selectedLabel || !selectedSeq || count === 0 || runningRef.current) return;
+    runningRef.current = true;
+    const current = beginRun();
     setRunning(true);
     setError('');
     try {
       const res = await bulkEnroll(label, seqKey, accountId);
+      if (!current()) return;
       setResult(res);
       onDone?.();
     } catch (e) {
-      setError(e.message || translate(M, 'errAssign'));
+      if (current()) setError(e.message || translate(M, 'errAssign'));
     } finally {
+      runningRef.current = false;
       setRunning(false);
     }
   };
@@ -140,7 +150,7 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
         icon={Send}
         onClick={run}
         loading={running}
-        disabled={!label || !seqKey || count === 0}
+        disabled={!selectedLabel || !selectedSeq || count === 0 || loadingLabels}
       >
         {t('assign')} {count > 0 ? t('contactsN', { count }) : ''}
       </Button>
@@ -150,7 +160,7 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={running ? undefined : onClose}
       title={t('title')}
       variant="center"
       size="md"
@@ -186,7 +196,7 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
               value={label}
               onChange={setLabel}
               options={labelOptions}
-              disabled={loadingLabels}
+              disabled={loadingLabels || running}
               placeholder={t('selectLabelPlaceholder')}
               ariaLabel={t('selectLabelAria')}
             />
@@ -206,6 +216,7 @@ export default function BulkEnrollModal({ open, onClose, accountId, sequences, o
             <p className="mb-1.5 text-sm font-medium text-n-slate-12">{t('targetSeq')}</p>
             <Dropdown
               value={seqKey}
+              disabled={running}
               onChange={setSeqKey}
               options={seqOptions}
               placeholder={t('selectSeqPlaceholder')}

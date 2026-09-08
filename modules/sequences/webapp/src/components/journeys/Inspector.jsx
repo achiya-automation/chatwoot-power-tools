@@ -7,6 +7,8 @@ import Badge from '../ui/Badge.jsx';
 import Button from '../ui/Button.jsx';
 import TemplatePicker from '../ui/TemplatePicker.jsx';
 import { uploadMedia } from '../../api/sequencesApi.js';
+import useRequestScope from '../../lib/useRequestScope.js';
+import { useUploadStatus } from '../../lib/uploadStatus.js';
 import useT from '../../useT.js';
 import { MAX_BUTTON_OPTIONS, newOptionId } from './graphModel.js';
 
@@ -358,17 +360,25 @@ function MediaField({ label, value, onChange, accountId }) {
   const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const beginUpload = useRequestScope(accountId);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  useUploadStatus(busy);
   const pick = async (file) => {
-    if (!file) return;
+    if (!file || busy) return;
+    const current = beginUpload();
+    const valueAtUpload = value;
     setErr('');
     setBusy(true);
     try {
       const format = file.type.startsWith('image/') ? 'IMAGE'
         : file.type.startsWith('video/') ? 'VIDEO' : 'DOCUMENT';
       const res = await uploadMedia(file, format, accountId);
-      onChange(res.url);
+      if (current() && valueRef.current === valueAtUpload) onChangeRef.current(res.url);
     } catch (e) {
-      setErr(e.message || t('uploadErr'));
+      if (current()) setErr(e.message || t('uploadErr'));
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = '';

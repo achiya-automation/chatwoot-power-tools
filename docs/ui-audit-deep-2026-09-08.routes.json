@@ -1,0 +1,178 @@
+[
+  {
+    "expected": "settings/macros",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 650ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/macros\",\"width\":390,\"heading\":[\"מאקרו\"],\"overflow\":false,\"buttons\":[{\"text\":\"הוסף מאקרו חדש\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":420}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "settings/canned-response/list",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 650ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/canned-response/list\",\"width\":390,\"heading\":[\"תגובות מוכנות\"],\"overflow\":false,\"buttons\":[{\"text\":\"הוסף תגובה שמורה\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"קוד מקוצר\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":344}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "settings/agent-bots",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 650ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/agent-bots\",\"width\":390,\"heading\":[\"בוטים\"],\"overflow\":false,\"buttons\":[{\"text\":\"הוסף בוט\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":521}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "settings/integrations",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 650ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/integrations\",\"width\":390,\"heading\":[\"אינטגרציות\"],\"overflow\":false,\"buttons\":[{\"text\":\"הגדר\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"הגדר\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"הגדר\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"הגדר\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"הגדר\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"הגדר\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":1154}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "settings/data",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 650ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/data\",\"width\":390,\"heading\":[\"Data\"],\"overflow\":false,\"buttons\":[{\"text\":\"ייבוא\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"ייצא\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":\"רענן\",\"title\":\"רענן\",\"disabled\":false},{\"text\":\"ייבוא\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":351}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "settings/audit-logs/list",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 650ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/audit-logs/list\",\"width\":390,\"heading\":[\"יומני ביקורת\"],\"overflow\":false,\"buttons\":[{\"text\":\"Date range\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"All events\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"Newest first\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":193}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "settings/custom-roles/list",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 650ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/custom-roles/list\",\"width\":390,\"heading\":[\"תפקידים מותאמים אישית\"],\"overflow\":false,\"buttons\":[{\"text\":\"הוסף תפקיד מותאם אישית\",\"label\":null,\"title\":null,\"disabled\":true},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"שדרג עכשיו\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":952}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "settings/sla/list",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 650ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/settings/sla/list\",\"width\":390,\"heading\":[\"הסכמי רמת שירות (SLA)\"],\"overflow\":false,\"buttons\":[{\"text\":\"שדרג עכשיו\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":435}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "reports/agents_overview",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/reports/agents_overview\",\"width\":390,\"heading\":[],\"overflow\":false,\"buttons\":[{\"text\":\"הורד דוחות סוכן\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"7 הימים האחרוניםSep 2 - Sep 8, 2026\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"מתג הפעלה/כיבוי\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":452}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "reports/labels_overview",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/reports/labels_overview\",\"width\":390,\"heading\":[],\"overflow\":false,\"buttons\":[{\"text\":\"הורד דוחות תווית\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"7 הימים האחרוניםSep 2 - Sep 8, 2026\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"מתג הפעלה/כיבוי\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":321}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "reports/inboxes_overview",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/reports/inboxes_overview\",\"width\":390,\"heading\":[],\"overflow\":false,\"buttons\":[{\"text\":\"הורד דוחות תיבת דואר נכנס\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"7 הימים האחרוניםSep 2 - Sep 8, 2026\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"מתג הפעלה/כיבוי\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":362}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "reports/teams_overview",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/reports/teams_overview\",\"width\":390,\"heading\":[],\"overflow\":false,\"buttons\":[{\"text\":\"הורד דוחות צוות\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"7 הימים האחרוניםSep 2 - Sep 8, 2026\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"מתג הפעלה/כיבוי\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":303}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "reports/csat",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/reports/csat\",\"width\":390,\"heading\":[],\"overflow\":false,\"buttons\":[{\"text\":\"הורד דוחות CSAT\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"7 הימים האחרוניםSep 2 - Sep 8, 2026\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"הוסף מסנן\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":223}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "reports/sla",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/reports/sla\",\"width\":390,\"heading\":[],\"overflow\":false,\"buttons\":[{\"text\":\"הורד דוחות SLA\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"7 הימים האחרוניםSep 2 - Sep 8, 2026\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"הוסף מסנן\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":171}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "reports/bot",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/reports/bot\",\"width\":390,\"heading\":[],\"overflow\":false,\"buttons\":[{\"text\":\"7 הימים האחרוניםSep 2 - Sep 8, 2026\",\"label\":null,\"title\":null,\"disabled\":false},{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":223}}]"
+        }
+      ]
+    }
+  },
+  {
+    "expected": "calls",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "[{\"action\":\"waitFor\",\"result\":\"Found: main\"},{\"action\":\"waitForTime\",\"result\":\"Waited 1000ms\"},{\"action\":\"evaluate\",\"result\":{\"path\":\"/app/accounts/1/calls\",\"width\":390,\"heading\":[],\"overflow\":false,\"buttons\":[{\"text\":\"\",\"label\":null,\"title\":null,\"disabled\":false}],\"mainTextLength\":1}}]"
+        }
+      ]
+    }
+  }
+]
