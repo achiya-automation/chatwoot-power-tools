@@ -27,8 +27,8 @@
   function locale() {
     // כל אלמנט rtl בדף מספיק. #app[dir] לבדו היה שביר: הוא נולד רק אחרי טעינת החשבון,
     // ושינוי במבנה של Chatwoot היה מפיל את הזיהוי לאנגלית בלי שאיש ישים לב.
-    if (document.querySelector('#app[dir="rtl"], [dir="rtl"]')) return 'he';
-    return document.documentElement.getAttribute('dir') === 'rtl' ? 'he' : 'en';
+    var app = document.querySelector('#app[dir]');
+    return (app || document.documentElement).getAttribute('dir') === 'rtl' ? 'he' : 'en';
   }
   var I18N = {
     he: { sent: 'נשלחו', delivered: 'נמסרו', read: 'נקראו', failed: 'נכשלו', overview: 'סטטיסטיקה', close: 'סגירה', total: 'קמפיינים', left: 'נותרו להיום', leftTitle: 'תקציב שליחה יומי מול תקרת ה-tier של Meta (משוער)', unlimited: 'ללא הגבלה' },
@@ -38,7 +38,7 @@
 
   function onPage() { return /\/accounts\/\d+\/campaigns\/whatsapp\b/.test(location.pathname); }
   function accountId() { var m = location.pathname.match(/\/accounts\/(\d+)/); return m ? m[1] : ''; }
-  function isDark() { return document.body.classList.contains('dark'); }
+  function isDark() { return document.documentElement.classList.contains('dark') || document.body.classList.contains('dark'); }
   function pct(n, d) { return d > 0 ? Math.round((n / d) * 100) : 0; }
 
   // כרטיס קמפיין. שם המחלקה של Tailwind מכיל '/', וכסלקטור-מחלקה הוא מחייב escaping —
@@ -59,8 +59,13 @@
   // engine must not be hammered every MutationObserver tick — documented Caddy↔Puma 502s). ──
   var statsByTitle = {}, statsList = [], statsTier = null, statsAcc = null, fetching = false;
   var failCount = 0, retryAt = 0, warnedFetch = false;
+  var requestVersion = 0, statsFetchedAt = 0, refreshTimer;
+  function scheduleRefresh(delay) {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(tick, delay);
+  }
   // preflight tier (24h budget) — best-effort, piggybacks the stats refresh; null → tile hidden
-  function fetchTierInfo(acc) {
+  function fetchTierInfo(acc, version) {
     fetch(ADDONS_BASE + '/drip-api?account_id=' + encodeURIComponent(acc), {
       method: 'POST',
       credentials: 'same-origin',
@@ -71,16 +76,17 @@
       .then(function (j) {
         // מעבר-חשבון תוך כדי הבקשה (SPA, ה-injector הוא singleton): תשובה של חשבון A
         // אסור שתצבע את ה-KPI של חשבון B — זורקים תשובה שהגיעה מאוחר מדי.
-        if (acc !== accountId()) return;
+        if (version !== requestVersion || acc !== accountId()) return;
         statsTier = (j && j.data) || null;
         renderKpiBar();
       })
-      .catch(function () { statsTier = null; });
+      .catch(function () { if (version === requestVersion && acc === accountId()) { statsTier = null; renderKpiBar(); } });
   }
   function onFetchFail() {
     fetching = false;
     failCount += 1;
     retryAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, failCount)); // 4s → 8s → … → 60s cap
+    scheduleRefresh(retryAt - Date.now());
     if (!warnedFetch) {
       warnedFetch = true;
       console.warn('[cwpt] campaign stats fetch failing — retrying with backoff (engine down or route broken?)');
@@ -90,6 +96,7 @@
     var acc = accountId();
     if (!acc || fetching || Date.now() < retryAt) return;
     fetching = true;
+    var version = ++requestVersion;
     fetch(ADDONS_BASE + '/drip-api?account_id=' + encodeURIComponent(acc), {
       method: 'POST',
       credentials: 'same-origin', // same-origin embed → forwards the Chatwoot session cookie the authGate needs
@@ -98,9 +105,10 @@
     })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
-        if (!j) { onFetchFail(); return; }
+        if (version !== requestVersion || acc !== accountId()) return;
+        if (!j || j.ok === false || !Array.isArray(j.data)) { onFetchFail(); return; }
         failCount = 0; retryAt = 0; warnedFetch = false;
-        var map = {}, dup = {};
+        var map = Object.create(null), dup = Object.create(null);
         (j.data || []).forEach(function (c) {
           var k = (c.title || '').trim();
           if (map[k]) dup[k] = 1;
@@ -118,11 +126,14 @@
         statsList = j.data || [];
         statsByTitle = map;
         statsAcc = acc;
+        statsFetchedAt = Date.now();
         fetching = false;
         renderCards();
-        fetchTierInfo(acc);
+        renderKpiBar();
+        fetchTierInfo(acc, version);
+        scheduleRefresh(30000);
       })
-      .catch(function () { onFetchFail(); });
+      .catch(function () { if (version === requestVersion && acc === accountId()) onFetchFail(); });
   }
 
   function metric(value, label, colorClass) {
@@ -150,9 +161,8 @@
       var titleEl = card.querySelector('.text-base.font-medium.capitalize');
       if (!titleEl) continue;
       var c = statsByTitle[titleEl.textContent.trim()];
-      if (!c) continue; // stats not loaded yet, or title didn't match a campaign — leave the card untouched
-
       var bar = card.querySelector(':scope > .cwpt-stats');
+      if (!c || statsAcc !== accountId()) { if (bar) bar.remove(); continue; }
       if (!bar) {
         bar = document.createElement('div');
         // border-t + mx-6 aligns the divider with the card's own px-6 content padding; the row
@@ -210,7 +220,11 @@
   // id + __sig).
   function renderKpiBar() {
     if (!onPage()) return;
-    if (!statsList.length) return; // stats not loaded yet
+    if (!statsList.length || statsAcc !== accountId()) {
+      var oldBar = document.getElementById('cwpt-kpi-bar');
+      if (oldBar) oldBar.remove();
+      return;
+    }
     // aggregate over the FULL list (not the title map — duplicate-titled campaigns are removed
     // from the map but must still count in the totals)
     var a = { count: statsList.length, sent: 0, delivered: 0, read: 0, failed: 0 };
@@ -265,12 +279,12 @@
     var mains = document.querySelectorAll('main'), best = null, ba = 0;
     for (var i = 0; i < mains.length; i++) {
       var r = mains[i].getBoundingClientRect(), a = r.width * r.height;
-      if (r.width > 500 && r.height > 300 && a > ba) { ba = a; best = mains[i]; }
+      if (r.width > 0 && r.height > 0 && a > ba) { ba = a; best = mains[i]; }
     }
     return best || document.querySelector('div.overflow-auto.bg-n-surface-1') || document.body;
   }
 
-  var holder = null, frame = null, spinner = null, closeBtn = null, shown = false, loaded = false, loadedSolo = null, loadedAcc = null;
+  var holder = null, frame = null, spinner = null, closeBtn = null, shown = false, loaded = false, loadedSolo = null, loadedAcc = null, returnFocus = null;
   function buildOverlay() {
     holder = document.createElement('div');
     holder.id = 'cwpt-report-overlay';
@@ -364,6 +378,7 @@
   }
 
   function showReport(cid) {
+    if (!shown) returnFocus = document.activeElement;
     if (!holder) buildOverlay();
     hideSiblingPanels(); // never stack on top of the sequences-nav panel
     var wantSolo = !!cid;
@@ -403,6 +418,8 @@
     shown = false;
     sentLocale = null;   // ה-iframe ייטען מחדש בפתיחה הבאה — שולחים לו את השפה שוב
     if (holder) holder.style.display = 'none';
+    if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+    returnFocus = null;
     if (crepFromUrl()) {
       try {
         var st2 = history.state || {};
@@ -443,6 +460,7 @@
   // navigate into a Chatwoot conversation when the report asks (recipient/reply click)
   window.addEventListener('message', function (e) {
     if (e.origin !== window.location.origin) return; // same-origin embed only
+    if (!shown || !frame || e.source !== frame.contentWindow) return;
     if (!e.data) return;
     if (e.data.type === 'drip-close') hideReport();
     if (e.data.type === 'drip-open-conversation' && typeof e.data.display_id === 'number' && isFinite(e.data.display_id)) {
@@ -486,7 +504,14 @@
   var cardMissTicks = 0, warnedCards = false, crepRestored = false;
   function tick() {
     if (onPage()) {
-      if (statsAcc !== accountId()) fetchStats();
+      var acc = accountId();
+      if (statsAcc !== acc) {
+        requestVersion += 1;
+        statsAcc = acc; statsList = []; statsByTitle = Object.create(null); statsTier = null;
+        fetching = false; failCount = 0; retryAt = 0; statsFetchedAt = 0;
+        if (shown && loadedAcc !== acc) hideReport();
+      }
+      if (!statsFetchedAt || Date.now() - statsFetchedAt >= 30000) fetchStats();
       renderCards();
       renderHeader();
       renderKpiBar();
@@ -506,8 +531,11 @@
       } else {
         cardMissTicks = 0;
       }
-    } else if (shown) {
-      hideReport();
+    } else {
+      clearTimeout(refreshTimer);
+      if (fetching) { requestVersion += 1; fetching = false; }
+      if (shown) hideReport();
+      crepRestored = false;
     }
   }
   var timer;

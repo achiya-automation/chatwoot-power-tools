@@ -25,12 +25,14 @@ const Input = React.forwardRef(function Input(
     hint = '',
     className = '',
     containerClassName = '',
+    'aria-describedby': describedBy,
     ...props
   },
   ref
 ) {
   const generatedId = useId();
   const inputId = id || generatedId;
+  const messageId = `${inputId}-message`;
 
   // Input.vue הנייטיבי: outline בלבד (בלי ring/border), רקע alpha-black2, מעבר 500ms
   const inputClasses = [
@@ -56,12 +58,13 @@ const Input = React.forwardRef(function Input(
         type={type}
         className={inputClasses}
         aria-invalid={error ? 'true' : undefined}
+        aria-describedby={[describedBy, (error || hint) ? messageId : null].filter(Boolean).join(' ') || undefined}
         {...props}
       />
       {hint && !error ? (
-        <p className="mt-1 text-xs text-n-slate-11">{hint}</p>
+        <p id={messageId} className="mt-1 text-xs text-n-slate-11">{hint}</p>
       ) : null}
-      {error ? <p className="mt-1 text-label-small text-n-ruby-9">{error}</p> : null}
+      {error ? <p id={messageId} role="alert" className="mt-1 text-label-small text-n-ruby-11">{error}</p> : null}
     </div>
   );
 });

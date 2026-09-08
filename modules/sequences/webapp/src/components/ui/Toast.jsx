@@ -89,6 +89,7 @@ function ToastViewport({ toasts, dismiss }) {
       className="pointer-events-none fixed top-4 left-1/2 -translate-x-1/2 z-[60] flex w-[calc(100%-2rem)] max-w-[25rem] flex-col items-center gap-0 px-0"
       dir={dirFor(locale)}
       role="region"
+      data-modal-focus-scope=""
       aria-live="polite"
       aria-label={t('notifications')}
     >

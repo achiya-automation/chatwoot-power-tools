@@ -13,10 +13,11 @@ import { STYLES } from './styles.js';
 // wizard already uses for layout (pageIsRTL, below): Chatwoot sets #app[dir]=rtl only
 // for Hebrew. he→Hebrew, ltr→English (also the sane fallback for fr/es/…). The bundle
 // loads lazily after the app renders, so #app[dir] exists by the time this runs. ──
-const DRIP_LOCALE = (function () {
+function pageLocale() {
   const a = document.querySelector('#app[dir]');
   return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
-})();
+}
+let DRIP_LOCALE = pageLocale();
 const I18N = {
   he: {
     // system-field labels (mapping dropdown)
@@ -127,11 +128,11 @@ const I18N = {
 };
 function t(k) { return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k; }
 
-const FIELD_LABELS = {
+function fieldLabels() { return {
   '': t('ignore'), name: t('fName'), first_name: t('fFirstName'), last_name: t('fLastName'),
   phone_number: t('fPhone'), phone_number_alt: t('fPhoneAlt'), email: t('fEmail'), identifier: t('fIdentifier'),
   company_name: t('fCompany'), city: t('fCity'), country: t('fCountry'),
-};
+}; }
 
 let XLSX_LOADING = null;
 // assetBase here is the addons base (window.__CW_ADDONS_BASE, e.g. /chatwoot-addons) —
@@ -142,8 +143,9 @@ function loadXlsx(assetBase) {
     XLSX_LOADING = new Promise((resolve, reject) => {
       const s = document.createElement('script');
       s.src = vendorUrl(assetBase);
-      s.onload = () => resolve(window.XLSX);
-      s.onerror = () => reject(new Error('SheetJS load failed'));
+      function failed() { s.remove(); XLSX_LOADING = null; reject(new Error('SheetJS load failed')); }
+      s.onload = () => window.XLSX ? resolve(window.XLSX) : failed();
+      s.onerror = failed;
       document.head.appendChild(s);
     });
   }
@@ -151,9 +153,16 @@ function loadXlsx(assetBase) {
 }
 
 export function openWizard({ accountId, authHeaders, assetBase }) {
+  const existingDialog = document.querySelector('dialog.cwi-dlg[open]');
+  if (existingDialog) { existingDialog.focus(); return; }
+  DRIP_LOCALE = pageLocale();
+  const FIELD_LABELS = fieldLabels();
   injectStyles();
   const api = createApiClient(accountId, authHeaders);
   const state = { table: null, mapping: [], customMap: [], labelTitle: '', labelNeedsCreation: false, waInboxId: null, serverMode: false };
+  const mappingTouched = new Set();
+  let openPanelCloser = null, stepVersion = 0, closed = false;
+  const returnFocus = document.activeElement;
 
   // Resolve the WhatsApp inbox once, up front: every imported contact is linked to it
   // so Chatwoot opens future conversations on the IMPORTED contact (real name) instead
@@ -171,6 +180,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // above any Chatwoot native dialog.
   var dlg = document.createElement('dialog');
   dlg.className = 'cwi-dlg';
+  dlg.setAttribute('aria-labelledby', 'cwi-dialog-title');
   // Chatwoot uses darkMode:'class'. The <dialog> in the top layer doesn't reliably
   // inherit the page's `.dark`, so force it onto the dialog itself → Chatwoot's
   // `.dark { --… }` design-token vars cascade to the dialog and all its children.
@@ -188,7 +198,24 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   dlg.appendChild(modal);
   document.body.appendChild(dlg);
   dlg.showModal();
-  function close() { try { dlg.close(); } catch (e) {} dlg.remove(); }
+  function close() {
+    closed = true;
+    stepVersion += 1;
+    if (openPanelCloser) openPanelCloser();
+    try { dlg.close(); } catch (e) {}
+    dlg.remove();
+    if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+  }
+  function resetStep() {
+    if (openPanelCloser) openPanelCloser();
+    modal.replaceChildren();
+    const version = ++stepVersion;
+    requestAnimationFrame(() => {
+      if (!closed && version === stepVersion) modal.querySelector('h3')?.focus({ preventScroll: true });
+    });
+    return version;
+  }
+  function isCurrentStep(version) { return !closed && version === stepVersion; }
   dlg.addEventListener('cancel', function (e) { e.preventDefault(); close(); }); // ESC closes
   dlg.addEventListener('mousedown', function (e) { if (e.target === dlg) close(); }); // backdrop click closes
 
@@ -198,7 +225,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // Mirrors ContactImportDialog.vue: subtle dashed dropzone + sample-CSV link;
   // after a pick, a native selected-file row (file-text · name · replace · trash).
   function stepUpload() {
-    modal.replaceChildren();
+    resetStep();
 
     // Description <p> with sample-CSV download link (like the original dialog).
     const desc = el('p', 'mb-0 text-sm text-n-slate-11');
@@ -216,6 +243,9 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     // Dropzone — subtle, Chatwoot-like dashed box.
     const drop = el('div',
       'flex flex-col items-center justify-center gap-2 p-6 rounded-lg outline-dashed outline-1 outline-n-weak bg-n-alpha-1 cursor-pointer hover:bg-n-alpha-2 transition-colors');
+    drop.tabIndex = 0;
+    drop.setAttribute('role', 'button');
+    drop.setAttribute('aria-label', t('dropText'));
     const body = el('div', 'flex flex-col items-center justify-center gap-2');
     body.append(
       icon('upload', 'size-6 text-n-slate-11'),
@@ -224,6 +254,9 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     );
     drop.appendChild(body);
     drop.addEventListener('click', () => input.click());
+    drop.addEventListener('keydown', (e) => {
+      if (e.target === drop && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); input.click(); }
+    });
     drop.addEventListener('dragover', (e) => { e.preventDefault(); });
     drop.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0], drop, body); });
 
@@ -232,6 +265,8 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
   // Render the native selected-file row into the dropzone body (ContactImportDialog).
   function showPickedFile(file, body) {
+    body.parentElement.setAttribute('role', 'group');
+    body.parentElement.removeAttribute('tabindex');
     body.replaceChildren();
     // Clicking the file row shouldn't re-trigger the dropzone file dialog.
     body.className = 'flex items-center gap-2 w-full';
@@ -259,25 +294,30 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   }
 
   async function handleFile(file, drop, body) {
+    const version = ++stepVersion;
     if (drop && body) showPickedFile(file, body); // reflect the pick immediately
     try {
       const table = await readFileToTable(file, { loadXlsx: () => loadXlsx(assetBase) });
+      if (!isCurrentStep(version)) return;
       if (!table.headers.length) throw new Error(t('emptyFile'));
       state.table = table;
+      state.customMap = [];
+      mappingTouched.clear();
       state.mapping = detectColumns(table.headers, table.rows.slice(0, 20))
         .map((d) => ({ index: d.index, field: d.field }));
       stepMapping();
-    } catch (e) { showError(e.message); }
+    } catch (e) { if (isCurrentStep(version)) showError(e.message); }
   }
 
   // ── Step 2 — Unified mapping ─────────────────────────────────────────────────
   // customDefs are loaded once; every column dropdown offers system + custom + create-new.
   async function stepMapping() {
-    modal.replaceChildren();
+    const version = resetStep();
     modal.appendChild(header(t('mappingTitle'), t('mappingDesc')));
 
     let customDefs = [];
     try { customDefs = await api.listCustomAttributes(); } catch { /* ignore */ }
+    if (!isCurrentStep(version)) return;
 
     const tbl = el('table', 'w-full text-sm border-collapse');
     const thead = el('tr');
@@ -318,7 +358,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       const custom = state.customMap.find((c) => c.index === i);
       // בלי בחירה קודמת: שדה מותאם ששמו זהה לכותרת גובר על ניחוש שדה המערכת,
       // ו-updateMapping מיישר את ה-state כך שהמטען ילך אחרי מה שמוצג בפועל.
-      const ownField = custom ? null : matchCustomField(colHeader, customDefs);
+      const ownField = custom || mappingTouched.has(i) ? null : matchCustomField(colHeader, customDefs);
       if (ownField) updateMapping(i, 'custom:' + ownField);
       const initial = custom
         ? (custom.create ? '__new__' : 'custom:' + custom.attribute_key)
@@ -344,6 +384,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
           }
         },
       });
+      cs.el.querySelector('button').setAttribute('aria-label', t('fieldInChatwoot') + ': ' + colHeader);
       tdSel.appendChild(cs.el);
       // שדה חדש שכבר אושר בכניסה קודמת: מציגים את המצב המאושר, לא את הבורר —
       // אחרת החזרה לשלב הזה נראית כאילו לא נבחר כלום, בזמן שהמיפוי דווקא קיים.
@@ -355,13 +396,14 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       tbl.appendChild(row);
     });
 
-    modal.append(tbl, footer({ onBack: stepUpload, onNext: stepLabel, nextLabel: t('continue') }));
+    modal.append(tableScroller(tbl), footer({ onBack: stepUpload, onNext: stepLabel, nextLabel: t('continue') }));
   }
 
   // FIX 3: inline editor for creating a new custom field — replaces the select cell
   // with a text input + confirm/cancel affordance; no prompt() involved.
   // `origCs` is the customSelect handle ({ el, setValue }) shown before editing.
   function showInlineNewField(i, colHeader, tdSel, origCs) {
+    mappingTouched.add(i);
     // Clear the cell and reset state for this column
     state.mapping[i] = { index: i, field: null };
     state.customMap = state.customMap.filter((c) => c.index !== i);
@@ -440,6 +482,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   }
 
   function updateMapping(i, value) {
+    mappingTouched.add(i);
     // Reset this column's previous assignments
     state.mapping[i] = { index: i, field: null };
     state.customMap = state.customMap.filter((c) => c.index !== i);
@@ -459,7 +502,6 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // (which carries `.dark` when the page is dark) and positioned via
   // getBoundingClientRect, so no overflow:auto scroll container (.cwi-modal) clips
   // it. options: [{ value, label, group? }]. Returns { el, setValue }.
-  let openPanelCloser = null; // only one panel open at a time
   // `size` — 'compact' (h-8, mapping table) | 'field' (h-10, roomier label step).
   function customSelect({ options, value, onSelect, placeholder, size }) {
     let currentValue = value == null ? '' : value;
@@ -473,6 +515,9 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       'inline-flex items-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline disabled:opacity-50 ' +
       heightCls + ' px-3 text-sm text-n-slate-12 font-normal justify-between w-full outline-n-weak hover:outline-n-slate-6 focus:outline-n-brand cursor-pointer');
     trigger.type = 'button';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('role', 'combobox');
+    trigger.setAttribute('aria-expanded', 'false');
     const labelSpan = el('span', 'truncate');
     const chevron = icon('chevron-down', 'size-4 text-n-slate-11 shrink-0');
     trigger.append(labelSpan, chevron);
@@ -484,11 +529,18 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
     // Keyboard navigation (arrows/enter) — mirrors Chatwoot's ComboBox behaviour.
     function visibleRows() { return panelRows.filter((n) => n.style.display !== 'none'); }
-    function clearActive() { if (activeNode) activeNode.classList.remove('bg-n-alpha-3'); activeNode = null; }
+    function clearActive() {
+      if (activeNode) activeNode.classList.remove('bg-n-alpha-3');
+      activeNode = null;
+      (panel?.querySelector('input') || trigger).removeAttribute('aria-activedescendant');
+    }
     function setActiveNode(node) {
       clearActive();
       activeNode = node;
       if (node) { node.classList.add('bg-n-alpha-3'); node.scrollIntoView({ block: 'nearest' }); }
+      const focus = panel?.querySelector('input') || trigger;
+      if (node) focus.setAttribute('aria-activedescendant', node.id);
+      else focus.removeAttribute('aria-activedescendant');
     }
     function moveActive(delta) {
       const vis = visibleRows();
@@ -520,6 +572,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       chevron.className = 'i-lucide-chevron-' + (open ? 'up' : 'down') + ' size-4 text-n-slate-11 shrink-0';
     }
     function setTriggerOpen(open) {
+      trigger.setAttribute('aria-expanded', String(open));
       // Swap outline weak↔brand while keeping the rest of the trigger classes.
       trigger.classList.toggle('outline-n-weak', !open);
       trigger.classList.toggle('hover:outline-n-slate-6', !open);
@@ -539,7 +592,8 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       if (list) list.style.maxHeight = ''; // measure natural height first
       const dh = panel.offsetHeight || 240;
       panel.style.position = 'fixed';
-      panel.style.width = r.width + 'px';
+      const width = Math.min(r.width, Math.max(0, vw - MARGIN * 2));
+      panel.style.width = width + 'px';
 
       const spaceBelow = vh - r.bottom, spaceAbove = r.top;
       const placeAbove = spaceBelow < dh + MARGIN &&
@@ -547,15 +601,15 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       if (placeAbove) {
         panel.style.top = 'auto';
         panel.style.bottom = (vh - r.top + GAP) + 'px';
-        if (list) list.style.maxHeight = Math.max(80, Math.min(240, spaceAbove - GAP - MARGIN)) + 'px';
       } else {
         panel.style.bottom = 'auto';
         panel.style.top = (r.bottom + GAP) + 'px';
-        if (list) list.style.maxHeight = Math.max(80, Math.min(240, spaceBelow - GAP - MARGIN)) + 'px';
       }
+      const chromeHeight = list ? Math.max(0, panel.offsetHeight - list.offsetHeight) : 0;
+      if (list) list.style.maxHeight = Math.max(0, Math.min(240, (placeAbove ? spaceAbove : spaceBelow) - GAP - MARGIN - chromeHeight)) + 'px';
 
       let left = r.left;
-      if (left + r.width > vw - MARGIN) left = vw - MARGIN - r.width;
+      if (left + width > vw - MARGIN) left = vw - MARGIN - width;
       if (left < MARGIN) left = MARGIN;
       panel.style.left = left + 'px';
     }
@@ -572,13 +626,16 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       activeNode = null;
       openPanelCloser = null;
       setTriggerOpen(false);
+      trigger.removeAttribute('aria-activedescendant');
+      trigger.removeAttribute('aria-controls');
     }
 
     function onOutside(e) {
       if (panel && !panel.contains(e.target) && !trigger.contains(e.target)) closePanel();
     }
     function onKey(e) {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePanel(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePanel(); trigger.focus({ preventScroll: true }); return; }
+      if (e.key === 'Tab') { closePanel(); trigger.focus({ preventScroll: true }); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); moveActive(1); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); moveActive(-1); return; }
       if (e.key === 'Enter' && activeNode) { e.preventDefault(); activeNode.click(); }
@@ -590,6 +647,8 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
         'flex items-center justify-between w-full gap-2 px-3 py-2 text-sm transition-colors duration-150 cursor-pointer hover:bg-n-alpha-2' +
         (isSel ? ' bg-n-alpha-2' : ''));
       row.setAttribute('role', 'option');
+      row.id = 'cwi-option-' + (++controlId);
+      row.setAttribute('aria-selected', String(isSel));
       const lead = el('span', 'flex items-center min-w-0 gap-2');
       if (opt.icon) lead.appendChild(icon(opt.icon, 'size-4 text-n-slate-11 shrink-0'));
       const txt = el('span', 'truncate text-n-slate-12' + (isSel ? ' font-medium' : ''));
@@ -601,6 +660,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
         currentValue = opt.value;
         renderTriggerLabel();
         closePanel();
+        trigger.focus({ preventScroll: true });
         onSelect(opt.value);
       });
       return row;
@@ -634,12 +694,18 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
           (pageIsRTL ? 'pr-10 pl-2 text-right' : 'pl-10 pr-2'));
         searchInput.type = 'search';
         searchInput.placeholder = t('search');
+        searchInput.setAttribute('aria-label', t('search'));
+        searchInput.setAttribute('role', 'combobox');
+        searchInput.setAttribute('aria-expanded', 'true');
         searchWrap.appendChild(searchInput);
         panel.appendChild(searchWrap);
       }
 
       const list = el('ul', 'py-1 mb-0 overflow-auto max-h-60');
       list.setAttribute('role', 'listbox');
+      list.id = 'cwi-listbox-' + (++controlId);
+      trigger.setAttribute('aria-controls', list.id);
+      if (searchInput) searchInput.setAttribute('aria-controls', list.id);
 
       // Track group-label <li> nodes so filtering can hide empty groups.
       const groupNodes = []; // { node, group }
@@ -718,11 +784,12 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
   // ── Step 3 — Label ───────────────────────────────────────────────────────────
   async function stepLabel() {
-    modal.replaceChildren();
+    const version = resetStep();
     modal.appendChild(header(t('labelStepTitle'), t('labelStepDesc')));
 
     let labels = [];
     try { labels = await api.listLabels().then((r) => r.payload || r); } catch { /* allow new only */ }
+    if (!isCurrentStep(version)) return;
 
     const options = [{ value: '', label: t('noLabel') }];
     (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
@@ -740,6 +807,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     newInput.placeholder = t('newLabelPlaceholder');
     if (prior && !priorIsExisting) newInput.value = prior;
     const labelError = el('div', 'min-h-5 text-sm text-n-ruby-11');
+    labelError.setAttribute('role', 'alert');
     newInput.addEventListener('input', () => { labelError.textContent = ''; });
     newInput.addEventListener('blur', () => {
       const normalized = normalizeLabelTitle(newInput.value);
@@ -785,7 +853,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
 
   // ── Step 4 — Preview ─────────────────────────────────────────────────────────
   async function stepPreview() {
-    modal.replaceChildren();
+    const version = resetStep();
     modal.appendChild(header(t('previewTitle'), ''));
 
     // Mapping sanity gate — runs FIRST, before any server side effect (custom-attribute
@@ -807,6 +875,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     modal.appendChild(status);
 
     await ensureCustomAttributes();
+    if (!isCurrentStep(version)) return;
     try {
       await ensureLabel();
     } catch {
@@ -814,6 +883,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       modal.appendChild(footer({ onBack: stepLabel }));
       return;
     }
+    if (!isCurrentStep(version)) return;
 
     // A pasted-together file carries the header line of each glued list in the middle
     // of the data; without this filter such a line becomes a contact named "שם פרטי".
@@ -842,6 +912,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
       serverCounts = await api.smartImportPreview(contacts.map(wireRow));
       state.serverMode = true;
     } catch { /* backend absent or unreachable — legacy path below */ }
+    if (!isCurrentStep(version)) return;
 
     if (!state.serverMode) {
       try {
@@ -855,6 +926,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
         contacts.forEach((c) => { delete c.__match; delete c.__dupTail; });
       }
     }
+    if (!isCurrentStep(version)) return;
 
     const dupes = state.serverMode ? (serverCounts.dup_in_file || 0) : contacts.filter((c) => c.__dupTail).length;
     const existing = state.serverMode ? serverCounts.existing : contacts.filter((c) => c.__match).length;
@@ -867,7 +939,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     modal.append(headerEchoNotice(headerEchoRows));
     modal.append(phoneWarning(contacts));
     modal.append(
-      previewTable(contacts.slice(0, 10)),
+      tableScroller(previewTable(contacts.slice(0, 10))),
       footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t('importVerb')} ${N} ${t('contactsWord')}` }),
     );
   }
@@ -992,6 +1064,7 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
   // ── DOM helpers ──────────────────────────────────────────────────────────────
   function showError(msg) {
     const e = el('div', 'text-sm text-n-ruby-11');
+    e.setAttribute('role', 'alert');
     e.textContent = msg;
     modal.appendChild(e);
   }
@@ -1036,7 +1109,14 @@ export function openWizard({ accountId, authHeaders, assetBase }) {
     const wrap = el('div', 'flex flex-col gap-1');
     const lbl = el('label', 'text-sm text-n-slate-12 mb-1');
     lbl.textContent = labelText;
+    const input = control.matches('input,button,select') ? control : control.querySelector('input,button,select');
+    if (input) { input.id ||= 'cwi-control-' + (++controlId); lbl.htmlFor = input.id; }
     wrap.append(lbl, control);
+    return wrap;
+  }
+  function tableScroller(table) {
+    const wrap = el('div', 'cwi-table-scroll');
+    wrap.appendChild(table);
     return wrap;
   }
 }
@@ -1050,6 +1130,7 @@ function injectStyles() {
   s.textContent = STYLES;
   document.head.appendChild(s);
 }
+let controlId = 0;
 
 // ── Background progress pill ─────────────────────────────────────────────────
 // Floating status card (bottom corner of the page, on <body>) that tracks a
@@ -1067,13 +1148,14 @@ function mountPill(job, { dark, rtl }) {
 
   const head = el('div', 'flex items-center justify-between gap-3');
   const title = el('span', 'text-sm font-medium text-n-slate-12');
+  title.setAttribute('role', 'status');
   const xBtn = el('button', BTN_BASE + ' text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-6 w-6 p-0 shrink-0 cursor-pointer');
   xBtn.appendChild(icon('x', 'size-4'));
   head.append(title, xBtn);
 
   const track = el('div', 'h-1.5 w-full rounded-full bg-n-alpha-2 overflow-hidden');
   const fill = el('div', 'cwi-prog-fill bg-n-brand');
-  fill.style.width = '0%';
+  fill.style.transform = 'scaleX(0)';
   track.appendChild(fill);
 
   const detail = el('div', 'text-xs text-n-slate-11');
@@ -1105,13 +1187,14 @@ function mountPill(job, { dark, rtl }) {
   });
 
   function render(p) {
-    fill.style.width = (p.total ? Math.round((p.done / p.total) * 100) : 100) + '%';
+    fill.style.transform = 'scaleX(' + (p.total ? Math.min(1, Math.max(0, p.done / p.total)) : 1) + ')';
     const counts = `${t('createdWord')} ${p.created} · ${t('updatedWord')} ${p.updated}` +
       (p.skipped ? ` · ${t('skippedWord')} ${p.skipped}` : '') +
       (p.failed ? ` · ${t('failedWord')} ${p.failed}` : '');
     if (p.state === 'running' || p.state === 'cancelling') {
       title.textContent = p.state === 'running' ? t('bgImporting') : t('bgCancelling');
       xBtn.title = t('stopImport');
+      xBtn.setAttribute('aria-label', t('stopImport'));
       detail.textContent = `${p.done}/${p.total} · ${counts}`;
       // The email address arrives with the first status poll — keep the hint current.
       if (job.serverMode) hint.textContent = t('bgHintServer')(job.emailTo);
@@ -1120,6 +1203,7 @@ function mountPill(job, { dark, rtl }) {
     // Finished: done / cancelled / error
     window.removeEventListener('beforeunload', warnUnload);
     xBtn.title = t('close');
+    xBtn.setAttribute('aria-label', t('close'));
     hint.remove();
     title.textContent = p.state === 'done' ? t('importDone')
       : p.state === 'cancelled' ? `${t('bgCancelled')} (${p.done}/${p.total})`
@@ -1159,6 +1243,8 @@ function header(title, subtitle) {
   const wrap = el('div', 'flex flex-col gap-2');
   const h = el('h3', 'text-base font-medium leading-6 text-n-slate-12 m-0');
   h.textContent = title;
+  h.id = 'cwi-dialog-title';
+  h.tabIndex = -1;
   wrap.appendChild(h);
   if (subtitle != null && subtitle !== '') {
     if (typeof subtitle === 'string') {

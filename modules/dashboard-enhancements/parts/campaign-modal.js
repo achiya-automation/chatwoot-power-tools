@@ -30,13 +30,13 @@
           lang_he: 'עברית', lang_en: 'אנגלית', lang_ar: 'ערבית',
           cat_MARKETING: 'שיווקי', cat_UTILITY: 'שירותי', cat_AUTHENTICATION: 'אימות',
           uploadBtn: 'העלאת קובץ', uploading: 'מעלה…', uploaded: '✓ הועלה', uploadFailed: '✗ נכשל',
-          mediaSaved: 'המדיה הועלתה ונזכרה ✓', replace: 'החלפה' },
+          mediaSaved: 'המדיה מוכנה לשליחה', replace: 'החלפה' },
     en: { firstName: 'First name', fullName: 'Full name', phone: 'Phone', email: 'Email',
           remove: 'Remove', addField: 'Add field:',
           lang_he: 'Hebrew', lang_en: 'English', lang_ar: 'Arabic',
           cat_MARKETING: 'Marketing', cat_UTILITY: 'Utility', cat_AUTHENTICATION: 'Authentication',
           uploadBtn: 'Upload', uploading: 'Uploading…', uploaded: '✓ Uploaded', uploadFailed: '✗ Failed',
-          mediaSaved: 'Media uploaded & remembered ✓', replace: 'Replace' },
+          mediaSaved: 'Media ready to send', replace: 'Replace' },
   };
   function t(k) { return (I18N[dripLocale()] || I18N.en)[k] || I18N.en[k] || k; }
 
@@ -55,6 +55,7 @@
       '.drip-chip-custom{border-color:rgb(var(--blue-6));color:rgb(var(--blue-11))}',
       '.drip-chip-custom:hover{background:rgb(var(--blue-3))}',
       '.drip-chip:disabled{cursor:default;opacity:.6}',
+      '.drip-chip:focus-visible,.drip-media-badge button:focus-visible,.drip-token-pill .x:focus-visible{outline:2px solid rgb(var(--blue-9));outline-offset:2px}',
       // token overlay — shows friendly labels, hides the raw Liquid. Free text around a token is
       // kept verbatim in the overlay, so "רחוב {{…}} קומה 3" reads as a sentence with one pill in it.
       // ⚠️ ה-overlay נעלם במצב .editing והשדה חוזר לטקסט הגולמי — זה מה שמאפשר עריכה חופשית
@@ -74,7 +75,7 @@
       '.drip-token-pill{display:inline-block;vertical-align:middle;pointer-events:auto;font-size:13px;font-weight:500;line-height:1;padding:5px 7px 5px 10px;border-radius:7px;background:rgb(var(--blue-3));color:rgb(var(--blue-11));max-width:100%;white-space:nowrap}',
       '.drip-token-pill .lbl{display:inline-block;vertical-align:middle;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}',
       '.drip-token-pill .lbl::before{content:"";display:inline-block;vertical-align:middle;width:5px;height:5px;margin-inline-end:6px;border-radius:9999px;background:currentColor;opacity:.55}',
-      '.drip-token-pill .x{pointer-events:auto;cursor:pointer;display:inline-block;vertical-align:middle;width:15px;height:15px;line-height:15px;text-align:center;margin-inline-start:6px;border-radius:9999px;font-size:9px;opacity:.65;background:rgb(var(--blue-5))}',
+      '.drip-token-pill .x{pointer-events:auto;cursor:pointer;display:inline-block;vertical-align:middle;width:20px;height:20px;line-height:20px;text-align:center;margin-inline-start:6px;border:0;padding:0;color:inherit;border-radius:9999px;font-size:9px;opacity:.65;background:rgb(var(--blue-5))}',
       '.drip-token-pill .x:hover{opacity:1}',
       // same pill, inside the rendered message body (no ✕ there — the card is read-only)
       '.drip-token-pill.sm{font-size:12px;padding:2px 8px;border-radius:6px;line-height:1.35}',
@@ -114,6 +115,7 @@
   var CUSTOM_FIELDS = [];          // loaded dynamically from the API
   var customFieldsAcc = '';        // the account CUSTOM_FIELDS was loaded for
   var customFieldsAt = 0;          // when (ms) — 0 = never/failed, so the next open retries
+  var customFieldsVersion = 0;
   function allFields() { return baseFields().concat(CUSTOM_FIELDS); }
   // Liquid → תווית ידידותית, מחושב בזמן קריאה (רשימה של 4 + custom — זול מלתחזק מפה).
   function liquidLabel(liquid) {
@@ -158,10 +160,12 @@
       lbl.textContent = p.label;
       pill.appendChild(lbl);
       if (onRemove) {
-        var x = document.createElement('span');
+        var x = document.createElement('button');
+        x.type = 'button';
         x.className = 'x';
         x.textContent = '✕';
         x.title = t('remove');
+        x.setAttribute('aria-label', t('remove') + ' ' + p.label);
         x.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); onRemove(i); });
         pill.appendChild(x);
       }
@@ -200,13 +204,17 @@
     if (!acc) return;                        // עוד לא בתוך חשבון — הפתיחה הבאה תנסה שוב
     if (acc === customFieldsAcc && Date.now() - customFieldsAt < 30000) return;
     customFieldsAcc = acc;
+    var version = ++customFieldsVersion;
     customFieldsAt = Date.now();
+    CUSTOM_FIELDS = [];
+    refreshAllChips();
     var headers = getChatwootAuthHeaders() || {};
     headers.Accept = 'application/json';
     fetch('/api/v1/accounts/' + acc + '/custom_attribute_definitions?attribute_model=contact_attribute',
           { credentials: 'same-origin', headers: headers })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (list) {
+        if (version !== customFieldsVersion || customFieldsAcc !== acc || accountIdFromPath() !== acc) return;
         CUSTOM_FIELDS = (list || [])
           .filter(function (d) { return d.attribute_model === 'contact_attribute'; })
           .map(function (d) {
@@ -227,7 +235,7 @@
           });
         refreshAllChips();         // update holders that were already built before the fetch returned
       })
-      .catch(function () { customFieldsAt = 0; });   // כישלון לא ננעל — הפתיחה הבאה תנסה שוב
+      .catch(function () { if (version === customFieldsVersion && customFieldsAcc === acc) customFieldsAt = 0; });
   }
 
   function setNativeValue(el, val) {
@@ -312,8 +320,7 @@
   }
 
   function augmentVarInput(inp) {
-    var col = inp.closest('.flex.flex-col') || inp.parentElement;
-    if (!col) return;
+    if (!inp.parentElement) return;
     // wrap the input in a container for the token overlay (the input itself stays the same
     // element — the Vue ref remains valid)
     var wrap = document.createElement('div');
@@ -323,7 +330,7 @@
     // the chips row above the field
     var holder = document.createElement('div');
     holder.className = 'drip-var-chips';
-    col.insertBefore(holder, wrap);
+    wrap.parentNode.insertBefore(holder, wrap);
     buildChips(holder, inp, wrap);
     inp.addEventListener('input', function () { syncToken(wrap, inp); });
     // מגע של המשתמש בשדה = מצב עריכה (ראה ההערה ב-CSS). focus תוכנתי מלחיצה על צ'יפ לא נחשב.
@@ -494,6 +501,8 @@
   // (ה-example.header_handle אינו שמיש לשליחה חוזרת — 403/131053, ראה migration 006).
   var TEMPLATE_MEDIA = {};              // { template_name: media_url } — נטען פעם אחת per account
   var templateMediaLoaded = false;
+  var templateMediaAcc = '', templateMediaLoading = false, templateMediaRetryAt = 0;
+  var templateMediaVersion = 0;
 
   // שם התבנית שנבחרה, יחסית לשדה ה-media: ה-parser מציג אותו ב-<h3> בתוך כרטיס התצוגה
   // המקדימה (.bg-n-alpha-black2), שהוא sibling של בלוק המדיה תחת אותו root. מטפסים מה-input
@@ -514,6 +523,16 @@
     var base = window.__CW_ADDONS_BASE || '/chatwoot-addons';
     var acc = accountIdFromPath();
     if (!acc) return;
+    if (templateMediaAcc !== acc) {
+      templateMediaAcc = acc;
+      TEMPLATE_MEDIA = {};
+      templateMediaLoaded = false;
+      templateMediaLoading = false;
+      templateMediaRetryAt = 0;
+    }
+    if (templateMediaLoaded || templateMediaLoading || Date.now() < templateMediaRetryAt) return;
+    templateMediaLoading = true;
+    var version = ++templateMediaVersion;
     fetch(base + '/drip-api?account_id=' + encodeURIComponent(acc), {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -521,9 +540,16 @@
     })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
-        if (j && j.ok !== false && j.data) { TEMPLATE_MEDIA = j.data; templateMediaLoaded = true; autofillAllMedia(); }
+        if (version !== templateMediaVersion || templateMediaAcc !== acc || accountIdFromPath() !== acc) return;
+        if (!j || j.ok === false || !j.data) throw new Error('template media unavailable');
+        TEMPLATE_MEDIA = j.data; templateMediaLoaded = true; autofillAllMedia();
       })
-      .catch(function () {});
+      .catch(function () {
+        if (version !== templateMediaVersion || templateMediaAcc !== acc) return;
+        templateMediaRetryAt = Date.now() + 5000;
+        setTimeout(runEnhancers, 5000);
+      })
+      .finally(function () { if (version === templateMediaVersion && templateMediaAcc === acc) templateMediaLoading = false; });
   }
 
   function saveTemplateMedia(name, url) {
@@ -540,6 +566,7 @@
   // ממלא את שדה ה-URL מהמאגר — רק כשריק וטרם מולא לתבנית הנוכחית. data-drip-autofill זוכר
   // לאיזו תבנית מילאנו, כדי לא לדרוס מחיקה/עריכה ידנית של המשתמש בכל tick של ה-observer.
   function autofillMediaInput(inp) {
+    if (templateMediaAcc !== accountIdFromPath()) return;
     var name = templateNameForInput(inp);
     if (!name) return;
     var url = TEMPLATE_MEDIA[name];
@@ -559,9 +586,17 @@
     }
   }
 
-  function uploadCampaignMedia(file, format, urlInput, btn, lbl) {
+  function uploadCampaignMedia(file, format, urlInput, btn, lbl, controls, error) {
     var base = window.__CW_ADDONS_BASE || '/chatwoot-addons';
     var acc = accountIdFromPath();
+    var template = templateNameForInput(urlInput), previousValue = urlInput.value;
+    function isCurrent() {
+      return urlInput.isConnected && accountIdFromPath() === acc &&
+        templateNameForInput(urlInput) === template && mediaFormatFromPlaceholder(urlInput) === format &&
+        urlInput.value === previousValue;
+    }
+    error.textContent = '';
+    controls.forEach(function (control) { control.disabled = true; });
     btn.disabled = true;
     btn.textContent = t('uploading');
     if (lbl) lbl.textContent = t('uploading'); // feedback גם ב-badge (בהחלפה ה-btn מוסתר)
@@ -575,12 +610,22 @@
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (res) {
         if (!res.ok || !res.j || res.j.ok === false) throw new Error((res.j && res.j.error) || 'upload failed');
+        if (!res.j.data || !/^https?:\/\//i.test(res.j.data.url || '')) throw new Error('upload failed');
+        if (!isCurrent()) return;
         setNativeValue(urlInput, res.j.data.url); // Vue picks up the public URL through the normal v-model path
         btn.textContent = t('uploaded');
         if (lbl) lbl.textContent = t('mediaSaved');
       })
-      .catch(function (e) { btn.textContent = t('uploadFailed'); btn.title = e.message || ''; if (lbl) lbl.textContent = t('uploadFailed'); })
-      .finally(function () { btn.disabled = false; setTimeout(function () { btn.textContent = t('uploadBtn'); if (lbl) lbl.textContent = t('mediaSaved'); }, 2500); });
+      .catch(function (e) {
+        if (!isCurrent()) return;
+        error.textContent = t('uploadFailed') + ': ' + (e.message || '');
+      })
+      .finally(function () {
+        controls.forEach(function (control) { control.disabled = false; });
+        btn.disabled = false;
+        btn.textContent = t('uploadBtn');
+        if (lbl) lbl.textContent = t('mediaSaved');
+      });
   }
 
   function augmentMediaInput(urlInput) {
@@ -603,6 +648,7 @@
     var acts = document.createElement('span'); acts.className = 'acts';
     var rep = document.createElement('button'); rep.type = 'button'; rep.className = 'rep'; rep.textContent = t('replace');
     var rm = document.createElement('button'); rm.type = 'button'; rm.className = 'rm'; rm.textContent = '✕'; rm.title = t('remove');
+    rm.setAttribute('aria-label', t('remove'));
     acts.appendChild(rep); acts.appendChild(rm);
     badge.appendChild(lbl); badge.appendChild(acts);
     wrap.appendChild(badge);
@@ -614,6 +660,10 @@
     btn.type = 'button'; btn.className = 'drip-chip'; btn.textContent = t('uploadBtn');
     holder.appendChild(btn); holder.appendChild(file);
     wrap.parentNode.insertBefore(holder, wrap.nextSibling);
+    var error = document.createElement('div');
+    error.className = 'text-sm text-n-ruby-11';
+    error.setAttribute('role', 'alert');
+    holder.parentNode.insertBefore(error, holder.nextSibling);
 
     function pickFile() {
       var fmt = mediaFormatFromPlaceholder(urlInput) || urlInput.getAttribute('data-drip-media-format') || '';
@@ -628,7 +678,8 @@
       file.value = ''; // allow re-picking the same filename on a retry
       if (!f) return;
       var fmt = mediaFormatFromPlaceholder(urlInput) || urlInput.getAttribute('data-drip-media-format') || '';
-      uploadCampaignMedia(f, fmt, urlInput, btn, lbl);
+      if (btn.disabled) return;
+      uploadCampaignMedia(f, fmt, urlInput, btn, lbl, [rep, rm], error);
     });
 
     // שמירה אוטומטית למאגר: כל URL חדש בשדה (העלאה, הדבקה ידנית, או setNativeValue) → נשמר.
@@ -671,10 +722,11 @@
   // identical to the original single-IIFE version, just via two observers instead of one.
   // loadCustomFields() לא נקרא כאן בכוונה — enhanceCampaign() קורא לו בפתיחת המודל, כשהחשבון
   // כבר ידוע והרשימה טרייה. קריאה כאן הייתה רק מציתה את ה-throttle מוקדם מדי עם רשימה ישנה.
-  loadTemplateMedia();
   var enhanceTimer;
   function runEnhancers() {
     if (!onPage()) return;
+    loadTemplateMedia();
+    if (customFieldsAcc !== accountIdFromPath() && document.querySelector('input[data-drip-var]')) loadCustomFields();
     enhanceCampaign(); enhancePreviewCard(); enhanceCampaignMedia(); autofillAllMedia();
   }
   new MutationObserver(function () { clearTimeout(enhanceTimer); enhanceTimer = setTimeout(runEnhancers, 150); })

@@ -5,12 +5,14 @@
  * span כותרת .text-base.font-medium.capitalize, ו-main > .max-w-5xl.
  * אם Chatwoot ישנה את המבנה — הבדיקה הזו היא המקום לעדכן את ה-fixture ואת הסלקטורים יחד.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 
 const SRC_URL = new URL('../../../dashboard-enhancements/parts/campaign-stats.js', import.meta.url);
+const WINDOWS = [];
+after(() => WINDOWS.forEach((window) => window.close()));
 
 function pageDom(cards) {
   const cardHtml = cards.map((title) =>
@@ -29,6 +31,7 @@ function pageDom(cards) {
 async function runInjector(dom, apiData, tierData = null) {
   const src = await readFile(SRC_URL, 'utf8');
   const w = dom.window;
+  WINDOWS.push(w);
   // שתי פעולות על אותו endpoint — מבחינים לפי גוף הבקשה (כמו ה-engine האמיתי)
   w.fetch = async (_url, opts) => {
     const action = JSON.parse((opts && opts.body) || '{}').action;
@@ -113,4 +116,72 @@ test('injector: idempotent across repeated ticks (one stats row, not duplicates)
   w.document.body.appendChild(w.document.createElement('div'));
   await new Promise((r) => setTimeout(r, 400));
   assert.equal(w.document.querySelectorAll('.cwpt-stats').length, 1);
+});
+
+test('injector: reused cards lose stale statistics when their title no longer matches', async () => {
+  const dom = pageDom(['Old campaign']);
+  const w = await runInjector(dom, [{ id: 3, title: 'Old campaign', sent: 9, delivered: 1, read: 1, failed: 0 }]);
+  w.document.querySelector('.capitalize').textContent = 'New campaign';
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  assert.equal(w.document.querySelector('.cwpt-stats'), null);
+});
+
+test('injector: switching accounts clears cached cards and discards late responses', async () => {
+  const dom = pageDom(['Shared title']);
+  const w = dom.window;
+  WINDOWS.push(w);
+  const pending = new Map();
+  w.fetch = (url, options) => {
+    if (JSON.parse(options.body).action === 'campaigns_tier') return Promise.resolve({ ok: true, json: async () => ({ data: null }) });
+    return new Promise((resolve) => pending.set(new URL(url, w.location.href).searchParams.get('account_id'), resolve));
+  };
+  w.eval(await readFile(SRC_URL, 'utf8'));
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  w.history.pushState({}, '', '/app/accounts/2/campaigns/whatsapp');
+  w.document.body.appendChild(w.document.createElement('div'));
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  pending.get('2')({ ok: true, json: async () => ({ data: [{ id: 2, title: 'Shared title', sent: 22, delivered: 0, read: 0, failed: 0 }] }) });
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  pending.get('1')({ ok: true, json: async () => ({ data: [{ id: 1, title: 'Shared title', sent: 99, delivered: 0, read: 0, failed: 0 }] }) });
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  assert.match(w.document.querySelector('.cwpt-stats').textContent, /22/);
+  assert.doesNotMatch(w.document.querySelector('.cwpt-stats').textContent, /99/);
+});
+
+test('injector: RTL message content does not override an English application locale', async () => {
+  const dom = pageDom(['Campaign']);
+  dom.window.document.querySelector('#app').dir = 'ltr';
+  const content = dom.window.document.createElement('div');
+  content.dir = 'rtl';
+  dom.window.document.body.appendChild(content);
+  const w = await runInjector(dom, [{ id: 1, title: 'Campaign', sent: 2, delivered: 1, read: 0, failed: 0 }]);
+  assert.match(w.document.querySelector('.cwpt-stats').textContent, /Sent/);
+});
+
+test('injector: a previous visit cannot replace the current daily budget after A to B to A navigation', async () => {
+  const dom = pageDom(['Campaign']);
+  const w = dom.window;
+  WINDOWS.push(w);
+  const tiers = [];
+  w.fetch = (url, options) => {
+    if (JSON.parse(options.body).action === 'campaigns_tier') {
+      return new Promise((resolve) => tiers.push({ url, resolve }));
+    }
+    return Promise.resolve({ ok: true, json: async () => ({ data: [{ id: 1, title: 'Campaign', sent: 1, delivered: 0, read: 0, failed: 0 }] }) });
+  };
+  w.eval(await readFile(SRC_URL, 'utf8'));
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  for (const account of ['2', '1']) {
+    w.history.pushState({}, '', `/app/accounts/${account}/campaigns/whatsapp`);
+    w.document.body.appendChild(w.document.createElement('div'));
+    await new Promise((resolve) => setTimeout(resolve, 220));
+  }
+  const accountTiers = tiers.filter(({ url }) => url.includes('account_id=1'));
+  assert.equal(accountTiers.length, 2);
+  accountTiers[1].resolve({ ok: true, json: async () => ({ data: { remaining: 222, unlimited: false } }) });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  accountTiers[0].resolve({ ok: true, json: async () => ({ data: { remaining: 999, unlimited: false } }) });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.match(w.document.getElementById('cwpt-kpi-bar').textContent, /222/);
+  assert.doesNotMatch(w.document.getElementById('cwpt-kpi-bar').textContent, /999/);
 });
