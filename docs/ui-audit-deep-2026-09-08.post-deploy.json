@@ -1,0 +1,129 @@
+{
+  "date": "2026-09-08",
+  "origin": "https://chatwoot.achiya-automation.com",
+  "browser": "Safari / אוטומציות",
+  "businessMutationsPerformed": false,
+  "checks": [
+    {
+      "surface": "Calls",
+      "viewport": 390,
+      "result": "Loaded 96 call records; previous endless initial spinner no longer reproduced",
+      "nativeBuild": "dashboard-CFlmlxLa.js"
+    },
+    {
+      "surface": "Reports date range",
+      "viewport": 390,
+      "dialog": {
+        "x": 8,
+        "width": 358,
+        "right": 366
+      },
+      "documentOverflow": false,
+      "result": [
+        "Invalid 31.02.2026 did not apply",
+        "Escape closed and returned focus to range trigger; original 7-day range retained",
+        "Custom start=end=7.9.2026 applied"
+      ]
+    },
+    {
+      "surface": "Custom attribute modal",
+      "viewport": 390,
+      "dialog": {
+        "x": 8,
+        "width": 374,
+        "right": 382
+      },
+      "result": [
+        "Dialog named from heading",
+        "Initial focus on close",
+        "Shift+Tab wrapped to cancel; Tab wrapped to close",
+        "Escape closed and restored opener focus"
+      ]
+    },
+    {
+      "surface": "WhatsApp campaign draft",
+      "viewport": 390,
+      "dialog": {
+        "x": 24,
+        "width": 342,
+        "right": 366
+      },
+      "documentOverflow": false,
+      "result": [
+        "Three inbox options loaded",
+        "No-match inbox search returned zero options",
+        "Cancel closed draft"
+      ],
+      "createClicked": false
+    },
+    {
+      "surface": "Help Center empty state",
+      "path": "/app/accounts/1/portals/new",
+      "viewport": 390,
+      "documentOverflow": false,
+      "decorativeButtonsInsideInertAriaHidden": 112,
+      "activeControls": [
+        "Create portal",
+        "Mobile sidebar"
+      ],
+      "portalCreated": false
+    },
+    {
+      "surface": "Sequences embedded editor",
+      "viewport": 1512,
+      "iframeWidth": 1280,
+      "addonBuild": "20260908175641",
+      "documentOverflow": false,
+      "result": [
+        "Opened unsaved new sequence",
+        "Added step: count 1 to 2",
+        "Duplicated step: count 2 to 3",
+        "Deleted step: count 3 to 2",
+        "Closed owned tab without saving"
+      ],
+      "serverSavePerformed": false
+    },
+    {
+      "surface": "Custom attribute action controls after patch 20",
+      "result": "Fresh Safari snapshot confirmed all 12 edit/delete controls carry an action-and-attribute aria-label plus a translated title",
+      "actionsClicked": false
+    }
+  ],
+  "finalCoreCommit": "583f6c1",
+  "finalNativeManifest": "c703d7a1efd09588341d778eb79bc8c5171662acfc329c429ccdc4688a4c8cfc",
+  "publicAssetsAndHealth": [
+    {
+      "path": "/vite/assets/dashboard-BW-N9gcn.js",
+      "sha256_match": true,
+      "sha256": "783f63c2773ea34c6c38bbcb608037a1edbc447b7899261982cf170147f255e7"
+    },
+    {
+      "path": "/vite/assets/dashboard-fbOiA-XE.css",
+      "sha256_match": true,
+      "sha256": "d06dfb03a9c3ca6aa05c7e76e78585c85455be2dd06323b80d282a2b76e87c65"
+    },
+    {
+      "path": "/drip/assets/main-DBW1EL0c-20260908175641.js",
+      "sha256_match": true,
+      "sha256": "cc35ce8ce53468257d9a669cbe4815edd3d308bbd862e0c4ff38dfc4a52ebbff"
+    },
+    {
+      "path": "/drip/assets/main-wg3TEUsM-20260908175641.css",
+      "sha256_match": true,
+      "sha256": "5367ef502498536ef4ca0edbbe59daa4339c0560d42222ff9bb9bfbbff44008b"
+    },
+    {
+      "build": "20260908175641"
+    },
+    {
+      "api_status": "200"
+    }
+  ],
+  "serviceHealth": {
+    "rails": "healthy",
+    "sidekiq": "healthy",
+    "drip-engine": "healthy",
+    "postgres": "healthy",
+    "redis": "healthy"
+  }
+}
