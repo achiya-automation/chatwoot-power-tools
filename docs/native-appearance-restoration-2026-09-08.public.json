@@ -1,0 +1,40 @@
+{
+  "host": "https://chatwoot.achiya-automation.com",
+  "build": "20260908190000",
+  "injected_parts": [
+    "modules/smart-import/inject/import-button.js",
+    "modules/sequences/inject/sequences-nav.js",
+    "modules/sequences/inject/templates-nav.js",
+    "modules/sequences/inject/journeys-nav.js",
+    "modules/sequences/inject/journey-launch.js",
+    "modules/dashboard-enhancements/parts/campaign-modal.js",
+    "modules/dashboard-enhancements/parts/campaign-stats.js",
+    "modules/dashboard-enhancements/parts/native-i18n-he.js",
+    "modules/dashboard-enhancements/parts/video-compressor.js",
+    "modules/dashboard-enhancements/parts/native-ui-fixes.js"
+  ],
+  "legacy_skin_absent": true,
+  "native_assets_unchanged": true,
+  "public_assets": [
+    {
+      "path": "/drip/assets/main-C_Udf0sq-20260908190000.css",
+      "sha256": "b921c6a3beb15a4b384b8d14c61df2c56a23d1d9b1724823e7178bd7440cda9c"
+    },
+    {
+      "path": "/drip/assets/main-CzLjcMue-20260908190000.js",
+      "sha256": "9093a1e3b43696dbefb779e5fd17fffbab391bc8e9572e5f553aa9bdaf12c4ed"
+    },
+    {
+      "path": "/drip/assets/videoCompressRunner-CnuQhqFH-20260908190000.js",
+      "sha256": "4ab2601a7ffcdf2ff427f1dba273e1e198a28d823fca6b016b92f1d263bcecce"
+    },
+    {
+      "path": "/vite/assets/dashboard-BW-N9gcn.js",
+      "sha256": "783f63c2773ea34c6c38bbcb608037a1edbc447b7899261982cf170147f255e7"
+    },
+    {
+      "path": "/vite/assets/dashboard-fbOiA-XE.css",
+      "sha256": "d06dfb03a9c3ca6aa05c7e76e78585c85455be2dd06323b80d282a2b76e87c65"
+    }
+  ]
+}
