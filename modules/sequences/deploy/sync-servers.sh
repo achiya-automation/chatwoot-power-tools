@@ -5,20 +5,20 @@
 # The two servers were installed differently and CANNOT be unified: the main server's
 # container is named drip-engine, and both docker-compose (JOURNEY_HOOK_BASE:
 # http://drip-engine:3100) and Caddy (handle_path /drip/*, /cw-import/*) are wired to that
-# name and base path. Renaming it to match אדמון would break journeys, the panel route and
+# name and base path. Renaming it to match the second server would break journeys, the panel route and
 # the import button on a live production server. So instead of one layout, one script that
 # knows both:
 #
 #   main server (chatwoot)   flat:      /opt/chatwoot/engine/{src,migrations}, webapp/dist
 #                            container:  drip-engine        base: /drip
-#   אדמון (chatwoot_admon)   modular:   /opt/chatwoot/chatwoot-power-tools/modules/...
+#   second server            modular:   /opt/chatwoot/chatwoot-power-tools/modules/...
 #                            container:  cwpt-engine        base: /chatwoot-addons
 #                            ⚠️ requires BOTH compose files or the build skips it silently
 #
 # Drift detection is the point as much as deployment. The Rails initializer lived only on
 # the servers for months and quietly forked: the main server gained ledger writes and a
-# delivery-status hook in July while אדמון stayed on a June build, and a later "fix"
-# deployed to אדמון was actually a regression against the main server. Nobody could see it
+# delivery-status hook in July while the second server stayed on a June build, and a later "fix"
+# deployed to the second server was actually a regression against the main server. Nobody could see it
 # because nothing compared the two. This script refuses to overwrite a file that differs
 # from git unless you say so explicitly — and, since the 5.8.26 downgrade, refuses to touch
 # a file whose server version was deployed from ANOTHER branch: a deploy writes only files
@@ -32,7 +32,7 @@
 # That sentence used to be a promise the code did not keep: until 10.08.26 every path here
 # read the working tree — `tar -C "$REPO_ROOT" modules` and an scp of the .rb straight off
 # disk — so a half-finished edit from a parallel session rode a deploy into production, and
-# .gitignored build output (modules/smart-import/dist) shipped to אדמון from no branch at
+# .gitignored build output (modules/smart-import/dist) shipped to the second server from no branch at
 # all. Now packing goes through `git archive HEAD`, the initializers are read with
 # `git show HEAD:`, and every "matches git" comparison uses head_md5. The working tree is
 # no longer an input to a deploy — only to the warning that tells you to commit.
@@ -99,7 +99,7 @@ head_md5() {
   printf '%s' "$out"
 }
 
-# Flat install (main server) or modular install (אדמון)? Decided by what is on disk, not
+# Flat install (main server) or modular install (second server)? Decided by what is on disk, not
 # by hostname, so a re-installed server is handled correctly without editing this script.
 detect_layout() {
   ssh "$1" "if sudo test -d /opt/chatwoot/chatwoot-power-tools/modules/sequences; then echo modular;

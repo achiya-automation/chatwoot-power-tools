@@ -23,7 +23,7 @@ export const REPLACE_FAILS_7D = 12;      // ponytail: סף שחיקה — הקר
 export const FAMILY_COOLDOWN_DAYS = 14;  // החלפה אחת למשפחת תבנית בשבועיים
 export const ACCOUNT_MAX_PER_30D = 3;    // ושלוש לחשבון בחודש — הרבה מתחת לרדאר farming
 
-/** bb_new_00_intro → bb_new_00_intro_v2 → bb_new_00_intro_v3 … (שומר על אותה משפחה) */
+/** promo_new_00_intro → promo_new_00_intro_v2 → promo_new_00_intro_v3 … (שומר על אותה משפחה) */
 export function nextVersionName(name) {
   const m = String(name).match(/^(.*)_v(\d+)$/);
   return m ? `${m[1]}_v${Number(m[2]) + 1}` : `${name}_v2`;

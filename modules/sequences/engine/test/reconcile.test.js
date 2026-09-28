@@ -40,16 +40,16 @@ test('paramsResolve handles @email token', () => {
 
 test('paramsResolve strips @suffix from JID-as-name (WAHA contacts) for a cleaner greeting', () => {
   // WAHA-synced contacts can have a JID as their name; strip the @suffix for display.
-  assert.deepEqual(paramsResolve(['@name'], { name: '972524947060@c.us' }), ['972524947060']);
-  assert.deepEqual(paramsResolve(['@name'], { name: '272804125610136@lid' }), ['272804125610136']);
+  assert.deepEqual(paramsResolve(['@name'], { name: '972500000060@c.us' }), ['972500000060']);
+  assert.deepEqual(paramsResolve(['@name'], { name: '100000000000005@lid' }), ['100000000000005']);
   assert.deepEqual(paramsResolve(['@name'], { name: 'ניב' }), ['ניב']); // real name untouched
 });
 
 test('paramsResolve @first_name uses only the first word (nicer WhatsApp greeting)', () => {
-  assert.deepEqual(paramsResolve(['@first_name'], { name: 'Vered Ganima Zilberman' }), ['Vered']);
-  assert.deepEqual(paramsResolve(['@first_name'], { name: 'אתי רזיאל אלקוצר' }), ['אתי']);
+  assert.deepEqual(paramsResolve(['@first_name'], { name: 'Dana Levi Cohen' }), ['Dana']);
+  assert.deepEqual(paramsResolve(['@first_name'], { name: 'דנה לוי כהן' }), ['דנה']);
   assert.deepEqual(paramsResolve(['@first_name'], { name: 'מוריה' }), ['מוריה']); // single word → itself
-  assert.deepEqual(paramsResolve(['@first_name'], { name: '972524947060@c.us' }), ['972524947060']); // JID cleaned first
+  assert.deepEqual(paramsResolve(['@first_name'], { name: '972500000060@c.us' }), ['972500000060']); // JID cleaned first
   assert.deepEqual(paramsResolve(['@first_name'], { name: '' }), ['']); // empty → empty, no throw
 });
 
