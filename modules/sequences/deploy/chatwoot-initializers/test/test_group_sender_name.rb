@@ -6,17 +6,17 @@ re = eval(src[/WAHA_GROUP_SENDER_JID = (\/.*?\/)\.freeze/m, 1])
 strip = ->(c) { c.to_s.start_with?('👥 *') ? c.sub(re, '\1*') : c }
 
 cases = [
-  ["👥 *REDACTED (REDACTED)*\n\nשלום", "👥 *REDACTED*\n\nשלום"],
-  ["👥 *⚜️REDACTED⚜️ (REDACTED)*\n\nטקסט", "👥 *⚜️REDACTED⚜️*\n\nטקסט"],
-  ["👥 *דרך REDACTED (REDACTED)*\n\nא", "👥 *דרך REDACTED*\n\nא"],
+  ["👥 *dana (1000000000001@lid)*\n\nשלום", "👥 *dana*\n\nשלום"],
+  ["👥 *⚜️Avi⚜️ (100000000000002@lid)*\n\nטקסט", "👥 *⚜️Avi⚜️*\n\nטקסט"],
+  ["👥 *שירה כהן (100000000000003@lid)*\n\nא", "👥 *שירה כהן*\n\nא"],
   ["👥 *Dana (972501234567@c.us)*\n\nב", "👥 *Dana*\n\nב"],
   # שם שמכיל כוכביות נשמר כמו שהוא
-  ["👥 ** REDACTED ❤️* Or ❤️ (REDACTED)*\n\nג", "👥 ** REDACTED ❤️* Or ❤️*\n\nג"],
+  ["👥 ** Tal ❤️* Gal ❤️ (100000000000004@lid)*\n\nג", "👥 ** Tal ❤️* Gal ❤️*\n\nג"],
   # בלי שם — WAHA לא מוסיף סוגריים, ואסור לגעת
-  ["👥 *REDACTED*\n\nד", "👥 *REDACTED*\n\nד"],
+  ["👥 *1000000000001@lid*\n\nד", "👥 *1000000000001@lid*\n\nד"],
   # הודעה רגילה לא נגעת, וגם לא JID בגוף ההודעה
   ["הודעה רגילה (123@lid) בתוך טקסט", "הודעה רגילה (123@lid) בתוך טקסט"],
-  ["👥 *REDACTED*\n\nכבר נקי", "👥 *REDACTED*\n\nכבר נקי"],
+  ["👥 *dana*\n\nכבר נקי", "👥 *dana*\n\nכבר נקי"],
   [nil, nil], ["", ""]
 ]
 

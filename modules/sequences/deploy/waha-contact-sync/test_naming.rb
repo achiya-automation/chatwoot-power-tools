@@ -16,13 +16,13 @@ pick = ->(records) { sync.send(:preferred_profile_name, records) }
 
 # השם השמור בפנקס גובר על שם הפרופיל הציבורי
 assert_pairs = [
-  [[{ 'name' => 'ד״ר REDACTED בן REDACTED', 'pushname' => '〽️' }], 'ד״ר REDACTED בן REDACTED'],
-  [[{ 'name' => 'REDACTED, לקוח לבוט ב 450 שח', 'pushname' => 'REDACTED' }], 'REDACTED, לקוח לבוט ב 450 שח'],
+  [[{ 'name' => 'ד״ר נועם לוי', 'pushname' => '〽️' }], 'ד״ר נועם לוי'],
+  [[{ 'name' => 'נועם, ספק לדוגמה 123', 'pushname' => 'Noam' }], 'נועם, ספק לדוגמה 123'],
   # אין שם שמור -> נופלים לשם הפרופיל
-  [[{ 'name' => '', 'pushname' => 'REDACTED' }], 'REDACTED'],
+  [[{ 'name' => '', 'pushname' => 'Noam' }], 'Noam'],
   [[{ 'name' => nil, 'pushName' => 'Yael' }], 'Yael'],
   # שם שמור אצל רשומה שנייה גובר על פרופיל של הראשונה
-  [[{ 'name' => '', 'pushname' => 'S' }, { 'name' => 'REDACTED REDACTED כהן' }], 'REDACTED REDACTED כהן'],
+  [[{ 'name' => '', 'pushname' => 'S' }, { 'name' => 'מיכל לוי כהן' }], 'מיכל לוי כהן'],
   # מזהה טכני אינו שם
   [[{ 'name' => '972501234567@c.us', 'pushname' => 'Dana' }], 'Dana'],
   [[{ 'name' => '', 'pushname' => '' }], nil],
