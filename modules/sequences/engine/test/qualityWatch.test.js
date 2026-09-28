@@ -39,11 +39,11 @@ beforeEach(async () => {
   await pool.query('DELETE FROM public.channel_whatsapp');
   await pool.query(
     `INSERT INTO public.channel_whatsapp (id, phone_number, provider_config)
-     VALUES (700, '+972553328890', '{"api_key":"t","phone_number_id":"PH700"}'::jsonb)`
+     VALUES (700, '+972500000890', '{"api_key":"t","phone_number_id":"PH700"}'::jsonb)`
   );
   await pool.query(
     `INSERT INTO public.inboxes (id, account_id, name, channel_type, channel_id)
-     VALUES (700, 15, 'חנה ריבקין WhatsApp', 'Channel::Whatsapp', 700)`
+     VALUES (700, 15, 'עסק לדוגמה WhatsApp', 'Channel::Whatsapp', 700)`
   );
 });
 
@@ -56,7 +56,7 @@ test('RED על מספר שאינו רשום במנוע — מתריע', async ()
   assert.equal(r.checked, 1);
   assert.equal(r.alerts, 1);
   assert.match(c.sent[0], /RED/);
-  assert.match(c.sent[0], /0553328890/); // מוצג בפורמט ישראלי מקומי
+  assert.match(c.sent[0], /0500000890/); // מוצג בפורמט ישראלי מקומי
 });
 
 test('אותו RED בסבב הבא — לא מתריע שוב', async () => {
