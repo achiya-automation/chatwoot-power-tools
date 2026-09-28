@@ -15,7 +15,7 @@ source = File.read(ARGV.fetch(0), encoding: 'UTF-8')
 literal = source[/contact_attributes:\s*(\{.*?\})\s*\)\.perform/m, 1]
 abort 'contact_attributes literal not found next to .perform' if literal.nil?
 
-contact = Struct.new(:name, :phone_number).new('ציון שועו', '+972509022803')
+contact = Struct.new(:name, :phone_number).new('ישראל ישראלי', '+972500000803')
 attrs = eval(literal) # rubocop:disable Security/Eval
 
 # Verbatim from app/builders/contact_inbox_with_contact_builder.rb.
