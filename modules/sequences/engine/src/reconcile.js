@@ -20,7 +20,7 @@ export const cleanName = (name) => {
 
 /**
  * First name only — the leading word of the cleaned name. Nicer for a WhatsApp greeting
- * ("היי REDACTED" instead of "היי REDACTED REDACTED REDACTED", when the contact name is a full name).
+ * ("היי Dana" instead of "היי Dana Levi Cohen", when the contact name is a full name).
  * @param {string} name
  * @returns {string}
  */
