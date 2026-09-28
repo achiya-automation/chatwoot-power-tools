@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { notifyNewLeads } from '../src/notify.js';
 
 const LEAD = {
-  id: 'a1', template_name: 'bb_new_01_btn_v4', delivery_status: 'delivered',
+  id: 'a1', template_name: 'promo_new_01_btn_v4', delivery_status: 'delivered',
   error_code: null, error_title: null, name: 'אושרת', phone_number: '+972501234567',
   cap_failures: 0,
 };

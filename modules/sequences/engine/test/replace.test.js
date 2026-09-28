@@ -50,9 +50,9 @@ const rowsOf = async () => query(`SELECT * FROM drip.template_replacements ORDER
 const alertCodes = async () => (await query(`SELECT code FROM drip.alerts ORDER BY id`)).map((r) => r.code);
 
 test('nextVersionName מעלה גרסה ושומר משפחה', () => {
-  assert.equal(nextVersionName('bb_new_00_intro'), 'bb_new_00_intro_v2');
-  assert.equal(nextVersionName('bb_new_00_intro_v2'), 'bb_new_00_intro_v3');
-  assert.equal(nextVersionName('bb_new_01_btn_v4'), 'bb_new_01_btn_v5');
+  assert.equal(nextVersionName('promo_new_00_intro'), 'promo_new_00_intro_v2');
+  assert.equal(nextVersionName('promo_new_00_intro_v2'), 'promo_new_00_intro_v3');
+  assert.equal(nextVersionName('promo_new_01_btn_v4'), 'promo_new_01_btn_v5');
 });
 
 test('nextBurnName בוחר מספר פנוי ומתעלם ממשפחות אחרות', () => {
