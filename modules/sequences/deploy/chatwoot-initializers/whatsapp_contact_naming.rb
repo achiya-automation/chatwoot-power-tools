@@ -17,7 +17,7 @@
 # `Name (jid)` (apps/chatwoot/consumers/waha/base.js), so a raw technical id
 # rides along on every group message:
 #
-#     👥 *miki (2212210188291@lid)*   ->   👥 *miki*
+#     👥 *dana (1000000000001@lid)*   ->   👥 *dana*
 #
 # The format is hard-coded in the WAHA image and cannot be configured off, so it
 # is stripped here on the way into the database. The 75,355 messages that predate

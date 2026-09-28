@@ -3,9 +3,9 @@
 //
 // Why an overlay at all: on the MAIN server we build the frontend ourselves, so proper he
 // locale files are baked in (patch 06-hebrew-i18n-native-screens) and every replacement below
-// simply never matches — this file is a no-op there. The ADMON server runs the stock image
-// (no custom build), so until our translations land upstream (submitted via Crowdin) this
-// overlay is the only way its Hebrew users see the new screens in Hebrew.
+// simply never matches — this file is a no-op there. A server on the stock image (no custom
+// build) has no such locale files, so until our translations land upstream (submitted via
+// Crowdin) this overlay is the only way its Hebrew users see the new screens in Hebrew.
 // ponytail: exact-string dictionary + 3 regexes, he-locale only, self-disabling when the
 // baked/upstream translation exists. Delete this file once Chatwoot ships he for these screens.
 (function () {

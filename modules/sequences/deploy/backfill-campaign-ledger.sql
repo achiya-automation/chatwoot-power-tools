@@ -1,5 +1,11 @@
 -- Backfill of the durable send ledger for a campaign that ran BEFORE the Chatwoot patch
--- started writing it. Set the five \set values below and run with psql -f.
+-- started writing it. Pass the five values on the command line (example values):
+--   psql -v campaign_id=42 -v account_id=1 -v tag_id=7 \
+--        -v run_start='2026-01-15 10:00' -v run_end='2026-01-15 10:30' \
+--        -f backfill-campaign-ledger.sql
+-- Deliberately no \set here (same rule as backfill-missing-ledger-reasons.sql): a value
+-- left in the file silently overrides -v. A value that is not passed stays a literal
+-- :name, the statement fails, and the transaction writes nothing.
 --
 -- Such a campaign has no ledger rows, so the report has to infer "was this sent?" from
 -- content_attributes.campaign_id on the outgoing message. The panel's retry button wipes
@@ -7,9 +13,9 @@
 -- who did receive the template get reported as never attempted, and the ones who genuinely
 -- got nothing carry no reason at all.
 --
--- First run: campaign 17 (אדמון, 20.07.2026) — audience 285 = 215 delivered/read + 31
--- failed at Meta + 1 failed send request + 39 with no phone. Before the backfill the
--- report showed 45 "not attempted"; five of those had in fact been sent.
+-- Afterwards every audience member is accounted for, e.g. (illustrative numbers) an
+-- audience of 100 = 80 delivered/read + 10 failed at Meta + 1 failed send request + 9 with
+-- no phone — including retried recipients the report had shown as "not attempted".
 --
 -- Reconstruction rules:
 --   * The campaign message for a contact is the FIRST outgoing agent message carrying a
@@ -20,12 +26,6 @@
 --     failed → status 3 / 'send_failed'.
 --
 -- Idempotent: ON CONFLICT DO NOTHING on the audience, DO UPDATE on the sends.
-
-\set campaign_id 17
-\set account_id 1
-\set tag_id 5
-\set run_start '2026-07-20 15:25'
-\set run_end   '2026-07-20 16:00'
 
 BEGIN;
 

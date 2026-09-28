@@ -94,9 +94,37 @@ make_scratch_repo() {
 }
 
 @test "server flag is a closed allowlist before any ssh call" {
-  run bash "$SCRIPT" --check --server customer-production
+  mkdir -p "$BATS_TEST_TMPDIR/cfg/chatwoot-power-tools"
+  printf 'main-server\n' > "$BATS_TEST_TMPDIR/cfg/chatwoot-power-tools/sync-servers"
+  XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/cfg" run bash "$SCRIPT" --check --server customer-production
   [ "$status" -eq 2 ]
   [[ "$output" == *"unknown server"* ]]
+}
+
+@test "server list is read from the local config file, never from the repository" {
+  list="$BATS_TEST_TMPDIR/cfg/chatwoot-power-tools/sync-servers"
+
+  # Missing file: stops with the path to create, before any git read or ssh call.
+  XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/cfg" run bash "$SCRIPT" --check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no server list"*"$list"* ]]
+
+  # Comments, blank lines and surrounding spaces are ignored; file order is kept.
+  mkdir -p "${list%/*}"
+  printf '# servers\n\n  alpha  \nbeta.example-1 # second\n' > "$list"
+  run bash -c 'lib="$1"; list="$2"; set --; source "$lib"
+    SYNC_SERVERS_FILE="$list"; load_allowed_servers; echo "${ALLOWED_SERVERS[*]}"' _ "$LIB" "$list"
+  [ "$status" -eq 0 ]
+  [ "$output" = "alpha beta.example-1" ]
+
+  # A line that ssh could read as an option, or two words on one line, is refused.
+  for bad in '-oProxyCommand=x' 'alpha beta'; do
+    printf '%s\n' "$bad" > "$list"
+    run bash -c 'lib="$1"; list="$2"; set --; source "$lib"
+      SYNC_SERVERS_FILE="$list"; load_allowed_servers' _ "$LIB" "$list"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid line"* ]]
+  done
 }
 
 @test "failed upload removes the exact local and remote staging paths" {
@@ -121,6 +149,7 @@ make_scratch_repo() {
         fi
       }
       scp() { return 1; }
+      ALLOWED_SERVERS=(chatwoot)
       deploy_engine chatwoot flat
     '
   [ "$status" -ne 0 ]

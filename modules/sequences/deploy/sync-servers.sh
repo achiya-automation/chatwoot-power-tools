@@ -5,21 +5,21 @@
 # The two servers were installed differently and CANNOT be unified: the main server's
 # container is named drip-engine, and both docker-compose (JOURNEY_HOOK_BASE:
 # http://drip-engine:3100) and Caddy (handle_path /drip/*, /cw-import/*) are wired to that
-# name and base path. Renaming it to match אדמון would break journeys, the panel route and
-# the import button on a live production server. So instead of one layout, one script that
-# knows both:
+# name and base path. Renaming it to match the second server would break journeys, the
+# panel route and the import button on a live production server. So instead of one layout,
+# one script that knows both:
 #
-#   main server (chatwoot)   flat:      /opt/chatwoot/engine/{src,migrations}, webapp/dist
-#                            container:  drip-engine        base: /drip
-#   אדמון (chatwoot_admon)   modular:   /opt/chatwoot/chatwoot-power-tools/modules/...
-#                            managed:   .../chatwoot-power-tools/.cwpt-runtime/modules/...
-#                            container:  cwpt-engine        base: /chatwoot-addons
-#                            ⚠️ requires BOTH compose files or the build skips it silently
+#   main server     flat:      /opt/chatwoot/engine/{src,migrations}, webapp/dist
+#                   container:  drip-engine        base: /drip
+#   second server   modular:   /opt/chatwoot/chatwoot-power-tools/modules/...
+#                   managed:   .../chatwoot-power-tools/.cwpt-runtime/modules/...
+#                   container:  cwpt-engine        base: /chatwoot-addons
+#                   ⚠️ requires BOTH compose files or the build skips it silently
 #
 # Drift detection is the point as much as deployment. The Rails initializer lived only on
 # the servers for months and quietly forked: the main server gained ledger writes and a
-# delivery-status hook in July while אדמון stayed on a June build, and a later "fix"
-# deployed to אדמון was actually a regression against the main server. Nobody could see it
+# delivery-status hook in July while the second server stayed on a June build, and a later
+# "fix" deployed to it was actually a regression against the main server. Nobody could see it
 # because nothing compared the two. This script refuses to overwrite a file that differs
 # from git unless you say so explicitly — and, since the 5.8.26 downgrade, refuses to touch
 # a file whose server version was deployed from ANOTHER branch: a deploy writes only files
@@ -33,16 +33,22 @@
 # That sentence used to be a promise the code did not keep: until 10.08.26 every path here
 # read the working tree — `tar -C "$REPO_ROOT" modules` and an scp of the .rb straight off
 # disk — so a half-finished edit from a parallel session rode a deploy into production, and
-# .gitignored build output (modules/smart-import/dist) shipped to אדמון from no branch at
-# all. Now packing goes through `git archive HEAD`, the initializers are read with
+# .gitignored build output (modules/smart-import/dist) shipped to the second server from no
+# branch at all. Now packing goes through `git archive HEAD`, the initializers are read with
 # `git show HEAD:`, and every "matches git" comparison uses head_md5. The working tree is
 # no longer an input to a deploy — only to the warning that tells you to commit.
 #
 # Usage:
 #   ./sync-servers.sh --check              # compare only, change nothing (start here)
 #   ./sync-servers.sh                      # deploy committed state + restart + verify
-#   ./sync-servers.sh --server chatwoot    # one server only
+#   ./sync-servers.sh --server <alias>     # one server only
 #   ./sync-servers.sh --force              # proceed despite drift (still deploys HEAD)
+#
+# Servers: the SSH host aliases this script may touch are read from a local file that is
+# not part of the repository — ${XDG_CONFIG_HOME:-~/.config}/chatwoot-power-tools/sync-servers
+# — one alias per line (as named in ~/.ssh/config), '#' starts a comment, deployed in file
+# order. It is the allowlist: an alias that is not listed is never contacted, and without
+# the file the script stops before any ssh call.
 #
 # This fleet sync owns the complete historical sequences stack and its Rails initializers.
 # A modular subset must be updated with install.sh; sync refuses it before drift checks or
@@ -69,7 +75,10 @@ DEPLOY_ID=""
 # שגרסתם שם ישנה של הברנץ' הזה; גרסה מברנץ' אחר מדולגת (known_in_ref).
 PATCH_REL_DIR="modules/sequences/deploy/chatwoot-initializers"
 PATCH_DEST_DIR="/opt/chatwoot/custom-initializers"
-ALLOWED_SERVERS=(chatwoot chatwoot_admon)
+# The aliases name real machines, so they stay out of git (see "Servers" above). Loaded by
+# load_allowed_servers at run time only — sourcing this file as a library needs no config.
+SYNC_SERVERS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/chatwoot-power-tools/sync-servers"
+ALLOWED_SERVERS=()
 
 # ‏sync-servers תומך רק בסט המלא (ראה assert_full_module_selection), אז הרשימה קבועה.
 CWPT_MODULES="import sequences enhancements"
@@ -79,7 +88,7 @@ CWPT_MODULES="import sequences enhancements"
 # shellcheck source=../../../lib/assemble-dashboard-script.sh
 [[ -r "$REPO_ROOT/lib/assemble-dashboard-script.sh" ]] \
   && source "$REPO_ROOT/lib/assemble-dashboard-script.sh"
-SERVERS=("${ALLOWED_SERVERS[@]}")
+SERVERS=()
 
 CHECK_ONLY=0
 FORCE=0
@@ -95,21 +104,41 @@ while [[ $# -gt 0 ]]; do
     --server)
       [[ $# -ge 2 ]] || { echo "--server requires a value" >&2; exit 2; }
       ONLY_SERVER="$2"; shift 2 ;;
-    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,51p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-if [[ -n "$ONLY_SERVER" ]]; then
-  case "$ONLY_SERVER" in
-    chatwoot|chatwoot_admon) SERVERS=("$ONLY_SERVER") ;;
-    *) echo "unknown server: $ONLY_SERVER (allowed: chatwoot, chatwoot_admon)" >&2; exit 2 ;;
-  esac
-fi
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m  ⚠ %s\033[0m\n' "$*"; }
 ok() { printf '\033[32m  ✓ %s\033[0m\n' "$*"; }
 die() { printf '\033[31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Every alias ends up in ssh/scp targets, so a line must be exactly one host-name-shaped
+# word: no spaces, and no leading '-' that ssh would parse as an option.
+load_allowed_servers() {
+  local line alias extra
+  [[ -r "$SYNC_SERVERS_FILE" ]] \
+    || die "no server list: create $SYNC_SERVERS_FILE with one SSH host alias per line"
+  ALLOWED_SERVERS=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    read -r alias extra <<< "${line%%#*}"
+    [[ -z "$alias" ]] && continue
+    [[ -z "$extra" && "$alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+      || die "invalid line in $SYNC_SERVERS_FILE: $line"
+    ALLOWED_SERVERS+=("$alias")
+  done < "$SYNC_SERVERS_FILE"
+  [[ ${#ALLOWED_SERVERS[@]} -gt 0 ]] || die "no SSH host alias listed in $SYNC_SERVERS_FILE"
+}
+
+is_allowed_server() {
+  local allowed
+  [[ ${#ALLOWED_SERVERS[@]} -gt 0 ]] || return 1
+  for allowed in "${ALLOWED_SERVERS[@]}"; do
+    [[ "$allowed" == "$1" ]] && return 0
+  done
+  return 1
+}
 
 remote_md5() { ssh -n "$1" "sudo md5sum '$2' 2>/dev/null | awk '{print \$1}'"; }
 
@@ -141,8 +170,8 @@ REMOTE_DEPLOY_TMP=""
 cleanup_deploy_temps() {
   local status=$?
   if [[ -n "$REMOTE_DEPLOY_TMP" \
-        && "$REMOTE_DEPLOY_TMP" =~ ^/tmp/cwpt-sync\.[A-Za-z0-9]+$ \
-        && ( "$REMOTE_DEPLOY_SERVER" == chatwoot || "$REMOTE_DEPLOY_SERVER" == chatwoot_admon ) ]]; then
+        && "$REMOTE_DEPLOY_TMP" =~ ^/tmp/cwpt-sync\.[A-Za-z0-9]+$ ]] \
+     && is_allowed_server "$REMOTE_DEPLOY_SERVER"; then
     ssh "$REMOTE_DEPLOY_SERVER" "docker exec chatwoot-rails-1 rm -f -- '/tmp/cwpt-patch-$DEPLOY_ID.rb' >/dev/null 2>&1 || true; \
       rm -rf -- '$REMOTE_DEPLOY_TMP'" >/dev/null 2>&1 || true
   fi
@@ -727,7 +756,7 @@ apply_remote_payload() {
 deploy_engine() {
   local server="$1" layout="$2"
   require_pinned_head
-  case "$server" in chatwoot|chatwoot_admon) ;; *) die "refusing unknown server: $server" ;; esac
+  is_allowed_server "$server" || die "refusing unknown server: $server"
   case "$layout" in modular|modular-managed|flat) ;; *) die "refusing unknown deployment layout: $layout" ;; esac
 
   LOCAL_DEPLOY_TMP="$(mktemp "${TMPDIR:-/tmp}/cwpt-sync.XXXXXX")" \
@@ -815,8 +844,8 @@ CWPT_OWNER_MIGRATIONS
 # השלמות. אנחנו רק שולחים אותו לשרת ומריצים אותו שם, כי בפריסה השטוחה (chatwoot)
 # אין עותק של המאגר בכלל.
 
-# הבסיס שכל חלק מרכיב ממנו את הנתיבים שלו — נשמר פר-שרת (chatwoot: /drip,
-# admon: /chatwoot-addons), ולכן נקרא ממה שכבר מוזרק ולא נקבע כאן.
+# הבסיס שכל חלק מרכיב ממנו את הנתיבים שלו — נשמר פר-שרת (השרת הראשי: /drip,
+# השרת השני: /chatwoot-addons), ולכן נקרא ממה שכבר מוזרק ולא נקבע כאן.
 remote_addons_base() {
   local server="$1" base
   # ‏RAILS_LOG_TO_STDOUT=false — בלעדיו אזהרת ההוצאה משימוש של RubyLLM נפלטת ל-stdout
@@ -919,7 +948,7 @@ deploy_patch() {
     return 0
   fi
   require_pinned_head
-  case "$server" in chatwoot|chatwoot_admon) ;; *) die "refusing unknown server: $server" ;; esac
+  is_allowed_server "$server" || die "refusing unknown server: $server"
 
   # Same rule as the engine tar: the bytes come from the pinned commit, never off disk.
   # One validated host staging directory is reused for this server and removed by the
@@ -997,7 +1026,7 @@ CWPT_REMOTE_PATCH
 # engine_build_is_pinned קובע אם אנחנו במצב הזה; repin_engine_image בונה עם קבצי ה-build
 # בלבד, ואז מעדכן את ה-sha הנעוץ כדי שההקשחה תישאר בתוקף מול ה-image החדש.
 #
-# ⚠️ ההפעלה חייבת לקבל את אותם קבצי compose כמו הבנייה. ב-admon ‏COMPOSE_FILE כברירת
+# ⚠️ ההפעלה חייבת לקבל את אותם קבצי compose כמו הבנייה. בשרת השני ‏COMPOSE_FILE כברירת
 # מחדל אינו כולל את docker-compose.addons.yml, ו-`up` בלעדיו יצר שירות בלי
 # ‏container_name ובלי ההגדרות שלו — הקונטיינר קם בשם אחר ומת מיד (4.9.26).
 engine_build_is_pinned() {
@@ -1037,7 +1066,7 @@ sys.exit('pin line not found') if n != 1 else open(p, 'w', encoding='utf-8').wri
 
 rebuild_engine() {
   local server="$1" layout="$2"
-  case "$server" in chatwoot|chatwoot_admon) ;; *) die "refusing unknown server: $server" ;; esac
+  is_allowed_server "$server" || die "refusing unknown server: $server"
   case "$layout" in modular|modular-managed|flat) ;; *) die "refusing unknown deployment layout: $layout" ;; esac
   local container; container="$(engine_container "$layout")"
   if is_modular_layout "$layout"; then
@@ -1158,6 +1187,18 @@ verify() {
 # ── run ──────────────────────────────────────────────────────────────────────
 if [[ "${CWPT_SYNC_SERVERS_LIBRARY_ONLY:-0}" == 1 ]]; then
   return 0 2>/dev/null || exit 0
+fi
+
+# Before any git read or ssh call: the allowlist, and --server checked against it.
+load_allowed_servers
+if [[ -n "$ONLY_SERVER" ]]; then
+  is_allowed_server "$ONLY_SERVER" || {
+    echo "unknown server: $ONLY_SERVER (allowed: ${ALLOWED_SERVERS[*]})" >&2
+    exit 2
+  }
+  SERVERS=("$ONLY_SERVER")
+else
+  SERVERS=("${ALLOWED_SERVERS[@]}")
 fi
 
 trap cleanup_deploy_temps EXIT

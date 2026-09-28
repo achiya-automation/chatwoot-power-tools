@@ -3,7 +3,7 @@
 # --dry-run contract (prints a plan, makes zero changes, never fails just because docker
 # is absent or misbehaving) and flag parsing. A handful of fully-mocked non-dry-run runs
 # are included too, as extra confidence that the wiring between install.sh and lib/*.sh is
-# correct — but the real end-to-end proof is Task 3.6, run against chatwoot_admon by the
+# correct — but the real end-to-end proof is Task 3.6, run against a real server by the
 # controller, not here.
 
 setup() {

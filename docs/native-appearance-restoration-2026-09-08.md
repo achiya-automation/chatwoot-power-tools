@@ -23,7 +23,7 @@
 - 67/67 בדיקות Bats להרכבה, הזרקה ופריסה; בדיקות תחביר ו־`git diff --check` עברו.
 - בניית Vite ו־postbuild של הייבוא עברו. build: `20260908190000`.
 - קומיט המימוש: `fcad3fd`, נדחף ל־main.
-- יעד הפריסה: `chatwoot.achiya-automation.com` בלבד. admon לא עודכן.
+- יעד הפריסה: `chatwoot.achiya-automation.com` בלבד. השרת השני לא עודכן.
 - גיבוי: `/opt/chatwoot-native-restore-backup-20260908`.
 - שחזור: `/opt/chatwoot-native-restore-20260908/rollback-main.sh`.
 - גרסת התוספים נבנית כרובד UI מעל ה־image הפעיל; חתימות מקורות המנוע מושוות לפני הפעלה.
