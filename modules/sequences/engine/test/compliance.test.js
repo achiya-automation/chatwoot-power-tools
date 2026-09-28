@@ -60,7 +60,7 @@ test('isUsNumber: a US number is detected, Canada (+1 too) is not', () => {
 });
 
 test('isUsNumber: non-+1 numbers are never US', () => {
-  assert.equal(isUsNumber('+972547200266'), false);
+  assert.equal(isUsNumber('+972500000266'), false);
   assert.equal(isUsNumber('+442071234567'), false);
   assert.equal(isUsNumber(''), false);
   assert.equal(isUsNumber(null), false);
