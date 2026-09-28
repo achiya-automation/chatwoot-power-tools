@@ -84,7 +84,7 @@ test('after the 3rd failed send the enrollment is flagged failed + seq_state fai
 // enrollment survives pointing at a conversation that no longer exists → every send
 // 404s. Treating that as the lead's own failure would count 3 attempts and flag the
 // whole list 'failed'. Instead the link is cleared, and the next tick opens a fresh
-// conversation and sends the SAME step. (banana-book, 2026-07-14: inbox swapped.)
+// conversation and sends the SAME step. (production, 2026-07-14: inbox swapped.)
 test('⭐ a 404 on a deleted conversation clears the link and does NOT count as the lead failing', async () => {
   await seqWithStep('gone', 0, 74);
   const client = {

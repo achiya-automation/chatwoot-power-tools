@@ -47,15 +47,15 @@ test('SYSTEM_FIELDS contains exactly expected fields in order', () => {
   ]);
 });
 
-// Real-world insurance-export format (בני הבוט.xlsx): every header carries a
+// Insurance-export header format (synthetic rows): every header carries a
 // "לקוח" filler word, and the ת"ז column holds 9-digit IDs that look like
 // normalizable phone numbers. The header must win so the ID column never
 // steals the phone_number slot from the real cellular column.
 test('insurance export: filler word stripped, ID column not mistaken for phone', () => {
   const headers = ['שם פרטי לקוח', 'שם משפחה לקוח', 'מספר ת.ז', 'סלולרי לקוח', 'דוא"ל לקוח', 'יישוב'];
   const rows = [
-    ['אסף', 'זיו', '039420658', '054-464-7987', 'ziv@example.com', 'הרצליה'],
-    ['אלון', 'כהן', '039720008', '050-930-0569', 'alon@example.com', 'פתח תקווה'],
+    ['ישראל', 'ישראלי', '030000012', '050-000-0001', 'israel@example.com', 'עיר לדוגמה'],
+    ['דנה', 'לוי', '030000020', '050-000-0002', 'dana@example.com', 'עיר לדוגמה'],
   ];
   const res = detectColumns(headers, rows);
   const f = (h) => res.find((r) => r.header === h).field;

@@ -1,7 +1,7 @@
 # Meta compliance audit — drip engine vs. WhatsApp quality rules
 
 Date: 2026-07-12
-Scope: `modules/sequences/engine/src/` as deployed on `chatwoot` (account 7, Banana Book).
+Scope: `modules/sequences/engine/src/` as deployed in production.
 
 ## Sources (Meta, official)
 
@@ -68,7 +68,7 @@ Nothing in the schema (migrations 001–019) records consent. Enrollment = someo
 - `actionBulkEnroll` (`store.js:431-466`) — enroll every contact carrying a Chatwoot label.
 - `modules/smart-import/` — CSV/XLSX contact import.
 
-Full path **cold list → import → label → bulk enroll → template blast** with no gate. This is the root cause of the Banana Book `131049` saturation: a list with no genuine opt-in produces near-zero engagement, which is precisely the input to Meta's adaptive per-user cap.
+Full path **cold list → import → label → bulk enroll → template blast** with no gate. This is the root cause of the production `131049` saturation: a list with no genuine opt-in produces near-zero engagement, which is precisely the input to Meta's adaptive per-user cap.
 
 ### 🔴 3. Blind to quality rating
 
@@ -114,7 +114,7 @@ There is also no **template-status gate**: nothing checks the template is `APPRO
 
 Meta: *"If a WhatsApp user responds to a marketing message, it starts a 24-hour customer service window. Marketing messages sent within this window **do not count** towards the [per-user] limit."*
 
-The engine tracks no `last_inbound_at` and has no session/free-form branch — every step is a template regardless. For Banana Book, where the per-user cap **is** the binding constraint, this is the most valuable unused lever: the people who replied are exactly the people you can keep messaging without spending cap.
+The engine tracks no `last_inbound_at` and has no session/free-form branch — every step is a template regardless. For the production account, where the per-user cap **is** the binding constraint, this is the most valuable unused lever: the people who replied are exactly the people you can keep messaging without spending cap.
 
 ### ⚠️ 7. No per-contact frequency floor
 

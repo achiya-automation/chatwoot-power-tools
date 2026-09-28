@@ -1,7 +1,7 @@
 -- 017 — expose enrollment_id in sent_history + enrollment_status, so the conversation
 -- panel can isolate a SINGLE run's history.
 --
--- A contact that switched or re-ran sequences (e.g. bb_new → bb_new → bb_postshoot)
+-- A contact that switched or re-ran sequences (e.g. promo_new → promo_new → promo_postshoot)
 -- accumulates sent_messages from every run on the SAME conversation (history is keyed by
 -- conversation, kept across resets by design). The timeline matched history to steps by
 -- step_order ALONE, so step N of the current sequence could be painted with step N of an
