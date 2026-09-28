@@ -4,8 +4,8 @@ import { isValidLabelTitle, normalizeLabelTitle } from '../lib/labelTitle.js';
 
 test('normalizes spaces in a Hebrew label title to underscores', () => {
   assert.equal(
-    normalizeLabelTitle('2026 REDACTED REDACTED טרם טרם'),
-    'REDACTED',
+    normalizeLabelTitle('2026 לקוחות חדשים טרם טרם'),
+    '2026_לקוחות_חדשים_טרם_טרם',
   );
 });
 
