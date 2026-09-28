@@ -6,7 +6,7 @@
  * LEFT JOIN public.messages and read `m.status`, so every one of those rows came back NULL —
  * and a BLOCKED send was silently recounted as "awaiting Meta".
  *
- * Measured on banana-book (2026-07-14, hours after an inbox swap): Chatwoot held 6 failures
+ * Measured on production (2026-07-14, hours after an inbox swap): Chatwoot held 6 failures
  * for the day, the dashboard showed 1. Four of the five it lost were 131049 caps on brand-new
  * leads. The success rate read 97% when the truth was 91% — the one number the operator uses
  * to decide whether to keep sending.
@@ -82,7 +82,7 @@ test('⭐ a blocked send whose message row was deleted is still counted as BLOCK
 // ── ⭐ delivery_status='read' means arrived AND opened — it must count as arrived ──
 // delivery_status has FOUR values, not three: something outside the reconciler (a WhatsApp
 // read receipt) records 'read'. Counting only ds='delivered' as arrived silently dropped every
-// read message. banana-book 2026-07-15: the top card showed 6 arrived, the source split 0/4 —
+// read message. production 2026-07-15: the top card showed 6 arrived, the source split 0/4 —
 // the one that vanished was 'read'. A read is, by definition, also delivered.
 test('⭐ a read receipt (delivery_status=read) counts as arrived everywhere', async () => {
   await sent({ id: 1, messageId: null, status: 'delivered' });
@@ -105,8 +105,8 @@ test('⭐ a read receipt (delivery_status=read) counts as arrived everywhere', a
 // ── ⭐ a template error is NOT a Meta block — "נחסמו" counts only recipient blocks ──
 // Two failures are two different problems: 131049 means Meta blocked a burned recipient
 // (the list's story); 132000 means our request was malformed — a parameter missing from the
-// template — and the message never left. banana-book 2026-07-15: all 8 of the day's failures
-// were 132000 on bb_existing_07, and showing them as "blocked" inflated the block rate 0%→22%.
+// template — and the message never left. production 2026-07-15: all 8 of the day's failures
+// were 132000 on promo_existing_07, and showing them as "blocked" inflated the block rate 0%→22%.
 test('⭐ a template error (132000) counts as send_error, not as a Meta block', async () => {
   await sent({ id: 1, messageId: null, status: 'delivered' });
   await sent({ id: 2, messageId: null, status: 'failed', code: '131049' });   // real Meta block
@@ -143,7 +143,7 @@ test('a NULL delivery_status (row written, reconciler has not run yet) counts as
 // A lead blocked on the FIRST message of her life arrived already saturated by other
 // businesses: that is a lead-source problem, and no change of copy or pace will fix it.
 // A block later in the sequence is something WE did. Merged into one number, both hide.
-// (banana-book, 2026-07-14: new leads blocked at 40%, in-sequence at 2% — twentyfold.)
+// (production, 2026-07-14: new leads blocked at 40%, in-sequence at 2% — twentyfold.)
 test('⭐ blocks are split into "first message of her life" vs "later in the sequence"', async () => {
   // contact 1 — brand new: this is the only message she has ever been sent, and it blocked
   await sent({ id: 1, messageId: null, status: 'failed', code: '131049' });

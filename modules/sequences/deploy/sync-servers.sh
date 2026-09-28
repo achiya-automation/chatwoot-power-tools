@@ -5,20 +5,20 @@
 # The two servers were installed differently and CANNOT be unified: the main server's
 # container is named drip-engine, and both docker-compose (JOURNEY_HOOK_BASE:
 # http://drip-engine:3100) and Caddy (handle_path /drip/*, /cw-import/*) are wired to that
-# name and base path. Renaming it to match אדמון would break journeys, the panel route and
+# name and base path. Renaming it to match the second server would break journeys, the panel route and
 # the import button on a live production server. So instead of one layout, one script that
 # knows both:
 #
 #   main server (chatwoot)   flat:      /opt/chatwoot/engine/{src,migrations}, webapp/dist
 #                            container:  drip-engine        base: /drip
-#   אדמון (chatwoot_admon)   modular:   /opt/chatwoot/chatwoot-power-tools/modules/...
+#   second server            modular:   /opt/chatwoot/chatwoot-power-tools/modules/...
 #                            container:  cwpt-engine        base: /chatwoot-addons
 #                            ⚠️ requires BOTH compose files or the build skips it silently
 #
 # Drift detection is the point as much as deployment. The Rails initializer lived only on
 # the servers for months and quietly forked: the main server gained ledger writes and a
-# delivery-status hook in July while אדמון stayed on a June build, and a later "fix"
-# deployed to אדמון was actually a regression against the main server. Nobody could see it
+# delivery-status hook in July while the second server stayed on a June build, and a later "fix"
+# deployed to the second server was actually a regression against the main server. Nobody could see it
 # because nothing compared the two. This script refuses to overwrite a file that differs
 # from git unless you say so explicitly.
 #
@@ -64,7 +64,7 @@ die() { printf '\033[31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
 md5_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | awk '{print $1}'; }
 remote_md5() { ssh "$1" "sudo md5sum '$2' 2>/dev/null | awk '{print \$1}'"; }
 
-# Flat install (main server) or modular install (אדמון)? Decided by what is on disk, not
+# Flat install (main server) or modular install (second server)? Decided by what is on disk, not
 # by hostname, so a re-installed server is handled correctly without editing this script.
 detect_layout() {
   ssh "$1" "if sudo test -d /opt/chatwoot/chatwoot-power-tools/modules/sequences; then echo modular;

@@ -7,9 +7,9 @@
 -- who did receive the template get reported as never attempted, and the ones who genuinely
 -- got nothing carry no reason at all.
 --
--- First run: campaign 17 (אדמון, 20.07.2026) — audience 285 = 215 delivered/read + 31
--- failed at Meta + 1 failed send request + 39 with no phone. Before the backfill the
--- report showed 45 "not attempted"; five of those had in fact been sent.
+-- Example (illustrative numbers): an audience of 100 = 80 delivered/read + 10 failed at
+-- Meta + 1 failed send request + 9 with no phone. The values below are left empty on
+-- purpose: an unedited run fails on every statement and writes nothing.
 --
 -- Reconstruction rules:
 --   * The campaign message for a contact is the FIRST outgoing agent message carrying a
@@ -21,11 +21,11 @@
 --
 -- Idempotent: ON CONFLICT DO NOTHING on the audience, DO UPDATE on the sends.
 
-\set campaign_id 17
-\set account_id 1
-\set tag_id 5
-\set run_start '2026-07-20 15:25'
-\set run_end   '2026-07-20 16:00'
+\set campaign_id
+\set account_id
+\set tag_id
+\set run_start ''
+\set run_end   ''
 
 BEGIN;
 
