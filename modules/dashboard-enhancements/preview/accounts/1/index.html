@@ -111,7 +111,7 @@
 
 <script>
 // ── סימולציית Vue: מחליף {{1}},{{2}} בערכי השדות ומעדכן את גוף ההודעה, כמו renderedTemplate ──
-const TPL = 'היי מה שלומך {{1}} זה אליה הסוכן נדל״ן ,שאלה ..\nלגבי הנכס ב{{2}} יש לי לקוח שמחפש דווקא שם , חשבתם אולי למכור ?';
+const TPL = 'שלום {{1}}, יש לנו עדכון לגבי הנכס ב{{2}}.\nנשמח לתאם שיחה קצרה.';
 function render() {
   const vals = [...document.querySelectorAll('input.var')].map(i => i.value);
   document.getElementById('body').textContent =
