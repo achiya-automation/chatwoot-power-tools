@@ -57,8 +57,9 @@ make_full_flat_payload() {
   head_md5() { printf '%s' same; }
   remote_md5() { printf '%s' same; }
   ok() { :; }
+  ALLOWED_SERVERS=(second-server)
 
-  rebuild_engine chatwoot_admon modular-managed
+  rebuild_engine second-server modular-managed
 
   grep -q "chatwoot-power-tools/.cwpt-runtime/docker-compose.addons.yml" "$capture"
   grep -q "up -d --build --no-deps cwpt-engine" "$capture"
