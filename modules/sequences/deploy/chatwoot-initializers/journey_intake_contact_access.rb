@@ -67,8 +67,24 @@ module JourneyIntakeContactAccess
   end
 end
 
+# Serialize contact attribute merges before reading their current JSON values.
+# Keep the native update parameters, validation, callbacks and avatar job behavior.
+module ContactAttributeUpdateLock
+  def update
+    @contact.with_lock do
+      @contact.assign_attributes(contact_update_params)
+      @contact.save!
+    end
+    process_avatar_from_url
+  end
+end
+
 Rails.application.config.to_prepare do
   require_dependency Rails.root.join('app/controllers/concerns/access_token_auth_helper').to_s
 
   AccessTokenAuthHelper.prepend(JourneyIntakeContactAccess) unless AccessTokenAuthHelper.ancestors.include?(JourneyIntakeContactAccess)
+
+  require_dependency Rails.root.join('app/controllers/api/v1/accounts/contacts_controller').to_s
+  contacts_controller = Api::V1::Accounts::ContactsController
+  contacts_controller.prepend(ContactAttributeUpdateLock) unless contacts_controller.ancestors.include?(ContactAttributeUpdateLock)
 end
