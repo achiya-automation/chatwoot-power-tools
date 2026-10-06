@@ -110,6 +110,18 @@ module WhatsappTextStyle
       segment.gsub(DIAL_CODE) { |code| "`#{code}`" }
     end.join
   end
+
+  # The bridge heads every message sent from the phone with this line (WAHA
+  # i18n `message.from.whatsapp`). Agents reuse such a message as a template,
+  # and the header rode along to the customer as the first line of a new
+  # message. Bridge echoes carry external_echo and are never passed here.
+  # ponytail: the Hebrew header only; every bridged inbox runs he-IL
+  ECHO_MARKER = /\A\s*\*{0,2}📱 נשלח מוואטסאפ\*{0,2}\s*/
+
+  def strip_echo_marker(text)
+    stripped = text.sub(ECHO_MARKER, '')
+    stripped.empty? ? text : stripped
+  end
 end
 
 if defined?(Rails)
@@ -128,8 +140,10 @@ if defined?(Rails)
           # a source_id at create time): real WhatsApp markup -> markdown
           self.content = WhatsappTextStyle.hard_breaks(WhatsappTextStyle.whatsapp_to_markdown(content))
         elsif outgoing?
-          # dashboard/API-composed text is already markdown - only keep breaks
-          self.content = WhatsappTextStyle.hard_breaks(content)
+          # dashboard/API-composed text is already markdown - only keep breaks,
+          # and drop a pasted bridge header (the bridge's own echoes keep theirs)
+          text = content_attributes['external_echo'].present? ? content : WhatsappTextStyle.strip_echo_marker(content)
+          self.content = WhatsappTextStyle.hard_breaks(text)
         end
 
         # Shield dial codes so the stored body survives the markdown renderer the

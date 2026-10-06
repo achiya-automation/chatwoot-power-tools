@@ -57,4 +57,15 @@ raise 'fenced block kept' unless W.shield_dial_codes("```\n**61*0338**5#\n```") 
   raise "false positive: #{plain}" unless W.shield_dial_codes(plain) == plain
 end
 
+# --- the bridge's "sent from WhatsApp" header ----------------------------------
+# Agents reuse an old thread message as a template, and the header the bridge put
+# on it would reach the customer as the first line of a new message.
+raise 'marker pasted' unless W.strip_echo_marker("📱 נשלח מוואטסאפ\n\nהיי דנה") == 'היי דנה'
+raise 'marker bold' unless W.strip_echo_marker("*📱 נשלח מוואטסאפ*\n\nהיי") == 'היי'
+raise 'marker double bold' unless W.strip_echo_marker("**📱 נשלח מוואטסאפ**  \nהיי") == 'היי'
+raise 'marker keeps bold body' unless W.strip_echo_marker("📱 נשלח מוואטסאפ\n\n*היי* דנה") == '*היי* דנה'
+raise 'marker only at start' unless W.strip_echo_marker('היי 📱 נשלח מוואטסאפ') == 'היי 📱 נשלח מוואטסאפ'
+raise 'marker alone kept' unless W.strip_echo_marker('📱 נשלח מוואטסאפ') == '📱 נשלח מוואטסאפ'
+raise 'no marker' unless W.strip_echo_marker("היי דנה\nמה שלומך") == "היי דנה\nמה שלומך"
+
 puts 'whatsapp_text_style: all checks passed'
