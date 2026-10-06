@@ -23,8 +23,31 @@
 # is stripped here on the way into the database. The 75,355 messages that predate
 # this were cleaned in place on 23.8.2026 (backup:
 # /opt/chatwoot-backups/waha_group_headers_20260823_160411.csv).
+#
+# Agents type Israeli numbers the local way: with Israel picked in the country
+# list, "050-123-4567" is saved as +9720501234567. WhatsApp forgives the extra
+# zero and delivers the agent's message, but WAHA files every reply under the
+# real +972501234567, a second contact with its own conversation, so the agent
+# who wrote sees only outgoing messages. The trunk zero is dropped whenever a
+# number is typed or changed, which also makes Chatwoot's uniqueness check stop
+# the duplicate, and a search for 050-123-4567 finds the existing contact.
 
 WAHA_GROUP_SENDER_JID = /\A(👥 \*[^\n]*?) \(\d{7,20}@(?:lid|c\.us)\)\*/.freeze
+
+# ponytail: Israel only (every inbox here is Israeli); other countries with a trunk 0 get their own rule if one shows up
+module IsraeliPhone
+  TRUNK_ZERO = /\A\+9720(?=\d{8,9}\z)/.freeze
+  LOCAL_NUMBER = /\A0\d{8,9}\z/.freeze
+
+  # "+9720501234567" -> "+972501234567"
+  def self.drop_trunk_zero(phone) = phone&.sub(TRUNK_ZERO, '+972')
+
+  # "050-123-4567" -> "501234567", a substring of the stored +972501234567
+  def self.search_term(query)
+    digits = query.to_s.strip.delete(' -')
+    digits.match?(LOCAL_NUMBER) ? digits[1..] : query
+  end
+end
 
 Rails.application.config.to_prepare do
   Message.class_eval do
@@ -41,6 +64,8 @@ Rails.application.config.to_prepare do
   end
 
   Contact.class_eval do
+    # before_validation, so the uniqueness check sees the corrected number
+    before_validation :drop_israeli_trunk_zero, if: :will_save_change_to_phone_number?
     before_save :normalize_waha_identity_fields
 
     def self.readable_international_number(digits)
@@ -54,6 +79,10 @@ Rails.application.config.to_prepare do
 
     private
 
+    def drop_israeli_trunk_zero
+      self.phone_number = IsraeliPhone.drop_trunk_zero(phone_number)
+    end
+
     def normalize_waha_identity_fields
       jid = custom_attributes.to_h['waha_whatsapp_jid'].presence || identifier
       m = jid.to_s.strip.match(/\A(\d{7,15})@(?:c\.us|s\.whatsapp\.net)\z/)
@@ -66,4 +95,19 @@ Rails.application.config.to_prepare do
       self.name = self.class.readable_international_number(digits) if name.blank? || raw_jid_name
     end
   end
+
+  # Contacts page and the new-conversation contact picker
+  Api::V1::Accounts::ContactsController.prepend(Module.new do
+    def search
+      params[:q] = IsraeliPhone.search_term(params[:q])
+      super
+    end
+  end)
+
+  # Global search (contacts, conversations, messages)
+  SearchService.prepend(Module.new do
+    private
+
+    def search_query = IsraeliPhone.search_term(super)
+  end)
 end
