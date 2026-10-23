@@ -34,6 +34,14 @@ module AccessTokenAuthHelper
   end
 end
 
+module Api
+  module V1
+    module Accounts
+      class ContactsController; end
+    end
+  end
+end
+
 class AgentBot
   attr_reader :name, :account_id
 
@@ -110,13 +118,18 @@ end
 
 
 def require_dependency(path)
-  raise 'wrong dependency path' unless path.end_with?('/app/controllers/concerns/access_token_auth_helper')
-
-  Object.const_set(:AccessTokenAuthHelper, Module.new do
-    def agent_bot_accessible?
-      false
-    end
-  end)
+  if path.end_with?('/app/controllers/concerns/access_token_auth_helper')
+    Object.const_set(:AccessTokenAuthHelper, Module.new do
+      def agent_bot_accessible?
+        false
+      end
+    end)
+  elsif path.end_with?('/app/controllers/api/v1/accounts/contacts_controller')
+    Object.const_set(:Api, Module.new).const_set(:V1, Module.new)
+          .const_set(:Accounts, Module.new).const_set(:ContactsController, Class.new)
+  else
+    raise 'wrong dependency path'
+  end
 end
 
 load ARGV.fetch(0)
@@ -125,6 +138,7 @@ raise 'concern loaded before prepare callback' if Object.const_defined?(:AccessT
 
 TEST_CONFIG.prepare_callback.call
 raise 'initializer was not prepended' unless AccessTokenAuthHelper.ancestors.include?(JourneyIntakeContactAccess)
+raise 'contact update lock was not prepended' unless Api::V1::Accounts::ContactsController.ancestors.include?(ContactAttributeUpdateLock)
 RUBY
 
   [ "$status" -eq 0 ]

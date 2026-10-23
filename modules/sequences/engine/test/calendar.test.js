@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupDb } from './helpers.js';
-import { parseHebcal, inNoSendWindow, refreshCalendar, loadWindows } from '../src/calendar.js';
+import { parseHebcal, inNoSendWindow, refreshCalendar } from '../src/calendar.js';
 import { getPool } from '../src/db.js';
 
 // ── parseHebcal (pure) ──────────────────────────────────────────────────────
@@ -91,7 +91,10 @@ test('inNoSendWindow: empty windows → false', () => {
   assert.equal(inNoSendWindow([], new Date('2026-09-12T12:00:00+03:00')), false);
 });
 
-// ── refreshCalendar + loadWindows (DB) ──────────────────────────────────────
+// ── refreshCalendar (DB) ────────────────────────────────────────────────────
+// The fixture is pinned to September 2026. loadWindows() drops windows that ended
+// before now() - 2 days, so these tests read the table directly; otherwise they
+// start failing once the fixture dates pass.
 
 const cfg = { databaseUrl: process.env.DATABASE_URL_TEST };
 const pool = getPool(cfg);
@@ -114,7 +117,7 @@ test('refreshCalendar: fetches + upserts when calendar is empty/stale', async ()
   const res = await refreshCalendar(pool, fetchFn, new Date('2026-06-21T09:00:00+03:00'));
   assert.ok(res.fetched > 0, 'reports windows fetched');
   assert.ok(years.includes(2026) && years.includes(2027), 'fetches current + next year');
-  const w = await loadWindows(pool);
+  const { rows: w } = await pool.query('SELECT kind FROM drip.no_send_windows');
   assert.equal(w.length, 1);
   assert.equal(w[0].kind, 'yomtov');
 });
@@ -137,6 +140,6 @@ test('refreshCalendar: idempotent — running twice yields same row count', asyn
   await refreshCalendar(pool, fetchFn, new Date('2026-06-21T09:00:00+03:00'));
   await pool.query('TRUNCATE drip.no_send_windows');
   await refreshCalendar(pool, fetchFn, new Date('2026-06-21T09:00:00+03:00'));
-  const w = await loadWindows(pool);
+  const { rows: w } = await pool.query('SELECT kind FROM drip.no_send_windows');
   assert.equal(w.length, 1, 'no duplicate rows on conflict');
 });
