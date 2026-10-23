@@ -38,9 +38,12 @@
 module WhatsappCampaignGraft417
   private
 
-  # the native 4.17 flow verbatim, plus carousel support before the send and
+  # the native flow verbatim (4.19: authentication-template guard from 4.18 + recipient
+  # destination/contact_inbox for campaign history), plus carousel support before the send and
   # conversation recording after a successful one
   def send_whatsapp_template_message(recipient:, to:, template_params:)
+    return if authentication_template_blocked?(recipient, to, template_params)
+
     processor = Whatsapp::TemplateProcessorService.new(
       channel: channel,
       template_params: template_params
@@ -54,6 +57,7 @@ module WhatsappCampaignGraft417
     end
 
     processed_parameters = append_carousel_component(name, lang_code, processed_parameters)
+    save_recipient_destination(recipient, to)
     source_id = channel.send_template(to, template_info(name, namespace, lang_code, processed_parameters), nil)
     update_recipient_from_provider_response(recipient, source_id)
 
@@ -267,7 +271,8 @@ Rails.application.config.after_initialize do
     problems = []
 
     # Only what the graft itself calls: the send override + the upstream helpers it reuses.
-    %i[send_whatsapp_template_message update_recipient_from_provider_response template_info].each do |meth|
+    %i[send_whatsapp_template_message update_recipient_from_provider_response template_info
+       authentication_template_blocked? save_recipient_destination].each do |meth|
       problems << "missing method ##{meth}" unless svc.private_method_defined?(meth) || svc.method_defined?(meth)
     end
 

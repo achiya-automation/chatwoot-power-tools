@@ -59,6 +59,10 @@ class Sender
   def send_template(*) = 'wamid.TEST'
   def template_info(*) = {}
   def append_carousel_component(_name, _lang, params) = params
+  # Chatwoot 4.19 core helpers the grafted send path calls (authentication-template guard
+  # and recipient destination). Not under test here, so they are inert.
+  def authentication_template_blocked?(*) = false
+  def save_recipient_destination(*) = nil
   def update_recipient_from_provider_response(recipient, source_id)
     source_id.to_s.empty? ? recipient.mark_failed! : recipient.mark_sent!(source_id)
   end
