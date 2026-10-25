@@ -8,6 +8,7 @@ const OWNER_FILES = [
   '051_campaign_recipients_role_grants.sql',
   '053_presence_role_grants.sql',
   '054_mobile_access_role_grants.sql',
+  '056_journey_webhook_drop_role_grants.sql',
 ];
 
 function fakePool(doneOwnerFiles = []) {

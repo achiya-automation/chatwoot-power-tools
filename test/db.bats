@@ -154,6 +154,7 @@ EOF
   grep -q 'REVOKE SELECT ON public.agent_bot_inboxes' "$MOCK_PSQL_CAPTURE"
   grep -q 'REVOKE EXECUTE ON FUNCTION drip.ensure_account_bot(integer)' "$MOCK_PSQL_CAPTURE"
   grep -q 'REVOKE EXECUTE ON FUNCTION drip.ensure_journey_webhook(integer,text)' "$MOCK_PSQL_CAPTURE"
+  grep -q 'REVOKE EXECUTE ON FUNCTION drip.drop_journey_webhook(integer)' "$MOCK_PSQL_CAPTURE"
   grep -q "DELETE FROM drip.schema_migrations" "$MOCK_PSQL_CAPTURE"
   grep -q '053_presence_role_grants.sql' "$MOCK_PSQL_CAPTURE"
   ! grep -q '051_campaign_recipients_role_grants.sql' "$MOCK_PSQL_CAPTURE"

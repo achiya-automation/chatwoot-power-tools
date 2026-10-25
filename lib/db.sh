@@ -276,6 +276,9 @@ BEGIN
   IF to_regprocedure('drip.ensure_journey_webhook(integer,text)') IS NOT NULL THEN
     EXECUTE 'REVOKE EXECUTE ON FUNCTION drip.ensure_journey_webhook(integer,text) FROM drip_engine';
   END IF;
+  IF to_regprocedure('drip.drop_journey_webhook(integer)') IS NOT NULL THEN
+    EXECUTE 'REVOKE EXECUTE ON FUNCTION drip.drop_journey_webhook(integer) FROM drip_engine';
+  END IF;
 END $$;
 DO $$
 BEGIN
@@ -285,7 +288,8 @@ BEGIN
                        '033_journeys_role_grants.sql',
                        '051_campaign_recipients_role_grants.sql',
                        '053_presence_role_grants.sql',
-                       '054_mobile_access_role_grants.sql');
+                       '054_mobile_access_role_grants.sql',
+                       '056_journey_webhook_drop_role_grants.sql');
   END IF;
 END $$;
 SQL
@@ -317,6 +321,9 @@ BEGIN
   IF to_regprocedure('drip.ensure_journey_webhook(integer,text)') IS NOT NULL THEN
     EXECUTE 'REVOKE EXECUTE ON FUNCTION drip.ensure_journey_webhook(integer,text) FROM drip_engine';
   END IF;
+  IF to_regprocedure('drip.drop_journey_webhook(integer)') IS NOT NULL THEN
+    EXECUTE 'REVOKE EXECUTE ON FUNCTION drip.drop_journey_webhook(integer) FROM drip_engine';
+  END IF;
 END $$;
 -- Deleting these sequence-only markers makes a later expansion wait until the functions and
 -- presence read are re-granted. Keep 051 and 054: dashboard-only still needs campaign
@@ -327,7 +334,8 @@ BEGIN
     DELETE FROM drip.schema_migrations
      WHERE version IN ('024_auto_onboard_role_grants.sql',
                        '033_journeys_role_grants.sql',
-                       '053_presence_role_grants.sql');
+                       '053_presence_role_grants.sql',
+                       '056_journey_webhook_drop_role_grants.sql');
   END IF;
 END $$;
 SQL

@@ -747,7 +747,16 @@ function journeyQuietNow(journey, windows, now = new Date(), accountDefaults = n
 export async function reconcileJourneys(ctx, accountId) {
   const { query, makeClientFor, config, windows = [], log = console } = ctx;
   const journeys = await activeJourneys(query, accountId);
-  if (!journeys.length) return;
+  if (!journeys.length) {
+    // No active flow: remove the account's journeys webhook instead of leaving it behind. A row
+    // left from before a hook-secret rotation points at a dead token, and Chatwoot then runs a
+    // WebhookJob that fails with 404 on every event of the account (migration 056).
+    if (config.journeyHookBase && config.journeyHookSecret) {
+      await query(`SELECT drip.drop_journey_webhook($1)`, [accountId])
+        .catch((e) => log.warn?.(`[journeys] drop webhook failed: ${e.message}`));
+    }
+    return;
+  }
   const byId = Object.fromEntries(journeys.map((j) => [j.id, j]));
 
   // שעות השקט של החשבון — ברירת המחדל שכל פלואו יורש כשלא הוגדר לו חלון משלו.
