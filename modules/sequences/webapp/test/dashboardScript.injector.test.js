@@ -1,8 +1,8 @@
 /*
  * בדיקת עשן על ה-ARTIFACT — לא על קבצי המקור.
  *
- * למה זה קיים: campaignStats.injector.test.js קורא את קובץ המקור ישירות (readFile), ולכן הוא
- * עיוור לכל מה שקורה *אחרי* המקור — הרכבה (assemble_dashboard_script) ו-escaping. בפרוד נשברו
+ * למה זה קיים: בדיקות ההזרקה קוראות את קובץ המקור ישירות (readFile), ולכן הן
+ * עיוורות לכל מה שקורה *אחרי* המקור — הרכבה (assemble_dashboard_script) ו-escaping. בפרוד נשברו
  * שני פיצ'רים בבת אחת בלי שאף בדיקה תצפצף:
  *   1. import-button.js הכריז `function t(k)` (i18n) בקובץ שכבר השתמש ב-`var t` כמזהה טיימר.
  *      ה-MutationObserver דרס את t במספר → t('smartImport') זרק TypeError → נבלע ב-catch של
@@ -58,7 +58,7 @@ function makeDom(path) {
   OPEN_WINDOWS.push(dom.window);
   const errors = [];
   dom.window.addEventListener('error', (e) => errors.push(e.message));
-  // campaign-stats מושך סטטיסטיקות; import-button לא נוגע ברשת עד שלוחצים.
+  // import-button לא נוגע ברשת עד שלוחצים; התשובה המדומה נשארת לכל הזרקה שכן קוראת.
   dom.window.fetch = async (_url, opts) => {
     const action = JSON.parse((opts && opts.body) || '{}').action;
     const data = action === 'campaigns_tier'
@@ -111,7 +111,7 @@ test('artifact: כפתור "ייבוא חכם" נוצר בעמוד אנשי הק
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 
-test('artifact: דשבורד הקמפיינים מזריק KPI + כפתור סטטיסטיקה + שורת סטטיסטיקה על הכרטיס', async () => {
+test('artifact: עמוד הקמפיינים נשאר המסך המקורי של Chatwoot, בלי סטטיסטיקה מוזרקת', async () => {
   const { dom, errors } = makeDom('/app/accounts/1/campaigns/whatsapp');
   const w = await runDashboardScript(dom, (doc) =>
     mountVueRoot(doc, `
@@ -122,11 +122,8 @@ test('artifact: דשבורד הקמפיינים מזריק KPI + כפתור סט
   );
 
   const doc = w.document;
-  const overview = doc.getElementById('cwpt-overview-btn');
-  assert.ok(overview, 'כפתור "סטטיסטיקה" חייב להופיע בכותרת');
-  assert.match(overview.textContent, /סטטיסטיקה/, 'גם הוא חייב להיות בעברית בממשק RTL');
-  assert.ok(doc.querySelector('.cwpt-stats'), 'שורת הסטטיסטיקה חייבת לנחות על כרטיס הקמפיין');
-  assert.match(doc.querySelector('main .max-w-5xl').textContent, /10/, 'סרגל ה-KPI חייב להציג את הסך');
+  assert.equal(doc.getElementById('cwpt-overview-btn'), null, 'הניתוח הוא המסך המקורי, לא כפתור מוזרק');
+  assert.equal(doc.querySelector('.cwpt-stats'), null, 'אין שורת סטטיסטיקה מוזרקת על הכרטיס');
   assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
 });
 

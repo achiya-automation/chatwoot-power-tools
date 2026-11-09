@@ -13,11 +13,11 @@ setup() { source lib/assemble-dashboard-script.sh; }
   [[ "$output" != *"achiya"* ]]
 }
 
-@test "assemble enhancements bundles campaign-modal + campaign-stats" {
+@test "assemble enhancements bundles campaign-modal and leaves campaign analytics to the native screen" {
   run assemble_dashboard_script "/chatwoot-addons" enhancements
   [[ "$output" == *"campaign-modal"* ]]
-  [[ "$output" == *"campaign-stats"* ]]
-  [[ "$output" == *"__dripCampaignStats"* ]]  # the new injector's IIFE guard — confirms its body is inlined
+  [[ "$output" != *"campaign-stats"* ]]
+  [[ "$output" != *"__dripCampaignStats"* ]]
 }
 
 @test "assemble enhancements preserves native appearance and includes isolated UI fixes" {

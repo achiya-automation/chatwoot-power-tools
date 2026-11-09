@@ -4,7 +4,7 @@
  * החלק הזה רץ ב-DASHBOARD_SCRIPTS, כלומר בכל עמוד בדשבורד. ה-observer שלו מריץ ארבע
  * קריאות querySelectorAll בכל התייצבות DOM, ואחת מהן (enhanceCampaignMedia) עוטפת כל
  * `input[type="url"]` בהעלאת מדיה של WhatsApp. בעמוד שאינו קמפיינים זו גם עבודה מיותרת
- * וגם התנהגות שגויה — ולכן יש שער נתיב, בדיוק כמו ב-campaign-stats.js.
+ * וגם התנהגות שגויה — ולכן יש שער נתיב, בדיוק כמו בשאר ההזרקות.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';

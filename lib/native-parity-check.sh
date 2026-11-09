@@ -11,6 +11,7 @@
 # שימוש:
 #   lib/native-parity-check.sh <path-to-dashboard-css>
 #   lib/native-parity-check.sh --server <ssh-host>     # מאתר את ה-CSS ב-unread-assets על השרת
+#     (ב-server גם בודק את סטטיסטיקת הקמפיין: test/campaign-stats-verify.rb)
 #
 # יציאה: 0 = הכול קיים; 1 = חסרים אסימונים (מודפסים).
 
@@ -110,6 +111,21 @@ for var in "${REQUIRED_VARS[@]}"; do
     missing=1
   fi
 done
+
+# סטטיסטיקת קמפיין וואטסאפ (whatsapp_campaign_stats.rb): בקשה אמיתית בתוך האפליקציה —
+# מנהל מקבל 200, בלי טוקן/סוכן/חשבון אחר נחסמים. שדרוג שישבור את הנתיבים נכשל כאן.
+if [ -n "${host:-}" ]; then
+  verify="$(dirname "$0")/../test/campaign-stats-verify.rb"
+  scp -q "$verify" "$host:/tmp/csv.rb"
+  # shellcheck disable=SC2029
+  stats="$(ssh "$host" 'docker cp /tmp/csv.rb chatwoot-rails-1:/tmp/csv.rb && docker exec chatwoot-rails-1 bundle exec rails runner /tmp/csv.rb 2>&1 | grep -E "PASS|FAIL|NO_CAMPAIGN"; docker exec chatwoot-rails-1 rm -f /tmp/csv.rb; rm -f /tmp/csv.rb' </dev/null)"
+  if echo "$stats" | grep -qE 'ALL_PASS|NO_CAMPAIGN'; then
+    echo "✅ stats  סטטיסטיקת קמפיין וואטסאפ"
+  else
+    echo "🔴 stats  סטטיסטיקת קמפיין וואטסאפ לא עובדת:"; echo "$stats"
+    missing=1
+  fi
+fi
 
 if [ "$missing" -eq 0 ]; then
   echo "— הכול קיים; ההזרקות תואמות לגרסת ה-Chatwoot הזו. ✅"

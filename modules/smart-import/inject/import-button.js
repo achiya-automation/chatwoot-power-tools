@@ -13,7 +13,7 @@
   // ⚠️ חייב להיות עצל. DASHBOARD_SCRIPTS רץ בתחתית <body> — לפני ש-Vue מרנדר, ולכן לפני
   // ש-#app[dir]="rtl" בכלל קיים (יש שני #app: העוטף של Vue, בלי dir, והשורש המרונדר, איתו).
   // חישוב חד-פעמי כאן ננעל על 'en' לנצח, וממשק עברי מקבל כפתור באנגלית. קוראים בזמן רינדור,
-  // כמו sequences-nav ו-campaign-stats.
+  // כמו sequences-nav.
   function dripLocale() {
     var a = document.querySelector('#app[dir]');
     return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';

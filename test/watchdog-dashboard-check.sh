@@ -63,8 +63,8 @@ chk "חסרים 2 האחרונים"        "$(echo "$ALL" | sed '$d' | sed '$d' 
     "incomplete $LAST2"
 chk "חסרים מודולי journeys"   "$(echo "$ALL" | grep -v journey | mk)" \
     "incomplete $JOURNEYS"
-chk "חסר campaign-stats"      "$(echo "$ALL" | grep -v campaign-stats | mk)" \
-    "incomplete campaign-stats.js"
+chk "חסר campaign-modal"      "$(echo "$ALL" | grep -v campaign-modal | mk)" \
+    "incomplete campaign-modal.js"
 
 # בלוק חתום: חתימה שלא תואמת את התוכן = הערך הושחת
 body="$(echo "$ALL" | mk)"

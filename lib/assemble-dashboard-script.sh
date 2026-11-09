@@ -49,7 +49,6 @@ _cwpt_module_parts() {
       # a first-class attachment (no synthetic change events, which vue-upload-component ignores).
       printf '%s\n' \
         "modules/dashboard-enhancements/parts/campaign-modal.js" \
-        "modules/dashboard-enhancements/parts/campaign-stats.js" \
         "modules/dashboard-enhancements/parts/native-i18n-he.js" \
         "modules/dashboard-enhancements/parts/video-compressor.js" \
         "modules/dashboard-enhancements/parts/native-ui-fixes.js"

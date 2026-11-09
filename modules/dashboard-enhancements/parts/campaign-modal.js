@@ -17,7 +17,7 @@
   // ‏4 קריאות querySelectorAll רצו כאן בכל התייצבות DOM (150ms) בכל עמוד בדשבורד, גם
   // בעמוד השיחות שבו אין מודל קמפיין בכלל. הסלקטורים עצמם מסננים נכון (למשל
   // mediaFormatFromPlaceholder), אז זו לא הייתה שגיאה — רק סריקה של כל המסמך על לא כלום.
-  // אותו שער כמו ב-campaign-stats.js (onPage) וב-native-i18n-he.js באותה תיקייה.
+  // אותו שער כמו ב-native-i18n-he.js באותה תיקייה.
   function onPage() { return /\/accounts\/\d+\/campaigns\b/.test(location.pathname); }
 
   function dripLocale() {

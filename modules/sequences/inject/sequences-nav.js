@@ -273,7 +273,7 @@
   function show(tab) {
     tab = tab || 'overview';
     curTab = tab;
-    if (window.__cwptReportHide) { try { window.__cwptReportHide(); } catch (e) {} } // close campaign-stats overlay if open
+    if (window.__cwptReportHide) { try { window.__cwptReportHide(); } catch (e) {} } // close another addon overlay if one is open
     if (!holder) build();
     var acc = accountId();
     if (!loaded || loadedAcc !== acc) {
@@ -341,7 +341,7 @@
     }
     pingSiblings();
   }
-  window.__cwptSeqHide = hide; // let campaign-stats close this panel before opening its overlay
+  window.__cwptSeqHide = hide; // lets another addon close this panel before opening its own overlay
   window.__dripShowPanel = show; window.__dripHidePanel = hide; // hook for templates-nav.js / journeys-nav.js (separate part modules, same window)
 
   // header click — native SidebarGroupHeader toggle semantics (SidebarGroup.vue
