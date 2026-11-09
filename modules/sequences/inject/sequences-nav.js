@@ -53,7 +53,7 @@
   })();
   var APP = ADDONS_BASE; // same-origin (single route /chatwoot-addons/*) — zero CORS/CSP
 
-  // ── i18n: עברית ל-RTL (he), אנגלית לכל השאר — בדיוק כמו campaign-modal. Chatwoot לא
+  // ── i18n: עברית ל-RTL (he), אנגלית לכל השאר — בדיוק כמו import-button. Chatwoot לא
   // שם locale על ה-DOM, אבל מגדיר #app[dir]=rtl רק לעברית (אותו אות שה-theme משתמש בו). ──
   function dripLocale() {
     var a = document.querySelector('#app[dir]');

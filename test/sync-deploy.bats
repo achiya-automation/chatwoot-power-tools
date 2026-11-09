@@ -22,7 +22,7 @@ make_full_modular_payload() {
   echo webapp > "$payload/modules/sequences/webapp/dist/index.html"
   echo import-bundle > "$payload/modules/sequences/webapp/dist/smart-import/import-tool.js"
   echo import-inject > "$payload/modules/smart-import/inject/import-button.js"
-  echo dashboard > "$payload/modules/dashboard-enhancements/parts/campaign-modal.js"
+  echo dashboard > "$payload/modules/dashboard-enhancements/parts/native-i18n-he.js"
   echo compose > "$payload/docker-compose.addons.yml"
 }
 

@@ -13,9 +13,9 @@ setup() { source lib/assemble-dashboard-script.sh; }
   [[ "$output" != *"achiya"* ]]
 }
 
-@test "assemble enhancements bundles campaign-modal and leaves campaign analytics to the native screen" {
+@test "assemble enhancements leaves the campaign screens native" {
   run assemble_dashboard_script "/chatwoot-addons" enhancements
-  [[ "$output" == *"campaign-modal"* ]]
+  [[ "$output" != *"campaign-modal"* ]]
   [[ "$output" != *"campaign-stats"* ]]
   [[ "$output" != *"__dripCampaignStats"* ]]
 }

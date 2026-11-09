@@ -142,7 +142,7 @@ EOF
   # Tracked source remains complete even though dashboard/sequences were not selected.
   [ -f "$SELF/modules/sequences/engine/src/index.js" ]
   [ -f "$SELF/modules/sequences/webapp/dist/smart-import/import-tool.js" ]
-  [ -f "$SELF/modules/dashboard-enhancements/parts/campaign-modal.js" ]
+  [ -f "$SELF/modules/dashboard-enhancements/parts/native-i18n-he.js" ]
   [ -f "$SELF/docker-compose.addons.yml" ]
   # Only the selected optional module is present in the actual build/deployment runtime.
   [ -f "$SELF/.cwpt-runtime/modules/smart-import/inject/import-button.js" ]

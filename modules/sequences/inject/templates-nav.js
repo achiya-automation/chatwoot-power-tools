@@ -46,7 +46,7 @@
   }
 
   // Chatwoot's API requires devise-token-auth headers (not just the session cookie) — same
-  // cw_d_session_info cookie parsing as campaign-modal.js's getChatwootAuthHeaders().
+  // cw_d_session_info cookie parsing as import-button.js.
   function authHeaders() {
     try {
       var raw = (document.cookie.match(/(?:^|;\s*)cw_d_session_info=([^;]+)/) || [])[1];

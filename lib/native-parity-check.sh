@@ -65,7 +65,7 @@ REQUIRED_CLASSES=(
   'underline-offset-2'
   'border-s'
 )
-# משתני CSS שהסטיילים המוזרקים (campaign-modal.js) קוראים ישירות
+# משתני CSS של Chatwoot שהממשקים שלנו (webapp/src/theme-colors.js) קוראים ישירות
 REQUIRED_VARS=(
   '--slate-10' '--slate-11' '--slate-12'
   '--alpha-2' '--alpha-3'

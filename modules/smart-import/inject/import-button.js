@@ -9,7 +9,7 @@
   var ASSET_VER = '__CWI_VER__'; // replaced by deploy with the bundle content hash (cache-bust)
 
   // i18n: Hebrew for RTL (he) users, English otherwise — same #app[dir] signal the
-  // campaign-modal enhancement and the import wizard use. he→Hebrew, ltr→English.
+  // import wizard uses. he→Hebrew, ltr→English.
   // ⚠️ חייב להיות עצל. DASHBOARD_SCRIPTS רץ בתחתית <body> — לפני ש-Vue מרנדר, ולכן לפני
   // ש-#app[dir]="rtl" בכלל קיים (יש שני #app: העוטף של Vue, בלי dir, והשורש המרונדר, איתו).
   // חישוב חד-פעמי כאן ננעל על 'en' לנצח, וממשק עברי מקבל כפתור באנגלית. קוראים בזמן רינדור,
@@ -26,7 +26,7 @@
 
   function accountId() { var m = location.pathname.match(/\/accounts\/(\d+)/); return m ? m[1] : ''; }
 
-  // Same auth pattern as the campaign-modal enhancement: devise-token-auth headers from the
+  // Same auth pattern as the other dashboard parts: devise-token-auth headers from the
   // non-httpOnly cw_d_session_info cookie.
   function authHeaders() {
     try {

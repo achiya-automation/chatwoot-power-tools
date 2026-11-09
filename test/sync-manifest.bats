@@ -34,7 +34,7 @@ setup() {
   printf '%s\n' 'window.smartImport = true;' \
     > "$FIXTURE_REPO/modules/smart-import/inject/import-button.js"
   printf '%s\n' 'window.dashboardEnhancements = true;' \
-    > "$FIXTURE_REPO/modules/dashboard-enhancements/parts/campaign-modal.js"
+    > "$FIXTURE_REPO/modules/dashboard-enhancements/parts/native-i18n-he.js"
   printf '%s\n' 'services: {}' > "$FIXTURE_REPO/docker-compose.addons.yml"
 
   git -C "$FIXTURE_REPO" init -q
@@ -133,7 +133,7 @@ container_manifest_for() {
 
   [ "$extracted" = "$committed" ]
   [[ "$extracted" == *$'\tmodules/smart-import/inject/import-button.js'* ]]
-  [[ "$extracted" == *$'\tmodules/dashboard-enhancements/parts/campaign-modal.js'* ]]
+  [[ "$extracted" == *$'\tmodules/dashboard-enhancements/parts/native-i18n-he.js'* ]]
   [[ "$extracted" == *$'\tdocker-compose.addons.yml'* ]]
 }
 

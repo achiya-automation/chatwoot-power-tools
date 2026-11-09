@@ -48,7 +48,6 @@ _cwpt_module_parts() {
       # window.__cwptTransformUpload before validating an upload, so the compressed file is
       # a first-class attachment (no synthetic change events, which vue-upload-component ignores).
       printf '%s\n' \
-        "modules/dashboard-enhancements/parts/campaign-modal.js" \
         "modules/dashboard-enhancements/parts/native-i18n-he.js" \
         "modules/dashboard-enhancements/parts/video-compressor.js" \
         "modules/dashboard-enhancements/parts/native-ui-fixes.js"

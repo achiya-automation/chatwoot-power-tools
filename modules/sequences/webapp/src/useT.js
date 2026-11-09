@@ -6,7 +6,7 @@
  * useT(messages)   → פונקציית t(key, vars) קשורה למילון המקומי של הרכיב. קוראת
  *                    ל-useLocale פנימית → הרכיב נרשם לשינויי שפה ומתעדכן חי.
  *
- * דפוס שימוש (מילון co-located, כמו campaign-modal):
+ * דפוס שימוש (מילון co-located, כמו import-button):
  *   const M = { he: { save: 'שמירה' }, en: { save: 'Save' } };
  *   function Foo() { const t = useT(M); return <button>{t('save')}</button>; }
  */
