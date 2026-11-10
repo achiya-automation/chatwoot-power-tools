@@ -47,10 +47,13 @@ _cwpt_module_parts() {
       # video-compressor is back (6.9.26) on a real hook: the core build's useFileUpload calls
       # window.__cwptTransformUpload before validating an upload, so the compressed file is
       # a first-class attachment (no synthetic change events, which vue-upload-component ignores).
+      # template-media-upload adds the one thing the native template form lacks: a button that
+      # uploads a header file instead of asking the agent for a public URL.
       printf '%s\n' \
         "modules/dashboard-enhancements/parts/native-i18n-he.js" \
         "modules/dashboard-enhancements/parts/video-compressor.js" \
-        "modules/dashboard-enhancements/parts/native-ui-fixes.js"
+        "modules/dashboard-enhancements/parts/native-ui-fixes.js" \
+        "modules/dashboard-enhancements/parts/template-media-upload.js"
       ;;
     *)
       return 1

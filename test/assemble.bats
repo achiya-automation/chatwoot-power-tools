@@ -24,6 +24,7 @@ setup() { source lib/assemble-dashboard-script.sh; }
   run assemble_dashboard_script "/chatwoot-addons" enhancements
   [[ "$output" == *"// part: modules/dashboard-enhancements/parts/native-ui-fixes.js"* ]]
   [[ "$output" == *"__cwptNativeUiFixes"* ]]
+  [[ "$output" == *"// part: modules/dashboard-enhancements/parts/template-media-upload.js"* ]]
   [[ "$output" != *"whatsapp-theme.js"* ]]
   [[ "$output" != *"cwptWaTheme"* ]]
   [[ "$output" != *"cwpt-wa-theme"* ]]
