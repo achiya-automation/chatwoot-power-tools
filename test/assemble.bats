@@ -25,6 +25,7 @@ setup() { source lib/assemble-dashboard-script.sh; }
   [[ "$output" == *"// part: modules/dashboard-enhancements/parts/native-ui-fixes.js"* ]]
   [[ "$output" == *"__cwptNativeUiFixes"* ]]
   [[ "$output" == *"// part: modules/dashboard-enhancements/parts/template-media-upload.js"* ]]
+  [[ "$output" == *"// part: modules/dashboard-enhancements/parts/failed-message-email-settings.js"* ]]
   [[ "$output" != *"whatsapp-theme.js"* ]]
   [[ "$output" != *"cwptWaTheme"* ]]
   [[ "$output" != *"cwpt-wa-theme"* ]]

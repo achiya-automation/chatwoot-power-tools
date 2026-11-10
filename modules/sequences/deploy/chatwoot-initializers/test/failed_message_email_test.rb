@@ -18,6 +18,14 @@ class FailedMessageEmailTest < Minitest::Test
     assert_equal %w[owner@example.com], FailedMessageEmail.recipients(setting, nil)
   end
 
+  def test_a_saved_setting_keeps_only_sender_and_real_addresses
+    sent = ['Sender', ' Owner@Example.com ', 'owner@example.com', 'javascript:alert(1)', '', nil, { 'a' => 1 }]
+    assert_equal %w[sender owner@example.com], FailedMessageEmail.clean(sent)
+    assert_empty FailedMessageEmail.clean(nil)
+    assert_empty FailedMessageEmail.clean('owner@example.com, other@example.com')
+    assert_equal FailedMessageEmail::MAX_RECIPIENTS, FailedMessageEmail.clean((1..40).map { |n| "a#{n}@example.com" }).size
+  end
+
   def test_an_account_without_the_setting_gets_no_email
     assert_empty FailedMessageEmail.recipients(nil, 'agent@example.com')
     assert_empty FailedMessageEmail.recipients(true, 'agent@example.com')

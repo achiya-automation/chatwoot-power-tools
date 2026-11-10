@@ -7,10 +7,12 @@
 # customer did not get it. This sends one short email per failed message: who it was
 # for, why it failed in plain words, and a link back to the conversation.
 #
-# Off unless the account opts in. The setting lives on the account itself, so it can
-# be switched on for one account without a deploy:
+# Off unless the account opts in. The setting is one more key in the account's own
+# settings, so an administrator switches it on from Settings -> Account (the dashboard
+# part failed-message-email-settings.js) and it travels through Chatwoot's own account
+# update and account payload:
 #
-#   account.custom_attributes['failed_message_email'] = ['sender', 'owner@example.com']
+#   account.settings['failed_message_email'] = ['sender', 'owner@example.com']
 #
 # 'sender' is the agent who sent the message; any other entry is an email address.
 #
@@ -25,6 +27,7 @@
 module FailedMessageEmail
   SETTING = 'failed_message_email'
   HOURLY_CAP = 30
+  MAX_RECIPIENTS = 10
   EMAIL = /\A[^@\s]+@[^@\s]+\.[^@\s]+\z/
 
   # Meta's WhatsApp error codes in words an agent can act on.
@@ -81,6 +84,13 @@ module FailedMessageEmail
     setting.map { |entry| entry.to_s.strip.casecmp('sender').zero? ? sender_email.to_s : entry.to_s.strip }
            .select { |address| address.match?(EMAIL) }
            .map(&:downcase).uniq
+  end
+
+  # What an account may store: 'sender' and well-formed addresses, nothing else.
+  def clean(value)
+    Array(value).map { |entry| entry.to_s.strip.downcase }
+                .select { |entry| entry == 'sender' || entry.match?(EMAIL) }
+                .uniq.first(MAX_RECIPIENTS)
   end
 
   def language(locale)
@@ -143,7 +153,7 @@ Rails.application.config.to_prepare do
     def email_failed_message
       return unless FailedMessageEmail.reportable?(self)
 
-      setting = account.custom_attributes&.dig(FailedMessageEmail::SETTING)
+      setting = account.settings&.dig(FailedMessageEmail::SETTING)
       sender_email = sender.is_a?(User) ? sender.email : nil
       to = FailedMessageEmail.recipients(setting, sender_email)
       return if to.empty?
@@ -178,4 +188,25 @@ Rails.application.config.to_prepare do
     Message.include(FailedMessageEmailHook)
     Message.after_update_commit :email_failed_message, if: -> { saved_change_to_status? && failed? }
   end
+
+  # Let the account update accept the setting. Chatwoot already limits that endpoint to
+  # administrators and already returns `settings` whole, so nothing else is needed to
+  # read or write it from the dashboard.
+  module FailedMessageEmailParams
+    private
+
+    def permitted_settings_attributes
+      super + [{ FailedMessageEmail::SETTING.to_sym => [] }]
+    end
+
+    def settings_params
+      permitted = super
+      setting = FailedMessageEmail::SETTING
+      permitted[setting] = FailedMessageEmail.clean(permitted[setting]) if permitted.key?(setting)
+      permitted
+    end
+  end
+
+  controller = Api::V1::AccountsController
+  controller.prepend(FailedMessageEmailParams) unless controller.ancestors.include?(FailedMessageEmailParams)
 end

@@ -49,11 +49,14 @@ _cwpt_module_parts() {
       # a first-class attachment (no synthetic change events, which vue-upload-component ignores).
       # template-media-upload adds the one thing the native template form lacks: a button that
       # uploads a header file instead of asking the agent for a public URL.
+      # failed-message-email-settings is the account-settings section for the Rails patch of the
+      # same name: who gets an email when an outgoing message fails to send.
       printf '%s\n' \
         "modules/dashboard-enhancements/parts/native-i18n-he.js" \
         "modules/dashboard-enhancements/parts/video-compressor.js" \
         "modules/dashboard-enhancements/parts/native-ui-fixes.js" \
-        "modules/dashboard-enhancements/parts/template-media-upload.js"
+        "modules/dashboard-enhancements/parts/template-media-upload.js" \
+        "modules/dashboard-enhancements/parts/failed-message-email-settings.js"
       ;;
     *)
       return 1
