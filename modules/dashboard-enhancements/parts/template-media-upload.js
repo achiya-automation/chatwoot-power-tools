@@ -31,11 +31,13 @@
     'hover:enabled:bg-n-slate-9/20 focus-visible:bg-n-slate-9/20 outline-transparent h-8 px-3 text-sm ' +
     'active:enabled:scale-[0.97] flex-shrink-0';
 
-  // The parser's placeholder carries the header format: "Enter Image URL" / "הזן כתובת URL של
-  // Document". Requiring both "URL" and a format word keeps every other url input untouched.
+  // The placeholder carries the header format: "Enter Image URL" inside a conversation,
+  // "Enter Document header" on the campaign form (and their translations, which keep the
+  // format word). A placeholder that is itself a URL (https://example.com/image.jpg) is a
+  // different field and is left alone, like every other url input.
   function formatOf(input) {
     var placeholder = (input && input.placeholder) || '';
-    if (!/url/i.test(placeholder)) return '';
+    if (placeholder.indexOf('://') !== -1) return '';
     var match = /\b(Image|Video|Document)\b/i.exec(placeholder);
     return match ? match[1].toUpperCase() : '';
   }
@@ -43,8 +45,8 @@
     var match = location.pathname.match(/accounts\/(\d+)/);
     return match ? match[1] : '';
   }
-  // The parser shows the picked template's name in an <h3>; it tells two templates apart when
-  // Vue reuses the same <input> node for both.
+  // The picked template's name tells two templates apart when Vue reuses the same <input>
+  // node for both: an <h3> above the fields in a conversation, the picker on the campaign form.
   function templateName(input) {
     var node = input;
     for (var i = 0; i < 10 && node; i++) {
@@ -52,7 +54,8 @@
       if (title) return (title.textContent || '').trim();
       node = node.parentElement;
     }
-    return '';
+    var picker = document.querySelector('#campaign-template button');
+    return picker ? (picker.textContent || '').trim() : '';
   }
   function setValue(input, value) {
     var descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
@@ -61,18 +64,24 @@
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
   // A document header has a second field for the file name the recipient sees.
-  // It sits in the row after ours (our own error line stands between the two).
+  // It sits in the element after ours (beside the field, our own error line stands between).
   function fileNameInput(after) {
     var next = after && after.nextElementSibling;
     return next ? next.querySelector('input[type="text"]') : null;
   }
 
   function attach(input) {
-    var row = input.closest('.flex.items-center') || input.parentElement;
+    // Chatwoot's <Input> wraps the field in a column. In a conversation that column sits in a
+    // row, so the button goes beside the field; on the campaign form there is no row, so the
+    // button goes under the field, inside the column that is removed together with it.
+    var column = input.parentElement;
+    var outer = column.parentElement;
+    var beside = !!(outer && outer.classList.contains('items-center'));
+    var row = beside ? outer : column;
     var button = document.createElement('button');
     button.type = 'button';
     button.className = BUTTON_CLASS;
-    button.style.marginInlineStart = '8px';
+    if (beside) button.style.marginInlineStart = '8px'; else button.style.alignSelf = 'flex-start';
     button.setAttribute('data-cwpt-media-upload', '1');
     button.textContent = t('upload');
 
@@ -81,13 +90,13 @@
     picker.hidden = true;
 
     var error = document.createElement('p');
-    error.className = 'text-xs text-n-ruby-9 mb-2.5';
+    error.className = beside ? 'text-xs text-n-ruby-9 mb-2.5' : 'text-xs text-n-ruby-9';
     error.setAttribute('role', 'alert');
     error.hidden = true;
 
     row.appendChild(button);
     row.appendChild(picker);
-    row.insertAdjacentElement('afterend', error);
+    if (beside) row.insertAdjacentElement('afterend', error); else row.appendChild(error);
 
     button.addEventListener('click', function (event) {
       event.preventDefault();
@@ -128,7 +137,7 @@
           // never drop one template's file into another.
           if (!input.isConnected || templateName(input) !== startedFor) return;
           setValue(input, url);
-          var nameInput = fileNameInput(error);
+          var nameInput = fileNameInput(beside ? error : row);
           if (nameInput && !(nameInput.value || '').trim() && file.name) setValue(nameInput, file.name);
         })
         .catch(function (failure) {

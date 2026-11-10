@@ -83,3 +83,40 @@ test('a file that finishes uploading after a template switch is not dropped into
   await tick();
   assert.equal(w.document.querySelector('input[type="url"]').value, '');
 });
+
+// The markup TemplateFields.vue renders on the campaign form: no row, one <Input> column per field.
+const campaign = (name, format) => `
+  <div id="campaign-template"><button><span>${name} (he)</span></button><ul><li>other (he)</li></ul></div>
+  <div class="flex flex-col gap-2">
+    <label>כותרת עליונה</label>
+    <div class="relative flex flex-col min-w-0 gap-1"><input type="url" placeholder="הזן כותרת עליונה מסוג ${format}"></div>
+    <div class="relative flex flex-col min-w-0 gap-1"><input type="text" id="file-name" placeholder="הזן שם מסמך"></div>
+  </div>
+  <input type="url" id="sample" placeholder="https://example.com/image.jpg">`;
+
+test('on the campaign form the button sits under the field and an upload fills both fields', async t => {
+  const w = await mount(t, campaign('document', 'Document'));
+  const url = w.document.querySelector('input[type="url"]');
+  const button = w.document.querySelector('[data-cwpt-media-upload]');
+  assert.equal(w.document.querySelectorAll('[data-cwpt-media-upload]').length, 1);
+  assert.equal(button.parentElement, url.parentElement);
+  assert.equal(w.document.getElementById('sample').hasAttribute('data-cwpt-media'), false);
+  let request;
+  w.fetch = async (address) => { request = address; return reply(200, { ok: true, data: { url: 'https://cdn.test/media/b.pdf' } }); };
+  pick(w, 'terms.pdf', 'application/pdf');
+  await tick();
+  assert.match(request, /format=DOCUMENT/);
+  assert.equal(url.value, 'https://cdn.test/media/b.pdf');
+  assert.equal(w.document.getElementById('file-name').value, 'terms.pdf');
+});
+
+test('on the campaign form a template switch during the upload leaves the new template empty', async t => {
+  const w = await mount(t, campaign('first', 'Image'));
+  let finish;
+  w.fetch = () => new Promise(resolve => { finish = resolve; });
+  pick(w, 'a.png', 'image/png');
+  w.document.querySelector('#campaign-template span').textContent = 'second (he)';
+  finish(reply(200, { ok: true, data: { url: 'https://cdn.test/media/first.png' } }));
+  await tick();
+  assert.equal(w.document.querySelector('input[type="url"]').value, '');
+});
