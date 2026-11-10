@@ -18,7 +18,7 @@ const parser = (name, format, withFileName) => `
 
 async function mount(t, html) {
   const dom = new JSDOM(`<!doctype html><div id="app" dir="rtl">${html}</div>`, {
-    url: 'https://chatwoot.test/app/accounts/23/conversations/5', runScripts: 'outside-only',
+    url: 'https://chatwoot.test/app/accounts/7/conversations/5', runScripts: 'outside-only',
   });
   t.after(() => dom.window.close());
   const w = dom.window;
@@ -55,7 +55,7 @@ test('an uploaded document fills the url and the file name through input events'
   url.addEventListener('input', () => events.push(url.value));
   pick(w, 'פוליסה.pdf', 'application/pdf');
   await tick();
-  assert.match(request.url, /^\/drip\/drip-api\/media\?account_id=23&format=DOCUMENT&locale=he$/);
+  assert.match(request.url, /^\/drip\/drip-api\/media\?account_id=7&format=DOCUMENT&locale=he$/);
   assert.equal(request.options.headers['x-filename'], encodeURIComponent('פוליסה.pdf'));
   assert.deepEqual(events, ['https://cdn.test/media/a.pdf']);
   assert.equal(w.document.getElementById('file-name').value, 'פוליסה.pdf');
