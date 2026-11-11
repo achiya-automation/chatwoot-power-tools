@@ -120,3 +120,56 @@ test('on the campaign form a template switch during the upload leaves the new te
   await tick();
   assert.equal(w.document.querySelector('input[type="url"]').value, '');
 });
+
+// ── twins: one template that takes a picture or a document ──────────────────────────────
+const tpl = (name, format, status = 'APPROVED') => ({ name, language: 'he', status, components: [{ type: 'HEADER', format }] });
+async function mountWithInboxes(t, html, templates) {
+  const dom = new JSDOM(`<!doctype html><div id="app" dir="rtl">${html}</div>`, {
+    url: 'https://chatwoot.test/app/accounts/7/conversations/5', runScripts: 'outside-only',
+  });
+  t.after(() => dom.window.close());
+  const w = dom.window;
+  w.__CW_ADDONS_BASE = '/drip';
+  w.fetch = async () => reply(200, { payload: [{ id: 1, message_templates: templates }] });
+  w.eval(source);
+  await new Promise(resolve => setTimeout(resolve, 550));
+  return w;
+}
+
+test('a document template with an approved image twin takes a picture and uploads it as an image', async t => {
+  const w = await mountWithInboxes(t, parser('offer', 'Document', true), [tpl('offer', 'DOCUMENT'), tpl('offer__image', 'IMAGE')]);
+  const picker = w.document.querySelector('input[type="file"]');
+  w.document.querySelector('[data-cwpt-media-upload]').click();
+  assert.match(picker.accept, /image\/jpeg/);
+  assert.match(picker.accept, /\.pdf/);
+  let request;
+  w.fetch = async url => { request = url; return reply(200, { ok: true, data: { url: 'https://cdn.test/media/a.jpg' } }); };
+  pick(w, 'flyer.jpg', 'image/jpeg');
+  await tick();
+  assert.match(request, /format=IMAGE/);
+  assert.equal(w.document.querySelector('input[type="url"]').value, 'https://cdn.test/media/a.jpg');
+});
+
+test('without an approved twin the template keeps its own format only', async t => {
+  const w = await mountWithInboxes(t, parser('offer', 'Document', true), [tpl('offer', 'DOCUMENT'), tpl('offer__image', 'IMAGE', 'PENDING')]);
+  const picker = w.document.querySelector('input[type="file"]');
+  w.document.querySelector('[data-cwpt-media-upload]').click();
+  assert.doesNotMatch(picker.accept, /image\/jpeg/);
+});
+
+test('twins are hidden from the template lists and ordinary templates stay', async t => {
+  const list = `
+    <div id="list">
+      <div><button id="base"><p>offer</p></button></div>
+      <div><button id="twin"><p>offer__image</p></button></div>
+      <div><button id="lookalike"><p>send_image</p></button></div>
+      <ul><li id="label-twin" role="option"><span>Offer  Document (he)</span></li><li id="label-plain" role="option"><span>Send Image (he)</span></li></ul>
+    </div>`;
+  const w = await mountWithInboxes(t, list, []);
+  const shown = id => w.document.getElementById(id).style.display !== 'none';
+  assert.equal(shown('twin'), false);
+  assert.equal(shown('label-twin'), false);
+  assert.equal(shown('base'), true);
+  assert.equal(shown('lookalike'), true);
+  assert.equal(shown('label-plain'), true);
+});
