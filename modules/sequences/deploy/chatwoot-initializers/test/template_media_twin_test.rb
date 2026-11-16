@@ -65,6 +65,22 @@ class TemplateMediaTwinTest < Minitest::Test
     assert_empty TemplateMediaTwin.plan([base, template('offer__image', 'IMAGE', body: 'New text {{1}}')])
   end
 
+  def test_the_header_file_of_a_sent_template_is_found_only_when_it_is_https
+    params = ->(url) { { 'processed_params' => { 'header' => { 'media_url' => url, 'media_type' => 'image' } } } }
+    assert_equal 'https://cw.test/drip/media/a.jpg', TemplateMediaTwin.header_media(params.call('https://cw.test/drip/media/a.jpg'))['media_url']
+    assert_nil TemplateMediaTwin.header_media(params.call('http://169.254.169.254/x.jpg'))
+    assert_nil TemplateMediaTwin.header_media(params.call(''))
+    assert_nil TemplateMediaTwin.header_media({ 'processed_params' => { 'body' => { '1' => 'x' } } })
+    assert_nil TemplateMediaTwin.header_media(nil)
+  end
+
+  def test_the_kept_file_shows_as_a_picture_a_video_or_a_file
+    assert_equal :image, TemplateMediaTwin.attachment_type('image/jpeg')
+    assert_equal :video, TemplateMediaTwin.attachment_type('video/mp4')
+    assert_equal :file, TemplateMediaTwin.attachment_type('application/pdf')
+    assert_equal :file, TemplateMediaTwin.attachment_type(nil)
+  end
+
   def test_the_samples_are_a_real_png_and_a_real_pdf
     assert Base64.decode64(TemplateMediaTwin::SAMPLE['IMAGE']).start_with?("\x89PNG".b)
     assert Base64.decode64(TemplateMediaTwin::SAMPLE['DOCUMENT']).start_with?('%PDF')

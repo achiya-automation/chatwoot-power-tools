@@ -125,6 +125,31 @@ module TemplateMediaTwin
                                  .map { |component| component.except('example') }
   end
 
+  # The header file of a template being sent, or nil. Only https: the server fetches it.
+  def header_media(template_params)
+    media = template_params.is_a?(Hash) ? template_params.dig('processed_params', 'header') : nil
+    media if media.is_a?(Hash) && media['media_url'].to_s.strip.start_with?('https://')
+  end
+
+  def attachment_type(content_type)
+    case content_type.to_s
+    when %r{\Aimage/} then :image
+    when %r{\Avideo/} then :video
+    else :file
+    end
+  end
+
+  # The name the file was uploaded with (the addons engine keeps it), so a document is not
+  # called after a random id. Falls back to the URL's own name.
+  def file_name(url)
+    file = File.basename(URI.parse(url.to_s.strip).path.to_s)
+    ActiveRecord::Base.connection.select_value(
+      ActiveRecord::Base.sanitize_sql_array(['SELECT orig_name FROM drip.media WHERE file = ? LIMIT 1', file])
+    ).presence || file
+  rescue StandardError
+    file
+  end
+
   # What to do for the twins of a template list: [[:create, template, kind] | [:update, template, twin, kind]].
   def plan(templates)
     Array(templates).filter_map do |template|
@@ -235,18 +260,7 @@ Rails.application.config.to_prepare do
       @template_params['name'] = twin['name']
       header = @template_params['processed_params']['header']
       header['media_type'] = kind.downcase
-      header['media_name'] = media_file_name(media['media_url']) if kind == 'DOCUMENT' && header['media_name'].blank?
-    end
-
-    # The name the file was uploaded with (the addons engine keeps it), so the recipient
-    # does not get a document called after a random id. Falls back to the URL's own name.
-    def media_file_name(url)
-      file = File.basename(URI.parse(url).path)
-      ActiveRecord::Base.connection.select_value(
-        ActiveRecord::Base.sanitize_sql_array(['SELECT orig_name FROM drip.media WHERE file = ? LIMIT 1', file])
-      ).presence || file
-    rescue StandardError
-      file
+      header['media_name'] = TemplateMediaTwin.file_name(media['media_url']) if kind == 'DOCUMENT' && header['media_name'].blank?
     end
   end
 
@@ -263,4 +277,66 @@ Rails.application.config.to_prepare do
 
   provider = Whatsapp::Providers::WhatsappCloudService
   provider.prepend(TemplateMediaTwinSync) unless provider.ancestors.include?(TemplateMediaTwinSync)
+
+  # The agent's copy: Chatwoot sends a template's header file to the customer but never
+  # stores it on the message, so the conversation shows the text alone and the agent
+  # cannot tell whether the file went out. After a successful send the same file is
+  # attached to the message. Never raises: the send itself already happened.
+  module TemplateMediaKeep
+    module_function
+
+    def attach(message, template_params)
+      media = TemplateMediaTwin.header_media(template_params)
+      return if message.nil? || media.nil? || message.attachments.exists?
+
+      url = media['media_url'].strip
+      blob = blob_for(url, media['media_name'].presence || TemplateMediaTwin.file_name(url))
+      message.attachments.create!(account_id: message.account_id, file_type: TemplateMediaTwin.attachment_type(blob.content_type),
+                                  file: blob)
+      # An update event, so a conversation that is open shows the file at once.
+      message.update!(updated_at: Time.current)
+    rescue StandardError => e
+      Rails.logger.warn "[template_media_keep] message #{message&.id}: #{e.class}"
+    end
+
+    # One stored copy per file, however many messages carry it: a campaign sends one file
+    # to many people. Active Storage keeps a blob while any attachment still points at it.
+    def blob_for(url, filename)
+      key = "cwpt:template_media_blob:#{Digest::SHA256.hexdigest(url)}"
+      blob = ActiveStorage::Blob.find_by(id: ::Redis::Alfred.get(key))
+      return blob if blob
+
+      blob = SafeFetch.fetch(url, validate_content_type: false) do |result|
+        ActiveStorage::Blob.create_and_upload!(io: result.tempfile, filename: filename, content_type: result.content_type)
+      end
+      ::Redis::Alfred.setex(key, blob.id, 30 * 24 * 60 * 60)
+      blob
+    end
+  end
+
+  module TemplateMediaKeepOnSend
+    private
+
+    def send_template_message
+      super
+      TemplateMediaKeep.attach(message, template_params) if message.source_id.present?
+    end
+  end
+
+  sender = Whatsapp::SendOnWhatsappService
+  sender.prepend(TemplateMediaKeepOnSend) unless sender.ancestors.include?(TemplateMediaKeepOnSend)
+
+  # Campaigns: whatsapp_campaign_conversations.rb records each sent opener as a message.
+  module TemplateMediaKeepOnCampaign
+    private
+
+    def create_campaign_conversation_and_message(contact, whatsapp_message_id, template_params)
+      super.tap do
+        TemplateMediaKeep.attach(Message.find_by(source_id: whatsapp_message_id.to_s), template_params)
+      end
+    end
+  end
+
+  campaign = Whatsapp::OneoffCampaignService
+  campaign.prepend(TemplateMediaKeepOnCampaign) unless campaign.ancestors.include?(TemplateMediaKeepOnCampaign)
 end
