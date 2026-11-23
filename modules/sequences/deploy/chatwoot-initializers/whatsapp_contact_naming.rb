@@ -239,6 +239,14 @@ Rails.application.config.to_prepare do
     def format_phone_number(phone_number) = ContactFields.phone(phone_number) || super
   end)
 
+  # 23.11.2026, Chatwoot 4.20: Contacts > Import now runs through DataImports::Csv::ContactWriter, which
+  # never calls the ContactManager above (kept for the older import path). Same row, same mapping, before
+  # upstream reads it; without this "050-..." became "+050..." and the row was rejected.
+  # safe_constantize: the class does not exist before 4.20, so this file still loads on a rolled-back 4.19.
+  'DataImports::Csv::ContactWriter'.safe_constantize&.prepend(Module.new do
+    def initialize(account, fields) = super(account, ContactFields.import_params(fields).transform_keys(&:to_s))
+  end)
+
   Whatsapp::IncomingMessageBaseService.prepend(Module.new do
     private
 
