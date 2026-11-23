@@ -990,7 +990,30 @@
           "TIERS": {
             "TIER_2K": "2,000 לקוחות ב-24 שעות"
           },
+          "MODES": {
+            "LIVE": "פעיל"
+          },
           "STATUSES": {
+            // the business category pill goes through the same lookup (formatStatusDisplay(vertical));
+            // without these keys Meta's enum shows title-cased English ("Undefined", "Prof Services")
+            "UNDEFINED": "לא נבחרה קטגוריה",
+            "AUTO": "רכב",
+            "BEAUTY": "יופי, ספא וטיפוח",
+            "APPAREL": "ביגוד ואופנה",
+            "EDU": "חינוך",
+            "ENTERTAIN": "בידור",
+            "EVENT_PLAN": "הפקת אירועים",
+            "FINANCE": "פיננסים",
+            "GROCERY": "מזון ומכולת",
+            "GOVT": "ממשל ושירות ציבורי",
+            "HOTEL": "מלונאות ולינה",
+            "HEALTH": "רפואה ובריאות",
+            "NONPROFIT": "עמותה",
+            "PROF_SERVICES": "שירותים מקצועיים",
+            "RETAIL": "קמעונאות",
+            "TRAVEL": "תיירות ונסיעות",
+            "RESTAURANT": "מסעדות",
+            "NOT_A_BIZ": "לא עסק",
             "CONNECTED": "מחובר",
             "EXPIRED": "פג תוקף",
             "FLAGGED": "מסומן",
@@ -1003,9 +1026,10 @@
             "DECLINED": "לא אושר"
           },
           "QUALITY": {
-            "GREEN": "ירוק",
-            "YELLOW": "צהוב",
-            "RED": "אדום"
+            "GREEN": "גבוה",
+            "YELLOW": "בינוני",
+            "RED": "נמוך",
+            "UNKNOWN": "עדיין אין דירוג"
           },
           "TIER_NAMES": {
             "TIER_250": "רמה 250",
@@ -1247,7 +1271,32 @@
     }
   }
 
+  // settings/inboxes/:id, account health (AccountHealth.vue, 4.20):
+  // - the quality pill prints Meta's raw rating (GREEN, UNKNOWN…) straight from the data and never
+  //   looks up the QUALITY keys it ships. Only the text node changes; the colour class keys off the raw value.
+  // - Meta's display number ("+972 3-376-0069") sits in RTL with no isolation and reads "3-376-0069 972+".
+  //   dir=ltr isolates it; a block keeps its start (right) edge.
+  var QUALITY_HE = HE_MESSAGES.INBOX_MGMT.ACCOUNT_HEALTH.VALUES.QUALITY;
+  var PHONE = /^\+\d[\d\s()-]{6,}$/;
+  function inboxHealth() {
+    if (!/\/settings\/inboxes\/\d+/.test(location.pathname) || !isHe()) return;
+    var els = document.querySelectorAll('main p, main span');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var n = el.firstChild;
+      if (!n || n.nodeType !== 3 || el.childNodes.length !== 1) continue;
+      var k = n.nodeValue.trim();
+      if (el.classList.contains('bg-n-alpha-2') && Object.prototype.hasOwnProperty.call(QUALITY_HE, k)) {
+        n.nodeValue = QUALITY_HE[k];
+      } else if (PHONE.test(k) && !el.hasAttribute('dir')) {
+        el.setAttribute('dir', 'ltr');
+        if (getComputedStyle(el).display === 'block') el.style.textAlign = 'right';
+      }
+    }
+  }
+
   function tick() {
+    inboxHealth();
     if (!onTargetPage() || !isHe()) return;
     // body, not <main>: the settings sidebar carries the "Templates" menu label too.
     // Safe because the dictionary only runs on the two target routes.
