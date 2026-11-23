@@ -299,6 +299,230 @@
         "EXPORTED": "יוצאו",
         "COUNT": "מוצג ייצוא אחד | מוצגים {count} ייצואים"
       }
+    },
+    // Chatwoot 4.20's new WhatsApp inbox screens (manual Cloud API setup, the per-inbox app secret, the move off
+    // embedded signup) and the widget security settings shipped with these keys missing from he (23.11.2026).
+    "INBOX_MGMT": {
+      "VIEW_CONVERSATIONS": "צפייה בשיחות",
+      "CHANNEL_PREFERENCES": "העדפות הערוץ",
+      "EDIT": {
+        "LOCK_TO_SINGLE_CONVERSATION": {
+          "ENABLED": "פתיחה מחדש של אותה שיחה",
+          "DISABLED": "פתיחת שיחה חדשה",
+          "ENABLED_DESCRIPTION": "כשאיש הקשר כותב שוב, השיחה הקודמת נפתחת מחדש.",
+          "DISABLED_DESCRIPTION": "אחרי שהשיחה הקודמת נפתרה, כל פנייה חדשה פותחת שיחה חדשה."
+        }
+      },
+      "ADD": {
+        "WHATSAPP": {
+          "PROVIDERS": {
+            "WHATSAPP_CLOUD_MANUAL_SETUP_DESC": "חיבור ידני עם הפרטים של ה-Cloud API"
+          },
+          "APP_SECRET": {
+            "LABEL": "סוד האפליקציה (App secret)",
+            "PLACEHOLDER": "סוד האפליקציה שלכם במטא",
+            "ERROR": "נא להזין ערך תקין."
+          },
+          "MANUAL_SETUP": {
+            "HEADER": {
+              "TITLE": "חיבור ידני של וואטסאפ",
+              "DESCRIPTION": "בצעו את השלבים האלה כדי להכין את החשבון שלכם במטא ולחבר את המספר ל-Chatwoot."
+            },
+            "APP": {
+              "TITLE": "יצירה או בחירה של אפליקציה במטא",
+              "DESCRIPTION": "מספר הוואטסאפ צריך להיות שייך לאפליקציה במטא שהופעל בה WhatsApp.",
+              "ITEM_1": "פתחו את {metaDevelopers} והתחברו עם חשבון של מנהל.",
+              "ITEM_2": "צרו אפליקציה חדשה, או בחרו את האפליקציה שכבר משמשת את מספר הוואטסאפ הזה.",
+              "ITEM_3": "בחרו באפשרות להתחבר ללקוחות דרך WhatsApp.",
+              "ITEM_4": "בחרו את תיק העסק (Business portfolio) שמספר הוואטסאפ שייך לו, או יהיה שייך לו.",
+              "VIDEO_TITLE": "סרטון: יצירת אפליקציה במטא",
+              "VIDEO_DESCRIPTION": "הסרטון הקצר מראה איפה מתחילים אפליקציה חדשה ב-Meta Developers."
+            },
+            "NUMBER": {
+              "TITLE": "הוספת מספר הטלפון וקבלת המזהים שלו",
+              "DESCRIPTION": "הוסיפו ואמתו את המספר העסקי באפליקציה שלכם במטא, ואז העתיקו את שני המזהים שמופיעים ב-API Setup.",
+              "ITEM_1": "פתחו את WhatsApp באפליקציה שלכם במטא ובחרו API Setup.",
+              "ITEM_2": "באזור Send and receive messages, פתחו את הבחירה From.",
+              "ITEM_3": "בחרו מספר עסקי קיים, או בחרו Add phone number.",
+              "ITEM_4": "השלימו את הפרופיל העסקי בוואטסאפ שמטא מבקשת.",
+              "ITEM_5": "אמתו את מספר הטלפון עם הקוד שנשלח ב-SMS או בשיחה קולית.",
+              "ITEM_6": "העתיקו את Phone Number ID ואת WhatsApp Business Account ID שמופיעים ב-API Setup.",
+              "VIDEO_TITLE": "סרטון: הוספת מספר טלפון ומציאת המזהים שלו",
+              "VIDEO_DESCRIPTION": "הסרטון מראה איך מוסיפים או בוחרים מספר עסקי ומעתיקים את המזהים ממטא."
+            },
+            "TOKEN": {
+              "TITLE": "יצירת טוקן גישה קבוע",
+              "DESCRIPTION": "צרו במטא משתמש מערכת (System user) עם גישה לאפליקציה ולחשבון WhatsApp Business.",
+              "ITEM_1": "פתחו את Meta Business Settings ועברו אל Users → System users.",
+              "ITEM_2": "צרו משתמש מערכת עם הרשאת מנהל, או בחרו משתמש קיים.",
+              "ITEM_3": "שייכו למשתמש המערכת את האפליקציה שלכם במטא ואת חשבון WhatsApp Business.",
+              "ITEM_4": "תנו שליטה מלאה בנכסי הוואטסאפ ששויכו.",
+              "ITEM_5": "צרו טוקן לאפליקציה שלכם במטא, וקבעו לו תוקף Never.",
+              "ITEM_6": "בחרו whatsapp_business_management ו-whatsapp_business_messaging, ואז העתיקו את הטוקן.",
+              "VIDEO_TITLE": "סרטון: יצירת טוקן גישה קבוע",
+              "VIDEO_DESCRIPTION": "הסרטון מראה איך בוחרים את האפליקציה שלכם במטא, טוקן בלי תאריך תפוגה ואת הרשאות הוואטסאפ הנדרשות.",
+              "WARNING": "מטא מציגה את הטוקן רק פעם אחת. העתיקו אותו לפני שסוגרים את החלון."
+            },
+            "DETAILS": {
+              "WABA_LABEL": "מזהה חשבון WhatsApp Business (WABA ID)",
+              "WABA_PLACEHOLDER": "הזינו את ה-WABA ID",
+              "PHONE_ID_LABEL": "מזהה מספר הטלפון (Phone Number ID)",
+              "PHONE_ID_PLACEHOLDER": "הזינו את ה-Phone Number ID",
+              "TOKEN_LABEL": "טוקן גישה קבוע",
+              "TOKEN_PLACEHOLDER": "הדביקו את טוקן הגישה",
+              "APP_SECRET_LABEL": "סוד האפליקציה (App secret)",
+              "APP_SECRET_PLACEHOLDER": "הדביקו את סוד האפליקציה",
+              "APP_SECRET_HELP": "נמצא באפליקציה שלכם במטא, תחת App settings > Basic. בעזרתו בודקים שההודעות הנכנסות באמת מגיעות ממטא."
+            },
+            "REVIEW": {
+              "TITLE": "יצירת תיבת הוואטסאפ",
+              "DESCRIPTION": "בדקו את פרטי המספר ובחרו שם לתיבה.",
+              "VERIFIED": "המספר במטא וטוקן הגישה תקינים.",
+              "PHONE_ID": "מזהה מספר הטלפון (Phone Number ID)",
+              "WABA_ID": "מזהה חשבון WhatsApp Business (WABA ID)",
+              "INBOX_NAME_HELP": "יצרנו את השם הזה מהשם העסקי המאומת שלכם במטא. אפשר לשנות אותו."
+            },
+            "VERIFY": {
+              "TITLE": "בדיקת החיבור",
+              "DESCRIPTION": "Chatwoot בודק את הגישה למספר ומגדיר את ה-webhook שלכם במטא.",
+              "NUMBER_ACCESS": "גישה למספר",
+              "TEMPLATE_ACCESS": "גישה לתבניות",
+              "CALLBACK": "כתובת ה-webhook",
+              "SUBSCRIPTION": "הרשמה ל-webhook",
+              "COPY_SUCCESS": "כתובת ה-webhook הועתקה",
+              "SUCCESS": "מספר הוואטסאפ שלכם מחובר ומוכן לשיוך נציגים.",
+              "RETRY_SUCCESS": "הגדרת ה-webhook נוסתה שוב בהצלחה.",
+              "RETRY_ERROR": "לא הצלחנו לנסות שוב את הגדרת ה-webhook. נסו שוב."
+            },
+            "ACTIONS": {
+              "OPEN_META_APPS": "פתיחת האפליקציות במטא",
+              "APP_READY": "האפליקציה שלי במטא מוכנה",
+              "NEXT": "הבא",
+              "OPEN_BUSINESS_SETTINGS": "פתיחת Meta Business Settings",
+              "SHOW_TOKEN": "הצגת הטוקן",
+              "HIDE_TOKEN": "הסתרת הטוקן",
+              "VERIFY_DETAILS": "בדיקת הפרטים",
+              "RETRY_WEBHOOK": "ניסיון חוזר להגדרת ה-webhook",
+              "CONTINUE": "המשך להוספת נציגים"
+            },
+            "ERRORS": {
+              "IDS_REQUIRED": "הזינו את Phone Number ID ואת WhatsApp Business Account ID.",
+              "INVALID_TOKEN": "טוקן הגישה לא תקין או שפג תוקפו. צרו טוקן קבוע חדש ונסו שוב.",
+              "GENERIC": "לא הצלחנו להשלים את חיבור הוואטסאפ. בדקו את הפרטים ונסו שוב."
+            }
+          }
+        }
+      },
+      "SETTINGS_POPUP": {
+        "ALLOWED_DOMAINS": {
+          "DESCRIPTION": "הגבילו את האתרים שיכולים להטמיע את חלון הצ'אט שלכם. כדי לשמור על אבטחה, הוסיפו רק דומיינים שבבעלותכם ושאתם סומכים עליהם. אפשר להוסיף כמה דומיינים, מופרדים בפסיקים. שדה ריק מתיר כל דומיין (לא מומלץ באתר חי)."
+        },
+        "ALLOW_MOBILE_WEBVIEW": {
+          "LABEL": "הפעלת חלון הצ'אט באפליקציות לנייד",
+          "SUBTITLE": "סמנו את זה אם חלון הצ'אט מוטמע באפליקציות iOS או Android. אפליקציות לנייד לא שולחות את הדומיין, ולכן הגבלת הדומיינים תחסום אותן כשהאפשרות הזו כבויה."
+        },
+        "IDENTITY_VALIDATION": {
+          "TITLE": "אימות זהות",
+          "DESCRIPTION": "בודקים בעזרת טוקנים מאובטחים שהמשתמש הוא באמת מי שהוא אומר. כך אף אחד לא יכול להתחזות למישהו אחר בצ'אט.",
+          "VIEW_DOCS": "לתיעוד",
+          "REQUIRE_LABEL": "חובת אימות זהות בכל השיחות",
+          "REQUIRE_DESCRIPTION": "כשזה מופעל, משתמשים צריכים טוקן זהות תקין כדי לפתוח שיחה. בקשות בלי טוקן תקין נדחות.",
+          "ROTATE": {
+            "BUTTON": "החלפת מפתח",
+            "TITLE": "להחליף את המפתח הסודי?",
+            "WARNING": "המפתח הנוכחי מבוטל ברגע שמחליפים אותו.",
+            "WARNING_DETAIL": "אין תקופת מעבר, ואי אפשר להחזיר אותו.",
+            "IMPACT": "השרתים שלכם צריכים לחתום על המשתמשים במפתח החדש. מי שעדיין חתום במפתח הישן נכשל באימות, ואם אימות הזהות הוא חובה, הוא לא יוכל לפתוח שיחה.",
+            "CONFIRM": "החלפת מפתח",
+            "SUCCESS": "המפתח הסודי הוחלף",
+            "ERROR": "לא הצלחנו להחליף את המפתח הסודי. נסו שוב"
+          }
+        },
+        "SENDER_NAME_SECTION_TEXT": "הצגה או הסתרה של שם הנציג במייל. כשזה כבוי, מוצג שם העסק",
+        "ENABLE_CONTINUITY_VIA_EMAIL_DISABLED_TEXT": "האפשרות הזו זמינה במסלול בתשלום. שדרגו כדי להמשיך שיחות גם במייל.",
+        "LOCK_TO_SINGLE_CONVERSATION": "ניתוב שיחות",
+        "LOCK_TO_SINGLE_CONVERSATION_SUB_TEXT": "איך נפתחות שיחות לאנשי קשר קיימים",
+        "FORWARD_EMAIL_NOT_CONFIGURED": "העברת מיילים לתיבה כבויה כרגע בהתקנה הזו. כדי להשתמש באפשרות, מנהל המערכת צריך להפעיל אותה. פנו אליו כדי להמשיך.",
+        "WHATSAPP_APP_SECRET_TITLE": "סוד האפליקציה (App Secret)",
+        "WHATSAPP_APP_SECRET_SUBHEADER": "הזינו את סוד האפליקציה שלכם במטא (App settings > Basic). בעזרתו בודקים שההודעות הנכנסות באמת מגיעות ממטא.",
+        "WHATSAPP_APP_SECRET_MISSING": "ההודעות הנכנסות לתיבה הזו עוד לא מאומתות. הוסיפו את סוד האפליקציה ממטא כדי להשלים את ההגדרה.",
+        "WHATSAPP_APP_SECRET_PLACEHOLDER": "הזינו כאן את סוד האפליקציה",
+        "WHATSAPP_BUSINESS_MANAGEMENT_TOKEN_ADD_TITLE": "הוספת טוקן לניהול העסק (Business Management)",
+        "WHATSAPP_BUSINESS_MANAGEMENT_TOKEN_REPLACE_TITLE": "החלפת הטוקן לניהול העסק (Business Management)",
+        "WHATSAPP_BUSINESS_MANAGEMENT_TOKEN_CONFIGURED": "הטוקן לניהול העסק מוגדר",
+        "WHATSAPP_BUSINESS_MANAGEMENT_TOKEN_UPDATE_SUBHEADER": "כש-Chatwoot לא מצליח למשוך את תבניות ההודעות של חשבון WhatsApp Business הזה, תנו לו טוקן עם גישה לחשבון. Chatwoot משתמש בטוקן הזה רק לסנכרון התבניות.",
+        "WHATSAPP_BUSINESS_MANAGEMENT_TOKEN_UPDATE_PLACEHOLDER": "הזינו את הטוקן לניהול העסק",
+        "WHATSAPP_BUSINESS_MANAGEMENT_TOKEN_REPLACE_BUTTON": "החלפה",
+        "WHATSAPP_BUSINESS_MANAGEMENT_TOKEN_UPDATE_SUCCESS": "הטוקן לניהול העסק בוואטסאפ עודכן.",
+        "WHATSAPP_BUSINESS_MANAGEMENT_TOKEN_UPDATE_ERROR": "לא הצלחנו לעדכן את הטוקן לניהול העסק. בדקו שיש לו הרשאת WhatsApp Business Management וגישה לחשבון, ונסו שוב.",
+        "WHATSAPP_BUSINESS_MANAGEMENT_TOKEN_GUIDE_LINK": "איך יוצרים טוקן WhatsApp Business Management",
+        "WHATSAPP_MANUAL_TRANSFER_TITLE": "מעבר לחיבור ידני",
+        "WHATSAPP_MANUAL_TRANSFER_SUBHEADER": "התיבה הזו חוברה דרך ההרשמה המוטמעת של וואטסאפ (embedded signup), שכבר לא נתמכת. הזינו את הפרטים של WhatsApp Cloud API מהאפליקציה שלכם במטא כדי להעביר את התיבה לחיבור ידני. לפני המעבר, הגדירו את ה-webhook באפליקציה שלכם במטא עם טוקן האימות שלמעלה.",
+        "WHATSAPP_MANUAL_TRANSFER_PHONE_NUMBER_ID_LABEL": "מזהה מספר הטלפון (Phone Number ID)",
+        "WHATSAPP_MANUAL_TRANSFER_API_KEY_PLACEHOLDER": "הזינו טוקן גישה קבוע מהאפליקציה שלכם במטא",
+        "WHATSAPP_MANUAL_TRANSFER_BUTTON": "מעבר לחיבור ידני",
+        "WHATSAPP_MANUAL_TRANSFER_SUCCESS": "התיבה עברה לחיבור ידני.",
+        "WHATSAPP_MANUAL_TRANSFER_ERROR": "לא הצלחנו לעבור לחיבור ידני. בדקו את הפרטים ונסו שוב.",
+        "WHATSAPP_MANUAL_MIGRATION": {
+          "BANNER": {
+            "TITLE": "מומלץ לעבור לחיבור ידני",
+            "DESCRIPTION": "התיבה הזו מחוברת דרך האפליקציה המשותפת של מטא להרשמה המוטמעת, ומגבלות שמטא הטילה לאחרונה פגעו בה. כדי להימנע מתקלות כאלה בעתיד, מומלץ לחבר אותה מחדש עם אפליקציה משלכם במטא.",
+            "START": "התחלת המעבר לחיבור ידני",
+            "GUIDE": "למדריך"
+          },
+          "DIALOG": {
+            "EYEBROW": "מעבר לחיבור ידני של וואטסאפ",
+            "TITLE": "חיבור מחדש של תיבת הוואטסאפ",
+            "ACTION_REQUIRED_TITLE": "חיבור מחדש עם אפליקציה משלכם במטא",
+            "ACTION_REQUIRED_DESCRIPTION": "מגבלות על האפליקציה המשותפת של ההרשמה המוטמעת לא חלות על תיבות שמחוברות דרך אפליקציה משלכם במטא. התהליך המודרך הזה מעדכן את חיבור ה-WhatsApp API בלי ליצור תיבה חדשה.",
+            "GUIDE_LINK": "פתיחת המדריך לחיבור ידני",
+            "PRESERVED_TITLE": "נשמר",
+            "PRESERVED_DESCRIPTION": "שיחות, אנשי קשר, משתתפים, ניתוב, שעות פעילות והגדרות התיבה.",
+            "UPDATED_TITLE": "מתעדכן",
+            "UPDATED_DESCRIPTION": "מזהה ה-WABA, מזהה מספר הטלפון, טוקן הגישה והגדרות ה-webhook.",
+            "WABA_ID": "מזהה WABA",
+            "WABA_PLACEHOLDER": "הזינו את ה-WABA ID",
+            "WABA_HELP": "חשבון WhatsApp Business שמספר הטלפון הזה שייך לו.",
+            "PHONE_NUMBER_ID": "מזהה מספר הטלפון (Phone Number ID)",
+            "PHONE_NUMBER_PLACEHOLDER": "הזינו את ה-Phone Number ID",
+            "PHONE_NUMBER_HELP": "המזהה הייחודי שמטא נותנת למספר הוואטסאפ שמחובר לתיבה הזו.",
+            "DISPLAY_PHONE_NUMBER_PLACEHOLDER": "הזינו את המספר שמוצג ללקוחות",
+            "DISPLAY_PHONE_NUMBER_HELP": "מספר הוואטסאפ שהלקוחות רואים. אי אפשר לשנות אותו במעבר.",
+            "ACCESS_TOKEN": "טוקן גישה קבוע או טוקן של משתמש מערכת",
+            "ACCESS_TOKEN_PLACEHOLDER": "הדביקו את טוקן הגישה",
+            "APP_SECRET": "סוד האפליקציה (App secret)",
+            "APP_SECRET_PLACEHOLDER": "סוד האפליקציה מ-App settings > Basic באפליקציה שלכם במטא",
+            "TOKEN_HELP_PREFIX": "הטוקן חייב לכלול את",
+            "TOKEN_HELP_SUFFIX": "לסנכרון התבניות ולניהול שלהן.",
+            "REVIEW_TITLE": "בדיקה לפני החיבור מחדש",
+            "NOT_ENTERED": "לא הוזן",
+            "VERIFY_NOTICE": "Chatwoot יבדוק את הפרטים האלה מול מטא לפני שהוא משנה משהו. אם הבדיקה נכשלת, ההגדרות הנוכחיות נשארות כמו שהן.",
+            "REVIEW_MIGRATION": "בדיקת המעבר",
+            "RECONNECT": "חיבור מחדש של תיבת הוואטסאפ"
+          },
+          "STEPS": {
+            "BEFORE_YOU_START": {
+              "TITLE": "לפני שמתחילים",
+              "DESCRIPTION": "התהליך מחבר מחדש את הפרטים של WhatsApp API בתיבה הזו. השיחות, המשתתפים, הניתוב, שעות הפעילות, סקר שביעות הרצון (CSAT) והגדרות הבוט נשמרים."
+            },
+            "BUSINESS_DETAILS": {
+              "TITLE": "פרטי העסק",
+              "DESCRIPTION": "הזינו את נכסי הוואטסאפ מחשבון Meta Business של הלקוח."
+            },
+            "ACCESS_TOKEN": {
+              "TITLE": "טוקן גישה"
+            },
+            "REVIEW_MIGRATION": {
+              "TITLE": "בדיקת המעבר",
+              "DESCRIPTION": "אשרו את פרטי החיבור לפני שמחברים מחדש את התיבה. Chatwoot יבדוק מול מטא את הטוקן, ה-WABA ומספר הטלפון לפני שהוא משנה משהו."
+            }
+          }
+        },
+        "WHATSAPP_CALLING_ENABLED": {
+          "LABEL": "הפעלת שיחות קוליות",
+          "DESCRIPTION": "נציגים יוכלו להתחיל ולקבל שיחות קוליות בוואטסאפ בתיבה הזו. זמין רק בערוצי WhatsApp Cloud שחוברו בהרשמה המוטמעת, עם הרשאת שיחות ממטא."
+        }
+      }
     }
   };
   function findI18n() {
