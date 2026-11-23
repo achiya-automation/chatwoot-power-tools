@@ -20,7 +20,8 @@ var __cwImport = (() => {
   // ui/entry.js
   var entry_exports = {};
   __export(entry_exports, {
-    openWizard: () => openWizard
+    submit: () => submit,
+    take: () => take
   });
 
   // lib/csvParser.js
@@ -31,6 +32,7 @@ var __cwImport = (() => {
     let field = "";
     let record = [];
     let inQuotes = false;
+    let fresh = true;
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
       if (inQuotes) {
@@ -42,17 +44,24 @@ var __cwImport = (() => {
         } else field += ch;
         continue;
       }
-      if (ch === '"') inQuotes = true;
-      else if (ch === delim) {
+      if (ch === delim) {
         record.push(field);
         field = "";
-      } else if (ch === "\n" || ch === "\r") {
+        fresh = true;
+        continue;
+      }
+      if (ch === "\n" || ch === "\r") {
         if (ch === "\r" && text[i + 1] === "\n") i++;
         record.push(field);
         field = "";
+        fresh = true;
         if (record.length > 1 || record[0] !== "") records.push(record);
         record = [];
-      } else field += ch;
+        continue;
+      }
+      if (ch === '"' && fresh) inQuotes = true;
+      else field += ch;
+      fresh = false;
     }
     if (field !== "" || record.length) {
       record.push(field);
@@ -63,16 +72,22 @@ var __cwImport = (() => {
   function detectDelimiter(line) {
     const counts = { ",": 0, ";": 0, "	": 0 };
     let inQuotes = false;
-    for (const ch of line) {
-      if (ch === '"') inQuotes = !inQuotes;
-      else if (!inQuotes && ch in counts) counts[ch]++;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (line[i + 1] === '"') i++;
+          else inQuotes = false;
+        }
+      } else if (ch === '"') inQuotes = i === 0 || line[i - 1] in counts;
+      else if (ch in counts) counts[ch]++;
     }
     return Object.keys(counts).reduce((a, b) => counts[b] > counts[a] ? b : a, ",");
   }
 
   // lib/xlsxReader.js
   function parseXlsxAoA(aoa) {
-    const headers = (aoa[0] || []).map((h) => String(h ?? "").trim());
+    const headers = (aoa[0] || []).map((h2) => String(h2 ?? "").trim());
     const rows = [];
     for (let i = 1; i < aoa.length; i++) {
       const r = aoa[i] || [];
@@ -119,18 +134,6 @@ var __cwImport = (() => {
   }
 
   // lib/columnDetector.js
-  var SYSTEM_FIELDS = [
-    "name",
-    "first_name",
-    "last_name",
-    "phone_number",
-    "phone_number_alt",
-    "email",
-    "identifier",
-    "company_name",
-    "city",
-    "country"
-  ];
   var SYNONYMS = {
     first_name: ["\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9", "\u05E4\u05E8\u05D8\u05D9", "firstname", "first name", "fname", "given name"],
     last_name: ["\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4", "\u05DE\u05E9\u05E4\u05D7\u05D4", "lastname", "last name", "surname", "family name"],
@@ -145,17 +148,19 @@ var __cwImport = (() => {
     identifier: ["\u05DE\u05D6\u05D4\u05D4", "\u05DE\u05D6\u05D4\u05D4 \u05D7\u05D9\u05E6\u05D5\u05E0\u05D9", "\u05EA\u05D6", '\u05EA"\u05D6', "\u05EA.\u05D6", "\u05DE\u05E1\u05E4\u05E8 \u05EA\u05D6", "\u05DE\u05E1 \u05EA\u05D6", "\u05DE\u05E1\u05E4\u05E8 \u05D6\u05D4\u05D5\u05EA", "\u05EA\u05E2\u05D5\u05D3\u05EA \u05D6\u05D4\u05D5\u05EA", "\u05DE\u05E1\u05E4\u05E8 \u05EA\u05E2\u05D5\u05D3\u05EA \u05D6\u05D4\u05D5\u05EA", "id", "identifier", "external id", "ref"],
     company_name: ["\u05D7\u05D1\u05E8\u05D4", "\u05E2\u05E1\u05E7", "\u05D0\u05E8\u05D2\u05D5\u05DF", "\u05E9\u05DD \u05D7\u05D1\u05E8\u05D4", "company", "company name", "organization", "organisation", "business"],
     city: ["\u05E2\u05D9\u05E8", "\u05D9\u05D9\u05E9\u05D5\u05D1", "\u05D9\u05E9\u05D5\u05D1", "city", "town"],
-    country: ["\u05DE\u05D3\u05D9\u05E0\u05D4", "\u05D0\u05E8\u05E5", "country"]
+    country: ["\u05DE\u05D3\u05D9\u05E0\u05D4", "\u05D0\u05E8\u05E5", "country"],
+    // Chatwoot's own CSV column: comma-separated label titles that already exist.
+    labels: ["labels", "label", "tags", "tag", "\u05EA\u05D5\u05D5\u05D9\u05D5\u05EA", "\u05EA\u05D5\u05D5\u05D9\u05EA", "\u05EA\u05D2\u05D9\u05D5\u05EA"]
   };
-  function normHeader(h) {
-    return String(h || "").toLowerCase().replace(/["'.\-_/\\]/g, "").replace(/\s+/g, " ").trim();
+  function normHeader(h2) {
+    return String(h2 || "").toLowerCase().replace(/["'׳״“”„‘’.\-_/\\]/g, "").replace(/\s+/g, " ").trim();
   }
   var FILLER_WORDS = /* @__PURE__ */ new Set(["\u05DC\u05E7\u05D5\u05D7", "\u05DC\u05E7\u05D5\u05D7\u05D4", "customer", "client"]);
   function stripFiller(n) {
     return n.split(" ").filter((w) => !FILLER_WORDS.has(w)).join(" ");
   }
-  function headerField(header2) {
-    const n = stripFiller(normHeader(header2));
+  function headerField(header) {
+    const n = stripFiller(normHeader(header));
     if (!n) return null;
     let best = null;
     let bestLen = 0;
@@ -170,12 +175,13 @@ var __cwImport = (() => {
     }
     return best;
   }
+  var IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
   function contentField(values) {
     const nonEmpty = values.filter((v) => v && v.trim());
     if (!nonEmpty.length) return null;
     const emailish = nonEmpty.filter((v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.trim())).length;
     if (emailish / nonEmpty.length >= 0.6) return "email";
-    const phoneish = nonEmpty.filter((v) => normalizePhone(v) !== null).length;
+    const phoneish = nonEmpty.filter((v) => !IPV4.test(v.trim()) && normalizePhone(v) !== null).length;
     if (phoneish / nonEmpty.length >= 0.6) return "phone_number";
     return null;
   }
@@ -213,8 +219,8 @@ var __cwImport = (() => {
       return v !== "" && ALL_SYNONYMS.has(stripFiller(normHeader(v)));
     });
   }
-  function matchCustomField(header2, customDefs) {
-    const n = stripFiller(normHeader(header2));
+  function matchCustomField(header, customDefs) {
+    const n = stripFiller(normHeader(header));
     if (!n) return null;
     for (const d of customDefs || []) {
       if (normHeader(d.attribute_display_name) === n || normHeader(d.attribute_key) === n) {
@@ -223,11 +229,17 @@ var __cwImport = (() => {
     }
     return null;
   }
+  function ownField(header) {
+    const n = stripFiller(normHeader(header));
+    return Object.keys(SYNONYMS).find((field) => normHeader(field) === n) || null;
+  }
   function detectColumns(headers, sampleRows) {
-    const taken = /* @__PURE__ */ new Set();
-    return headers.map((header2, index) => {
+    const own = headers.map(ownField).map((field, i, all) => field && all.indexOf(field) === i ? field : null);
+    const taken = new Set(own.filter(Boolean));
+    return headers.map((header, index) => {
+      if (own[index]) return { header, index, field: own[index], confidence: 0.9 };
       const col = sampleRows.map((r) => r[index]);
-      let field = headerField(header2);
+      let field = headerField(header);
       let confidence = field ? 0.9 : 0;
       if (!field) {
         field = contentField(col);
@@ -239,7 +251,7 @@ var __cwImport = (() => {
         confidence = isPhone ? 0.6 : 0;
       }
       if (field && field !== "phone_number_alt") taken.add(field);
-      return { header: header2, index, field, confidence };
+      return { header, index, field, confidence };
     });
   }
 
@@ -279,324 +291,44 @@ var __cwImport = (() => {
     return payload;
   }
 
-  // lib/dedup.js
-  var KEYS = ["identifier", "phone_number", "email"];
-  function clause(key, value) {
-    return { attribute_key: key, filter_operator: "equal_to", values: [value], query_operator: null };
+  // lib/labelTitle.js
+  var VALID_LABEL_TITLE = /^[\p{L}\p{N}][\p{L}\p{N}_-]+$/u;
+  function normalizeLabelTitle(value) {
+    return String(value ?? "").trim().replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/_+/g, "_").replace(/^[_-]+/, "").replace(/[_-]+$/, "");
   }
-  function buildFilterPayload(contact) {
-    const clauses = KEYS.filter((k) => contact[k] != null && contact[k] !== "").map((k) => clause(k, contact[k]));
-    if (!clauses.length) return null;
-    clauses.forEach((c, i) => {
-      c.query_operator = i < clauses.length - 1 ? "or" : null;
-    });
-    return { payload: clauses };
-  }
-  function pickMatch(results, contact) {
-    if (!results || !results.length) return null;
-    for (const key of KEYS) {
-      if (contact[key] == null || contact[key] === "") continue;
-      const hit = results.find((r) => r[key] && String(r[key]) === String(contact[key]));
-      if (hit) return hit;
-    }
-    return results[0];
-  }
-  function normVal(key, value) {
-    return key === "phone_number" ? String(value) : String(value).toLowerCase();
-  }
-  var CHUNK = 40;
-  var MAX_PAGES = 40;
-  async function batchDedup(contacts, api, onProgress) {
-    const wanted = {};
-    const found = {};
-    for (const k of KEYS) {
-      wanted[k] = /* @__PURE__ */ new Set();
-      found[k] = /* @__PURE__ */ new Map();
-    }
-    for (const c of contacts) {
-      for (const k of KEYS) if (c[k] != null && c[k] !== "") wanted[k].add(normVal(k, c[k]));
-    }
-    const totalValues = KEYS.reduce((s, k) => s + wanted[k].size, 0);
-    let processed = 0;
-    for (const k of KEYS) {
-      const values = Array.from(wanted[k]);
-      for (let o = 0; o < values.length; o += CHUNK) {
-        const chunk = values.slice(o, o + CHUNK);
-        const clauses = chunk.map((v, i) => ({
-          attribute_key: k,
-          filter_operator: "equal_to",
-          values: [v],
-          query_operator: i < chunk.length - 1 ? "or" : null
-        }));
-        let page = 1;
-        let got = 0;
-        let count = Infinity;
-        while (got < count && page <= MAX_PAGES) {
-          const res = await api.filterContacts({ payload: clauses }, page);
-          const arr = res?.payload || [];
-          count = res?.meta?.count ?? arr.length;
-          got += arr.length;
-          for (const r of arr) {
-            if (r[k] == null || r[k] === "") continue;
-            const nv = normVal(k, r[k]);
-            if (!found[k].has(nv)) found[k].set(nv, r);
-          }
-          if (!arr.length) break;
-          page++;
-        }
-        processed += chunk.length;
-        onProgress?.(Math.min(processed, totalValues), totalValues);
-      }
-    }
-    const claimed = /* @__PURE__ */ new Set();
-    for (const c of contacts) {
-      delete c.__dupTail;
-      let match = null;
-      for (const k of KEYS) {
-        if (c[k] == null || c[k] === "") continue;
-        const m = found[k].get(normVal(k, c[k]));
-        if (m) {
-          match = m;
-          break;
-        }
-      }
-      if (match) {
-        c.__match = match;
-        continue;
-      }
-      const ids = KEYS.filter((k) => c[k] != null && c[k] !== "").map((k) => k + ":" + normVal(k, c[k]));
-      if (ids.some((id) => claimed.has(id))) {
-        delete c.__match;
-        c.__dupTail = true;
-      } else {
-        c.__match = null;
-        ids.forEach((id) => claimed.add(id));
-      }
-    }
-    return contacts;
+  function isValidLabelTitle(value) {
+    return VALID_LABEL_TITLE.test(String(value ?? ""));
   }
 
-  // lib/importLog.js
-  var STATUSES = ["created", "updated", "skipped", "failed"];
-  function csvCell(v) {
-    let s = v == null ? "" : String(v);
-    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  // lib/nativeCsv.js
+  var STANDARD_HEADERS = ["name", "email", "identifier", "phone_number"];
+  var ADDITIONAL2 = ["company_name", "city", "country"];
+  function cell(value) {
+    const s = value == null ? "" : String(value);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
-  var ImportLog = class {
-    constructor() {
-      this.rows = [];
-    }
-    add(rowNum, name, status, contactId, reason) {
-      this.rows.push({ rowNum, name: name || "", status, contactId: contactId || "", reason: reason || "" });
-    }
-    summary() {
-      const s = { created: 0, updated: 0, skipped: 0, failed: 0, total: this.rows.length };
-      for (const r of this.rows) if (STATUSES.includes(r.status)) s[r.status]++;
-      return s;
-    }
-    // Most frequent failure reason — lets the UI explain a mass failure instead of
-    // showing a bare count. Returns { reason, count } or null when nothing failed.
-    topError() {
-      const counts = /* @__PURE__ */ new Map();
-      for (const r of this.rows) {
-        if (r.status !== "failed" || !r.reason) continue;
-        counts.set(r.reason, (counts.get(r.reason) || 0) + 1);
-      }
-      let top = null;
-      for (const [reason, count] of counts) {
-        if (!top || count > top.count) top = { reason, count };
-      }
-      return top;
-    }
-    toCsv() {
-      const head = "row,name,status,contact_id,reason";
-      const body = this.rows.map((r) => [r.rowNum, r.name, r.status, r.contactId, r.reason].map(csvCell).join(","));
-      return [head, ...body].join("\n") + "\n";
-    }
-  };
-
-  // lib/importRunner.js
-  var defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  async function runImport({
-    contacts,
-    api,
-    labelTitle,
-    waInboxId = null,
-    onProgress,
-    concurrency = 5,
-    isCancelled = () => false,
-    cooldownMs = 2e4,
-    sleep = defaultSleep
-  }) {
-    const log = new ImportLog();
-    const total = contacts.length;
-    let done = 0;
-    let cooldown = null;
-    async function call(fn) {
-      for (let attempt = 0; ; attempt++) {
-        if (cooldown) await cooldown;
-        try {
-          return await fn();
-        } catch (e) {
-          if (e?.status !== 429 || attempt >= 3) throw e;
-          if (!cooldown) cooldown = sleep(cooldownMs * (attempt + 1)).then(() => {
-            cooldown = null;
-          });
-        }
-      }
-    }
-    async function importOne(c) {
-      const row = c.__row;
-      const name = c.name || "";
-      const filter = buildFilterPayload(c);
-      if (!name && !filter) {
-        log.add(row, name, "skipped", null, "\u05D0\u05D9\u05DF \u05E9\u05DD \u05D0\u05D5 \u05DE\u05D6\u05D4\u05D4 \u05D9\u05D9\u05D7\u05D5\u05D3\u05D9");
-        onProgress?.(++done, total, log);
-        return;
-      }
-      const body = stripMeta(c);
-      try {
-        let contactId = null;
-        let status = "created";
-        let match = null;
-        if ("__match" in c) {
-          match = c.__match;
-        } else if (filter) {
-          const res = await call(() => api.filterContacts(filter));
-          match = pickMatch(res?.payload || [], c);
-        }
-        if (match) {
-          await call(() => api.updateContact(match.id, body));
-          contactId = match.id;
-          status = "updated";
-        } else {
-          const created = await call(() => api.createContact(body));
-          contactId = created?.payload?.contact?.id ?? created?.id;
-          if (!contactId) throw new Error("Chatwoot create response is missing the contact id");
-          status = "created";
-        }
-        if (waInboxId && contactId) {
-          const sourceId = waSourceId(body.phone_number);
-          if (sourceId) {
-            try {
-              await call(() => api.createContactInbox(contactId, { inbox_id: waInboxId, source_id: sourceId }));
-            } catch {
-            }
-          }
-        }
-        if (labelTitle && contactId) {
-          if (match) {
-            let cur = [];
-            try {
-              cur = (await call(() => api.getContactLabels(contactId)))?.payload || [];
-            } catch {
-            }
-            const union = Array.from(/* @__PURE__ */ new Set([...cur, labelTitle]));
-            await call(() => api.assignLabels(contactId, union));
-          } else {
-            await call(() => api.assignLabels(contactId, [labelTitle]));
-          }
-        }
-        log.add(row, name, status, contactId, phoneNote(c));
-      } catch (e) {
-        log.add(row, name, "failed", null, (e.body || e.message || "error").slice(0, 200));
-      }
-      onProgress?.(++done, total, log);
-    }
-    const poolRows = contacts.filter((c) => !c.__dupTail);
-    const tailRows = contacts.filter((c) => c.__dupTail);
-    let next = 0;
-    const workers = Array.from({ length: Math.min(concurrency, poolRows.length) }, async () => {
-      while (next < poolRows.length && !isCancelled()) {
-        await importOne(poolRows[next++]);
-      }
-    });
-    await Promise.all(workers);
-    for (const c of tailRows) {
-      if (isCancelled()) break;
-      delete c.__match;
-      await importOne(c);
-    }
-    return log;
-  }
-  function createImportJob({ contacts, api, labelTitle, waInboxId, concurrency }) {
-    const listeners = /* @__PURE__ */ new Set();
-    const progress = {
-      done: 0,
-      total: contacts.length,
-      created: 0,
-      updated: 0,
-      skipped: 0,
-      failed: 0,
-      state: "running"
-      // running → cancelling → done | cancelled | error
-    };
-    let cancelled = false;
-    const emit = () => listeners.forEach((cb) => {
-      try {
-        cb(progress);
-      } catch {
-      }
-    });
-    const job = {
-      progress,
-      log: null,
-      error: null,
-      labelTitle: labelTitle || "",
-      cancel() {
-        if (progress.state === "running") {
-          cancelled = true;
-          progress.state = "cancelling";
-          emit();
-        }
-      },
-      onUpdate(cb) {
-        listeners.add(cb);
-        return () => listeners.delete(cb);
-      }
-    };
-    job.promise = runImport({
-      contacts,
-      api,
-      labelTitle,
-      waInboxId,
-      concurrency,
-      isCancelled: () => cancelled,
-      onProgress(done, totalCount, log) {
-        progress.done = done;
-        progress.total = totalCount;
-        const s = log.summary();
-        progress.created = s.created;
-        progress.updated = s.updated;
-        progress.skipped = s.skipped;
-        progress.failed = s.failed;
-        emit();
-      }
-    }).then((log) => {
-      job.log = log;
-      progress.state = cancelled && progress.done < progress.total ? "cancelled" : "done";
-      emit();
-      return log;
-    }).catch((e) => {
-      job.error = e;
-      progress.state = "error";
-      emit();
-      return job.log;
-    });
-    return job;
-  }
-  function stripMeta(c) {
-    const { __row, __match, __dupTail, __phoneRaw, ...rest } = c;
-    return rest;
-  }
-  function phoneNote(c) {
-    if (c.phone_number) return "";
-    return c.__phoneRaw ? `\u05DE\u05E1\u05E4\u05E8 \u05DC\u05D0 \u05EA\u05E7\u05D9\u05DF (${c.__phoneRaw}) \u2014 \u05DC\u05D0 \u05D9\u05E7\u05D1\u05DC \u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4` : "\u05DC\u05DC\u05D0 \u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF \u2014 \u05DC\u05D0 \u05D9\u05E7\u05D1\u05DC \u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4";
-  }
-  function waSourceId(phone) {
-    const digits = String(phone || "").replace(/\D/g, "");
-    return digits || null;
+  function toNativeCsv(contacts, label = "") {
+    const custom = [...new Set(contacts.flatMap((c) => Object.keys(c.custom_attributes || {})))];
+    const additional = ADDITIONAL2.filter((k) => contacts.some((c) => c.additional_attributes?.[k]));
+    const hasRaw = contacts.some((c) => c.__phoneRaw);
+    const hasLabels = Boolean(label) || contacts.some((c) => c.__labels);
+    const headers = [
+      ...STANDARD_HEADERS,
+      ...additional.map((k) => `cwpt:${k}`),
+      ...custom.map((k) => `cwpt:custom:${k}`),
+      ...hasLabels ? ["labels"] : [],
+      "cwpt:row",
+      ...hasRaw ? ["cwpt:phone_raw"] : []
+    ];
+    const lines = contacts.map((c) => [
+      ...STANDARD_HEADERS.map((k) => c[k]),
+      ...additional.map((k) => c.additional_attributes?.[k]),
+      ...custom.map((k) => c.custom_attributes?.[k]),
+      ...hasLabels ? [[c.__labels, label].filter(Boolean).join(",")] : [],
+      c.__row,
+      ...hasRaw ? [c.__phoneRaw] : []
+    ].map(cell).join(","));
+    return [headers.map(cell).join(","), ...lines].join("\n") + "\n";
   }
 
   // lib/apiClient.js
@@ -620,1445 +352,762 @@ var __cwImport = (() => {
       return r.status === 204 ? null : r.json();
     }
     return {
-      // page: contacts/filter is paginated at 15 results/page (RESULTS_PER_PAGE) —
-      // batchDedup walks the pages of each chunked OR query.
-      filterContacts: (payload, page) => req("POST", "/contacts/filter" + (page ? `?page=${page}` : ""), payload),
-      createContact: (c) => req("POST", "/contacts", c),
-      updateContact: (id, c) => req("PUT", `/contacts/${id}`, c),
-      listInboxes: () => req("GET", "/inboxes"),
-      // Links a contact to a channel inbox at import time. Chatwoot resolves an
-      // inbound/outbound WhatsApp message through contact_inboxes.source_id — never
-      // through phone_number — so an imported contact without this row is invisible to
-      // the channel: Chatwoot opens the conversation on a nameless auto-created twin
-      // ("aged-glitter-248") and the real name never reaches the conversation or the bot.
-      createContactInbox: (contactId, body) => req("POST", `/contacts/${contactId}/contact_inboxes`, body),
-      getContactLabels: (id) => req("GET", `/contacts/${id}/labels`),
-      assignLabels: (id, labels) => req("POST", `/contacts/${id}/labels`, { labels }),
       listLabels: () => req("GET", "/labels"),
       // Chatwoot's LabelsController requires the attributes under `label`:
       // params.require(:label).permit(:title, ...).
       createLabel: (title) => req("POST", "/labels", { label: { title } }),
       listCustomAttributes: () => req("GET", "/custom_attribute_definitions?attribute_model=contact_attribute"),
       createCustomAttribute: (def) => req("POST", "/custom_attribute_definitions", { custom_attribute_definition: def }),
-      // Server-side import (custom smart_import_server.rb initializer). A 404 from any of
-      // these means the initializer is not live on this server — callers fall back to the
-      // legacy in-browser runner.
+      // smart_import_server.rb: counts against the account's contacts, no writes.
       smartImportPreview: (contacts) => req("POST", "/smart_import/preview", { contacts }),
-      smartImportStart: (body) => req("POST", "/smart_import", body),
-      smartImportStatus: (jobId) => req("GET", `/smart_import/${jobId}`),
-      smartImportCancel: (jobId) => req("DELETE", `/smart_import/${jobId}`)
+      // smart_import_server.rb: the options Chatwoot's import of this exact file picks up.
+      smartImportArm: (body) => req("POST", "/smart_import/arm", body)
     };
-  }
-
-  // lib/serverImport.js
-  var defaultSleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
-  function wireRow(c) {
-    const { __row, __match, __dupTail, __phoneRaw, ...rest } = c;
-    const out = { ...rest, row_num: __row };
-    if (__phoneRaw) out.phone_raw = __phoneRaw;
-    return out;
-  }
-  function createServerJob({
-    api,
-    jobId,
-    total,
-    email,
-    labelTitle,
-    pollMs = 2500,
-    maxErrors = 10,
-    sleep = defaultSleep2
-  }) {
-    const listeners = /* @__PURE__ */ new Set();
-    const progress = {
-      done: 0,
-      total,
-      created: 0,
-      updated: 0,
-      skipped: 0,
-      failed: 0,
-      state: "running"
-      // running → cancelling → done | cancelled | error
-    };
-    const emit = () => listeners.forEach((cb) => {
-      try {
-        cb(progress);
-      } catch {
-      }
-    });
-    const job = {
-      progress,
-      log: null,
-      error: null,
-      labelTitle: labelTitle || "",
-      serverMode: true,
-      emailTo: email || null,
-      cancel() {
-        if (progress.state !== "running") return;
-        progress.state = "cancelling";
-        emit();
-        api.smartImportCancel(jobId).catch(() => {
-        });
-      },
-      onUpdate(cb) {
-        listeners.add(cb);
-        return () => listeners.delete(cb);
-      }
-    };
-    job.promise = (async () => {
-      let errors = 0;
-      for (; ; ) {
-        await sleep(pollMs);
-        let s;
-        try {
-          s = await api.smartImportStatus(jobId);
-          errors = 0;
-        } catch (e) {
-          if (e?.status === 404 || ++errors >= maxErrors) {
-            job.error = e;
-            progress.state = "error";
-            emit();
-            return job.log;
-          }
-          continue;
-        }
-        progress.done = s.done || 0;
-        progress.total = s.total ?? total;
-        progress.created = s.created || 0;
-        progress.updated = s.updated || 0;
-        progress.skipped = s.skipped || 0;
-        progress.failed = s.failed || 0;
-        if (s.email) job.emailTo = s.email;
-        if (s.state === "done" || s.state === "cancelled" || s.state === "error") {
-          job.log = toImportLog(s.log);
-          if (s.state === "error") job.error = new Error(s.error || "import failed");
-          progress.state = s.state;
-          emit();
-          return job.log;
-        }
-        if (progress.state !== "cancelling") progress.state = "running";
-        emit();
-      }
-    })();
-    return job;
-  }
-  function toImportLog(rows) {
-    const log = new ImportLog();
-    (rows || []).forEach((r) => log.add(r.row, r.name, r.status, r.contact_id, r.reason));
-    return log;
   }
 
   // lib/basepath.js
   var vendorUrl = (base) => (base || "/chatwoot-addons") + "/smart-import/xlsx.mini.min.js";
 
-  // lib/labelTitle.js
-  var VALID_LABEL_TITLE = /^[\p{L}\p{N}][\p{L}\p{N}_-]+$/u;
-  function normalizeLabelTitle(value) {
-    return String(value ?? "").trim().replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/_+/g, "_").replace(/^[_-]+/, "").replace(/[_-]+$/, "");
-  }
-  function isValidLabelTitle(value) {
-    return VALID_LABEL_TITLE.test(String(value ?? ""));
-  }
-
   // ui/styles.js
   var STYLES = `
-dialog.cwi-dlg{padding:0;border:0;background:transparent;width:calc(100% - 32px);max-width:42rem;max-height:90vh;overflow:visible;color:inherit}
-/* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D0\u05D7\u05D5\u05E8\u05D9 \u05D4\u05D7\u05DC\u05D5\u05DF \u2014 \u05D6\u05D4\u05D4 \u05DC-Dialog.vue \u05E9\u05DC Chatwoot (bg-n-alpha-black1 + blur 4px).
-   \u200E--black-alpha-1 \u05D4\u05D5\u05D0 12% \u05D1\u05DE\u05E6\u05D1 \u05D1\u05D4\u05D9\u05E8 \u05D5-30% \u05D1\u05DB\u05D4\u05D4; \u05E7\u05D5\u05D3\u05DD \u05D4\u05D9\u05D4 \u05DB\u05D0\u05DF 50% \u05E7\u05D1\u05D5\u05E2, \u05DB\u05DC\u05D5\u05DE\u05E8 \u05DB\u05D4\u05D4
-   \u05E4\u05D9 \u05D0\u05E8\u05D1\u05E2\u05D4 \u05DE\u05D4\u05DE\u05E7\u05D5\u05E8 \u05D5\u05DC\u05DC\u05D0 \u05D4\u05EA\u05D0\u05DE\u05D4 \u05DC\u05E2\u05E8\u05DB\u05EA \u05D4\u05E0\u05D5\u05E9\u05D0. */
-dialog.cwi-dlg::backdrop{background:rgba(0,0,0,.12);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
-/* wizard.js \u05DE\u05D5\u05E1\u05D9\u05E3 \u05D0\u05EA \u05D4\u05DE\u05D7\u05DC\u05E7\u05D4 dark \u05E2\u05DC \u05D4-dialog \u05E2\u05E6\u05DE\u05D5 (\u05E8\u05D0\u05D4 \u05E9\u05DD: \u05D4\u05D5\u05D0 \u05D1-top layer \u05D5\u05DC\u05D0
-   \u05D9\u05D5\u05E8\u05E9 \u05DE\u05D4\u05D3\u05E3), \u05D5\u05DC\u05DB\u05DF \u05D4\u05E1\u05DC\u05E7\u05D8\u05D5\u05E8 \u05D7\u05D9\u05D9\u05D1 \u05DC\u05D4\u05D9\u05D5\u05EA \u05E2\u05DC \u05D0\u05D5\u05EA\u05D5 \u05D0\u05DC\u05DE\u05E0\u05D8 \u05D5\u05DC\u05D0 \u05E2\u05DC \u05D0\u05D1. */
-dialog.cwi-dlg.dark::backdrop{background:rgba(0,0,0,.3)}
-dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
-@keyframes cwiBackdrop{from{opacity:0}to{opacity:1}}
-/* Animate the inner card, NOT the <dialog>: a transform on the dialog would make it
-   the containing block for the fixed dropdown panel (panel is a child of the dialog),
-   breaking viewport-relative positioning. The modal is a sibling of the panel, so its
-   transform can't affect the panel. */
-.cwi-modal{max-height:90vh;overflow:auto;animation:cwiIn .2s ease-out}
-.cwi-table-scroll{overflow-x:auto;min-width:0;max-width:100%}
-.cwi-table-scroll table{min-width:32rem}
-.cwi-dlg :is(button,[role="button"]):focus-visible{outline:2px solid rgb(var(--blue-9));outline-offset:2px}
-.cwi-dlg h3:focus{outline:none}
-@media(prefers-reduced-motion:reduce){.cwi-modal,.cwi-pill,dialog.cwi-dlg::backdrop{animation:none}.cwi-cs-panel,.cwi-prog-fill{transition:none}}
-@keyframes cwiIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
-/* \u05D4\u05E8\u05E7\u05E2 \u05DE\u05D2\u05D9\u05E2 \u05DE\u05DE\u05D7\u05DC\u05E7\u05EA bg-n-brand \u05E9\u05DC Chatwoot (\u05D4\u05DB\u05D7\u05D5\u05DC \u05D4\u05E8\u05E9\u05DE\u05D9) \u2014 \u05DC\u05D0 \u05DE\u05DE\u05E9\u05EA\u05E0\u05D4:
-   --color-n-brand \u05DC\u05D0 \u05E7\u05D9\u05D9\u05DD \u05D1-CSS \u05D4\u05DE\u05E7\u05D5\u05DE\u05E4\u05DC \u05D5\u05D4-fallback \u05E6\u05D1\u05E2 \u05D0\u05EA \u05D4\u05E4\u05E1 \u05D1\u05D0\u05D9\u05E0\u05D3\u05D9\u05D2\u05D5 \u05D6\u05E8. */
-.cwi-prog-fill{height:100%;transform-origin:left;transition:transform .2s}
-.cwi-pill[dir="rtl"] .cwi-prog-fill{transform-origin:right}
-/* \u26A0\uFE0F border-bottom \u05D1\u05DC\u05D9 \u05E6\u05D1\u05E2 = currentColor \u05DC\u05E4\u05D9 \u05DE\u05E4\u05E8\u05D8 CSS, \u05D5\u05DB\u05D9\u05D5\u05D5\u05DF \u05E9\u05D4\u05D2\u05D9\u05DC\u05D9\u05D5\u05DF \u05D4\u05D6\u05D4 \u05DE\u05D5\u05D6\u05E8\u05E7
-   \u05DC-head \u05D1\u05D6\u05DE\u05DF \u05E8\u05D9\u05E6\u05D4 \u05D4\u05D5\u05D0 \u05D1\u05D0 *\u05D0\u05D7\u05E8\u05D9* \u05D4\u05D2\u05D9\u05DC\u05D9\u05D5\u05DF \u05E9\u05DC Chatwoot \u05D5\u05DE\u05E0\u05E6\u05D7 \u05D0\u05EA border-n-weak \u05E9\u05E2\u05DC \u05D4\u05EA\u05D0.
-   \u05D4\u05EA\u05D5\u05E6\u05D0\u05D4 \u05D4\u05D9\u05D9\u05EA\u05D4 \u05E7\u05D5\u05D5\u05D9 \u05D8\u05D1\u05DC\u05D4 \u05D1\u05E6\u05D1\u05E2 \u05D4\u05D8\u05E7\u05E1\u05D8 \u2014 \u05DB\u05D4\u05D9\u05DD \u05D1\u05D4\u05E8\u05D1\u05D4 \u05DE\u05DB\u05DC \u05D8\u05D1\u05DC\u05D4 \u05D0\u05D7\u05E8\u05EA \u05D1\u05D3\u05E9\u05D1\u05D5\u05E8\u05D3. */
-.cwi-tbl-cell{border-bottom:1px solid rgb(var(--border-weak))}
-.cwi-cs-panel{transition:opacity .2s ease-out}
-/* Background-import pill \u2014 fixed to the bottom start corner (dir-aware via
-   inset-inline-start; the pill carries its own dir attribute). Below the browser
-   top layer, so any open Chatwoot <dialog> still covers it. */
-.cwi-pill{position:fixed;bottom:16px;inset-inline-start:16px;z-index:2147483000;width:320px;max-width:calc(100vw - 32px);animation:cwiIn .2s ease-out}
+.cwi-box{border:1px solid rgb(var(--border-weak));border-radius:.75rem;padding:.875rem;min-width:0}
+/* Chatwoot's CSV preview shows the converted file; the mapping table replaces it. */
+.cwi-box ~ section{display:none!important}
+.cwi-fs{display:flex;flex-direction:column;gap:1.125rem;min-width:0;margin:0;padding:0;border:0}
+.cwi-sec{display:flex;flex-direction:column;gap:.75rem;min-width:0}
+.cwi-sec.cwi-tight{gap:.375rem}
+.cwi-h,.cwi-hint{margin:0}
+.cwi-scroll{overflow-x:auto;min-width:0}
+.cwi-map{width:100%;border:1px solid rgb(var(--border-weak));border-radius:.625rem;border-collapse:separate;border-spacing:0;overflow:hidden;font-size:.8125rem;color:rgb(var(--slate-12))}
+.cwi-map th,.cwi-map td{padding:.5rem .75rem;text-align:start;vertical-align:middle;border-bottom:1px solid rgb(var(--border-weak))}
+.cwi-map tbody tr:last-child td{border-bottom:0}
+.cwi-map th{background:rgb(var(--slate-2));font-weight:500;color:rgb(var(--slate-11))}
+.cwi-map td:last-child{width:45%;min-width:9rem}
+.cwi-col{overflow-wrap:anywhere}
+.cwi-auto{display:block;font-size:.6875rem;color:rgb(var(--teal-11))}
+.cwi-sample{color:rgb(var(--slate-11));max-width:9.5rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cwi-box select,.cwi-box input[type=text]{margin:0!important;height:2rem;padding-top:0;padding-bottom:0;font-size:.8125rem}
+.cwi-edit{display:flex;gap:.375rem;align-items:center}
+.cwi-edit input{flex:1;min-width:0}
+.cwi-btn{flex:none;height:2rem;padding:0 .75rem;border-radius:.5rem;font-size:.8125rem;font-weight:500;color:rgb(var(--slate-12));background:transparent;outline:1px solid rgb(var(--border-strong));outline-offset:-1px}
+.cwi-btn.cwi-primary{color:#fff;background:rgb(var(--blue-9));outline:0}
+.cwi-btn:focus-visible{outline:2px solid rgb(var(--blue-9));outline-offset:2px}
+.cwi-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.5rem}
+.cwi-stat{border:1px solid rgb(var(--border-weak));border-radius:.625rem;padding:.5rem .625rem;background:rgb(var(--solid-1));min-width:0}
+.cwi-stat b{display:block;font-size:1.0625rem;font-weight:600;color:rgb(var(--slate-12))}
+.cwi-stat span{display:block;font-size:.75rem;line-height:1.3;color:rgb(var(--slate-11))}
+.cwi-err{border-radius:.625rem;padding:.625rem .75rem;font-size:.8125rem;background:rgb(var(--ruby-3));color:rgb(var(--ruby-11))}
+.cwi-err[hidden],.cwi-box [hidden]{display:none}
+@media (max-width:760px){.cwi-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cwi-sm-hide{display:none}.cwi-map th,.cwi-map td{padding:.5rem}.cwi-map td:last-child{width:58%}}
+/* Phones: a row per column, the field picker under its name, so no option is cut off. */
+@media (max-width:480px){.cwi-map,.cwi-map tbody{display:block}.cwi-map thead{display:none}.cwi-map tr{display:flex;flex-direction:column;gap:.375rem;padding:.625rem .75rem;border-bottom:1px solid rgb(var(--border-weak))}.cwi-map tbody tr:last-child{border-bottom:0}.cwi-map td:not(.cwi-sm-hide){display:block;width:auto;min-width:0;padding:0;border:0}.cwi-auto{display:inline;margin-inline-start:.5rem}}
 `;
 
-  // ui/wizard.js
-  function pageLocale() {
+  // ui/enhancer.js
+  var MAX_BYTES = 50 * 1024 * 1024;
+  var PRECHECK_MAX = 25e3;
+  var OWN = "__cwiOwn";
+  var FIELD_ORDER = [
+    "first_name",
+    "last_name",
+    "name",
+    "phone_number",
+    "phone_number_alt",
+    "email",
+    "company_name",
+    "city",
+    "country",
+    "identifier",
+    "labels"
+  ];
+  var IDENTITY = /* @__PURE__ */ new Set(["name", "first_name", "last_name", "phone_number", "phone_number_alt", "email", "identifier"]);
+  var I18N = {
+    he: {
+      fields: {
+        name: "\u05E9\u05DD \u05DE\u05DC\u05D0",
+        first_name: "\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9",
+        last_name: "\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4",
+        phone_number: "\u05D8\u05DC\u05E4\u05D5\u05DF",
+        phone_number_alt: "\u05D8\u05DC\u05E4\u05D5\u05DF \u05E0\u05D5\u05E1\u05E3 (\u05D2\u05D9\u05D1\u05D5\u05D9)",
+        email: "\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC",
+        identifier: "\u05DE\u05D6\u05D4\u05D4",
+        company_name: "\u05D7\u05D1\u05E8\u05D4",
+        city: "\u05E2\u05D9\u05E8",
+        country: "\u05DE\u05D3\u05D9\u05E0\u05D4",
+        labels: "\u05EA\u05D5\u05D5\u05D9\u05D5\u05EA (\u05DE\u05D4\u05E7\u05D5\u05D1\u05E5)"
+      },
+      mapTitle: "\u05DE\u05D9\u05E4\u05D5\u05D9 \u05E2\u05DE\u05D5\u05D3\u05D5\u05EA",
+      mapHint: "\u05D6\u05D9\u05D4\u05D9\u05E0\u05D5 \u05D0\u05EA \u05D4\u05E2\u05DE\u05D5\u05D3\u05D5\u05EA \u05DC\u05D1\u05D3. \u05D0\u05E4\u05E9\u05E8 \u05DC\u05E9\u05E0\u05D5\u05EA \u05DB\u05DC \u05D0\u05D7\u05EA.",
+      colFile: "\u05E2\u05DE\u05D5\u05D3\u05D4 \u05D1\u05E7\u05D5\u05D1\u05E5",
+      colSample: "\u05D3\u05D5\u05D2\u05DE\u05D4",
+      colField: "\u05E9\u05D3\u05D4 \u05D1-Chatwoot",
+      detected: "\u05D6\u05D5\u05D4\u05D4",
+      ignore: "\u2014 \u05D4\u05EA\u05E2\u05DC\u05DD \u2014",
+      systemFields: "\u05E9\u05D3\u05D5\u05EA \u05DE\u05E2\u05E8\u05DB\u05EA",
+      customFields: "\u05E9\u05D3\u05D5\u05EA \u05DE\u05D5\u05EA\u05D0\u05DE\u05D9\u05DD",
+      newFieldOpt: (n) => `${n} (\u05E9\u05D3\u05D4 \u05D7\u05D3\u05E9)`,
+      createField: "\u05E6\u05D5\u05E8 \u05E9\u05D3\u05D4 \u05DE\u05D5\u05EA\u05D0\u05DD \u05D7\u05D3\u05E9\u2026",
+      newFieldName: "\u05E9\u05DD \u05D4\u05E9\u05D3\u05D4 \u05D4\u05D7\u05D3\u05E9",
+      add: "\u05D4\u05D5\u05E1\u05E4\u05D4",
+      cancel: "\u05D1\u05D9\u05D8\u05D5\u05DC",
+      selectFieldFor: (h2) => `\u05D4\u05E9\u05D3\u05D4 \u05DC\u05E2\u05DE\u05D5\u05D3\u05D4 ${h2}`,
+      labelTitle: "\u05EA\u05D5\u05D5\u05D9\u05EA \u05DC\u05DB\u05DC \u05D0\u05E0\u05E9\u05D9 \u05D4\u05E7\u05E9\u05E8 \u05D1\u05D9\u05D9\u05D1\u05D5\u05D0",
+      noLabel: "\u2014 \u05DC\u05DC\u05D0 \u05EA\u05D5\u05D5\u05D9\u05EA \u2014",
+      newLabelOpt: (t) => `\u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4: ${t}`,
+      otherLabel: "\u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4 \u05D1\u05E9\u05DD \u05D0\u05D7\u05E8\u2026",
+      newLabelName: "\u05E9\u05DD \u05D4\u05EA\u05D5\u05D5\u05D9\u05EA \u05D4\u05D7\u05D3\u05E9\u05D4",
+      labelHint: "\u05DE\u05EA\u05D5\u05D5\u05E1\u05E4\u05EA \u05DC\u05EA\u05D5\u05D5\u05D9\u05D5\u05EA \u05E9\u05DB\u05D1\u05E8 \u05D9\u05E9 \u05DC\u05D4\u05DD, \u05D5\u05DC\u05D0 \u05DE\u05D5\u05D7\u05E7\u05EA \u05D0\u05D5\u05EA\u05DF.",
+      monthLabel: (month) => `\u05D9\u05D9\u05D1\u05D5\u05D0-${month}`,
+      checkTitle: "\u05D1\u05D3\u05D9\u05E7\u05D4 \u05DC\u05E4\u05E0\u05D9 \u05D9\u05D9\u05D1\u05D5\u05D0",
+      statNew: "\u05D7\u05D3\u05E9\u05D9\u05DD",
+      statExisting: "\u05E7\u05D9\u05D9\u05DE\u05D9\u05DD, \u05D9\u05E2\u05D5\u05D3\u05DB\u05E0\u05D5",
+      statDup: "\u05DB\u05E4\u05D5\u05DC\u05D9\u05DD \u05D1\u05E7\u05D5\u05D1\u05E5, \u05D9\u05DE\u05D5\u05D6\u05D2\u05D5",
+      statNoPhone: "\u05D1\u05DC\u05D9 \u05DE\u05E1\u05E4\u05E8 \u05EA\u05E7\u05D9\u05DF",
+      checking: "\u05D1\u05D5\u05D3\u05E7\u05D9\u05DD\u2026",
+      phoneFormat: (s) => `\u05DE\u05E1\u05E4\u05E8\u05D9\u05DD \u05DB\u05DE\u05D5 ${s} \u05E0\u05E9\u05DE\u05E8\u05D9\u05DD \u05D1\u05E4\u05D5\u05E8\u05DE\u05D8 \u05D1\u05D9\u05E0\u05DC\u05D0\u05D5\u05DE\u05D9.`,
+      waLinked: "\u05DE\u05D9 \u05E9\u05D9\u05E9 \u05DC\u05D5 \u05DE\u05E1\u05E4\u05E8 \u05DE\u05D7\u05D5\u05D1\u05E8 \u05DC\u05EA\u05D9\u05D1\u05EA \u05D4\u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4.",
+      noPhoneNote: (n) => n === 1 ? "\u05D0\u05D9\u05E9 \u05D4\u05E7\u05E9\u05E8 \u05D1\u05DC\u05D9 \u05DE\u05E1\u05E4\u05E8 \u05EA\u05E7\u05D9\u05DF \u05D9\u05D9\u05D5\u05D5\u05E6\u05E8, \u05D0\u05D1\u05DC \u05DC\u05D0 \u05D9\u05E7\u05D1\u05DC \u05D4\u05D5\u05D3\u05E2\u05D5\u05EA." : "\u05D0\u05E0\u05E9\u05D9 \u05D4\u05E7\u05E9\u05E8 \u05D1\u05DC\u05D9 \u05DE\u05E1\u05E4\u05E8 \u05EA\u05E7\u05D9\u05DF \u05D9\u05D9\u05D5\u05D5\u05E6\u05E8\u05D5, \u05D0\u05D1\u05DC \u05DC\u05D0 \u05D9\u05E7\u05D1\u05DC\u05D5 \u05D4\u05D5\u05D3\u05E2\u05D5\u05EA.",
+      precheckFailed: "\u05D4\u05D1\u05D3\u05D9\u05E7\u05D4 \u05D4\u05DE\u05D5\u05E7\u05D3\u05DE\u05EA \u05DC\u05D0 \u05D6\u05DE\u05D9\u05E0\u05D4 \u05DB\u05E8\u05D2\u05E2. \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05E2\u05E6\u05DE\u05D5 \u05D9\u05D1\u05D3\u05D5\u05E7 \u05DB\u05DC \u05E9\u05D5\u05E8\u05D4.",
+      precheckTooBig: (max) => `\u05D1\u05E7\u05D5\u05D1\u05E5 \u05D2\u05D3\u05D5\u05DC \u05DE\u05BE${max} \u05E9\u05D5\u05E8\u05D5\u05EA \u05D4\u05D1\u05D3\u05D9\u05E7\u05D4 \u05DE\u05D5\u05DC \u05D0\u05E0\u05E9\u05D9 \u05D4\u05E7\u05E9\u05E8 \u05D4\u05E7\u05D9\u05D9\u05DE\u05D9\u05DD \u05E0\u05E2\u05E9\u05D9\u05EA \u05D1\u05D6\u05DE\u05DF \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0.`,
+      headerEcho: (rows) => `\u05E9\u05D5\u05E8\u05D5\u05EA \u05DB\u05D5\u05EA\u05E8\u05EA \u05D1\u05EA\u05D5\u05DA \u05D4\u05E7\u05D5\u05D1\u05E5 \u05D3\u05D5\u05DC\u05D2\u05D5 (\u05E9\u05D5\u05E8\u05D5\u05EA ${rows}). \u05E0\u05E8\u05D0\u05D4 \u05E9\u05DB\u05DE\u05D4 \u05E8\u05E9\u05D9\u05DE\u05D5\u05EA \u05D4\u05D5\u05D3\u05D1\u05E7\u05D5 \u05D9\u05D7\u05D3.`,
+      emptyRows: (n) => n === 1 ? "\u05E9\u05D5\u05E8\u05D4 \u05D0\u05D7\u05EA \u05D1\u05DC\u05D9 \u05E9\u05DD, \u05D8\u05DC\u05E4\u05D5\u05DF, \u05D0\u05D9\u05DE\u05D9\u05D9\u05DC \u05D0\u05D5 \u05DE\u05D6\u05D4\u05D4 \u05DC\u05D0 \u05EA\u05D9\u05D5\u05D1\u05D0." : `${n} \u05E9\u05D5\u05E8\u05D5\u05EA \u05D1\u05DC\u05D9 \u05E9\u05DD, \u05D8\u05DC\u05E4\u05D5\u05DF, \u05D0\u05D9\u05DE\u05D9\u05D9\u05DC \u05D0\u05D5 \u05DE\u05D6\u05D4\u05D4 \u05DC\u05D0 \u05D9\u05D9\u05D5\u05D1\u05D0\u05D5.`,
+      emailSummary: "\u05DC\u05E9\u05DC\u05D5\u05D7 \u05DC\u05D9 \u05E1\u05D9\u05DB\u05D5\u05DD \u05D1\u05DE\u05D9\u05D9\u05DC \u05D1\u05E1\u05D9\u05D5\u05DD, \u05E2\u05DD \u05D4\u05D3\u05D5\u05D7 \u05D4\u05DE\u05DC\u05D0",
+      needIdentity: "\u05D1\u05D7\u05E8\u05D5 \u05DC\u05E4\u05D7\u05D5\u05EA \u05E2\u05DE\u05D5\u05D3\u05D4 \u05D0\u05D7\u05EA \u05E9\u05DC \u05E9\u05DD, \u05D8\u05DC\u05E4\u05D5\u05DF, \u05D0\u05D9\u05DE\u05D9\u05D9\u05DC \u05D0\u05D5 \u05DE\u05D6\u05D4\u05D4.",
+      badMapping: (h2, bad, total, field) => `\u05D1\u05E2\u05DE\u05D5\u05D3\u05D4 \xAB${h2}\xBB ${bad} \u05DE\u05EA\u05D5\u05DA ${total} \u05D4\u05E2\u05E8\u05DB\u05D9\u05DD \u05DC\u05D0 \u05E0\u05E8\u05D0\u05D9\u05DD \u05DB\u05DE\u05D5 ${field}. \u05D1\u05D7\u05E8\u05D5 \u05DC\u05D4 \u05E9\u05D3\u05D4 \u05D0\u05D7\u05E8, \u05D0\u05D5 \xAB\u05D4\u05EA\u05E2\u05DC\u05DD\xBB.`,
+      labelNameInvalid: "\u05E9\u05DD \u05D4\u05EA\u05D5\u05D5\u05D9\u05EA \u05E6\u05E8\u05D9\u05DA \u05DC\u05D4\u05EA\u05D7\u05D9\u05DC \u05D1\u05D0\u05D5\u05EA \u05D0\u05D5 \u05D1\u05DE\u05E1\u05E4\u05E8, \u05D5\u05DC\u05D4\u05DB\u05D9\u05DC \u05DC\u05E4\u05D7\u05D5\u05EA \u05E9\u05E0\u05D9 \u05EA\u05D5\u05D5\u05D9\u05DD.",
+      fieldNameMissing: "\u05DB\u05EA\u05D1\u05D5 \u05E9\u05DD \u05DC\u05E9\u05D3\u05D4 \u05D4\u05D7\u05D3\u05E9.",
+      labelCreateFailed: "\u05DC\u05D0 \u05D4\u05E6\u05DC\u05D7\u05E0\u05D5 \u05DC\u05D9\u05E6\u05D5\u05E8 \u05D0\u05EA \u05D4\u05EA\u05D5\u05D5\u05D9\u05EA. \u05E0\u05E1\u05D5 \u05E9\u05D5\u05D1.",
+      fieldCreateFailed: (n) => `\u05DC\u05D0 \u05D4\u05E6\u05DC\u05D7\u05E0\u05D5 \u05DC\u05D9\u05E6\u05D5\u05E8 \u05D0\u05EA \u05D4\u05E9\u05D3\u05D4 \xAB${n}\xBB. \u05E0\u05E1\u05D5 \u05E9\u05D5\u05D1.`,
+      armFailed: "\u05DC\u05D0 \u05D4\u05E6\u05DC\u05D7\u05E0\u05D5 \u05DC\u05D4\u05DB\u05D9\u05DF \u05D0\u05EA \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0. \u05E0\u05E1\u05D5 \u05E9\u05D5\u05D1 \u05D1\u05E2\u05D5\u05D3 \u05E8\u05D2\u05E2.",
+      preparing: "\u05DE\u05DB\u05D9\u05E0\u05D9\u05DD \u05D0\u05EA \u05D4\u05E7\u05D5\u05D1\u05E5\u2026",
+      rows: (n) => n === 1 ? "\u05E9\u05D5\u05E8\u05D4 \u05D0\u05D7\u05EA" : `${n.toLocaleString("he")} \u05E9\u05D5\u05E8\u05D5\u05EA`
+    },
+    en: {
+      fields: {
+        name: "Full name",
+        first_name: "First name",
+        last_name: "Last name",
+        phone_number: "Phone",
+        phone_number_alt: "Additional phone (fallback)",
+        email: "Email",
+        identifier: "Identifier",
+        company_name: "Company",
+        city: "City",
+        country: "Country",
+        labels: "Labels (from the file)"
+      },
+      mapTitle: "Map columns",
+      mapHint: "We matched the columns for you. You can change any of them.",
+      colFile: "Column in the file",
+      colSample: "Example",
+      colField: "Chatwoot field",
+      detected: "Matched",
+      ignore: "\u2014 Ignore \u2014",
+      systemFields: "System fields",
+      customFields: "Custom fields",
+      newFieldOpt: (n) => `${n} (new field)`,
+      createField: "Create a new custom field\u2026",
+      newFieldName: "New field name",
+      add: "Add",
+      cancel: "Cancel",
+      selectFieldFor: (h2) => `Field for column ${h2}`,
+      labelTitle: "Label for every contact in this import",
+      noLabel: "\u2014 No label \u2014",
+      newLabelOpt: (t) => `New label: ${t}`,
+      otherLabel: "New label with another name\u2026",
+      newLabelName: "New label name",
+      labelHint: "Added next to the labels they already have. Nothing is removed.",
+      monthLabel: (month) => `import-${month.toLowerCase()}`,
+      checkTitle: "Check before importing",
+      statNew: "New",
+      statExisting: "Existing, will be updated",
+      statDup: "Duplicates in the file, merged",
+      statNoPhone: "No valid number",
+      checking: "Checking\u2026",
+      phoneFormat: (s) => `Numbers like ${s} are saved in international format.`,
+      waLinked: "Contacts with a number are linked to the WhatsApp inbox.",
+      noPhoneNote: (n) => n === 1 ? "The contact without a valid number is created, but will not receive messages." : "Contacts without a valid number are created, but will not receive messages.",
+      precheckFailed: "The check is not available right now. The import checks every row itself.",
+      precheckTooBig: (max) => `For files over ${max} rows, matching against existing contacts happens during the import.`,
+      headerEcho: (rows) => `Header rows inside the file were skipped (rows ${rows}). It looks like several lists were pasted together.`,
+      emptyRows: (n) => n === 1 ? "One row without a name, phone, email or identifier will not be imported." : `${n} rows without a name, phone, email or identifier will not be imported.`,
+      emailSummary: "Email me a summary when it finishes, with the full report",
+      needIdentity: "Choose at least one column for name, phone, email or identifier.",
+      badMapping: (h2, bad, total, field) => `In column \u201C${h2}\u201D, ${bad} of ${total} values do not look like ${field}. Choose another field for it, or \u201CIgnore\u201D.`,
+      labelNameInvalid: "A label name starts with a letter or a number and has at least two characters.",
+      fieldNameMissing: "Type a name for the new field.",
+      labelCreateFailed: "We could not create the label. Try again.",
+      fieldCreateFailed: (n) => `We could not create the field \u201C${n}\u201D. Try again.`,
+      armFailed: "We could not prepare the import. Try again in a moment.",
+      preparing: "Preparing the file\u2026",
+      rows: (n) => n === 1 ? "1 row" : `${n.toLocaleString("en")} rows`
+    }
+  };
+  var Notice = class extends Error {
+  };
+  var token = 0;
+  var cur = null;
+  function locale() {
     const a = document.querySelector("#app[dir]");
     return (a || document.documentElement).getAttribute("dir") === "rtl" ? "he" : "en";
   }
-  var DRIP_LOCALE = pageLocale();
-  var I18N = {
-    he: {
-      // system-field labels (mapping dropdown)
-      ignore: "\u2014 \u05D4\u05EA\u05E2\u05DC\u05DD \u2014",
-      fName: "\u05E9\u05DD \u05DE\u05DC\u05D0",
-      fFirstName: "\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9",
-      fLastName: "\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4",
-      fPhone: "\u05D8\u05DC\u05E4\u05D5\u05DF",
-      fPhoneAlt: "\u05D8\u05DC\u05E4\u05D5\u05DF \u05E0\u05D5\u05E1\u05E3 (\u05D2\u05D9\u05D1\u05D5\u05D9)",
-      fEmail: "\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC",
-      fIdentifier: "\u05DE\u05D6\u05D4\u05D4",
-      fCompany: "\u05D7\u05D1\u05E8\u05D4",
-      fCity: "\u05E2\u05D9\u05E8",
-      fCountry: "\u05DE\u05D3\u05D9\u05E0\u05D4",
-      // step 1 — upload
-      uploadTitle: "\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8",
-      uploadDesc: "\u05D2\u05E8\u05E8\u05D5 \u05E7\u05D5\u05D1\u05E5 CSV \u05D0\u05D5 Excel, \u05D0\u05D5 \u05DC\u05D7\u05E6\u05D5 \u05DC\u05D1\u05D7\u05D9\u05E8\u05D4. ",
-      sampleLink: "\u05D4\u05D5\u05E8\u05D3\u05EA \u05E7\u05D5\u05D1\u05E5 \u05DC\u05D3\u05D5\u05D2\u05DE\u05D4",
-      sampleFileName: "\u05D3\u05D5\u05D2\u05DE\u05D4-\u05D0\u05E0\u05E9\u05D9-\u05E7\u05E9\u05E8.csv",
-      dropText: "\u05D1\u05D7\u05D9\u05E8\u05EA \u05E7\u05D5\u05D1\u05E5 \u05D0\u05D5 \u05D2\u05E8\u05D9\u05E8\u05D4 \u05DC\u05DB\u05D0\u05DF",
-      csvOrExcel: "CSV \u05D0\u05D5 Excel",
-      replace: "\u05D4\u05D7\u05DC\u05E3",
-      remove: "\u05D4\u05E1\u05E8",
-      emptyFile: "\u05D4\u05E7\u05D5\u05D1\u05E5 \u05E8\u05D9\u05E7 \u05D0\u05D5 \u05DC\u05DC\u05D0 \u05DB\u05D5\u05EA\u05E8\u05D5\u05EA",
-      // step 2 — mapping
-      mappingTitle: "\u05DE\u05D9\u05E4\u05D5\u05D9 \u05E2\u05DE\u05D5\u05D3\u05D5\u05EA",
-      mappingDesc: "\u05D4\u05EA\u05D0\u05D9\u05DE\u05D5 \u05DB\u05DC \u05E2\u05DE\u05D5\u05D3\u05D4 \u05DC\u05E9\u05D3\u05D4 \u05D1-Chatwoot. \u05D6\u05D9\u05D4\u05D9\u05E0\u05D5 \u05D0\u05D5\u05D8\u05D5\u05DE\u05D8\u05D9\u05EA \u2014 \u05EA\u05E7\u05E0\u05D5 \u05D1\u05DE\u05D9\u05D3\u05EA \u05D4\u05E6\u05D5\u05E8\u05DA.",
-      colInFile: "\u05E2\u05DE\u05D5\u05D3\u05D4 \u05D1\u05E7\u05D5\u05D1\u05E5",
-      fieldInChatwoot: "\u05E9\u05D3\u05D4 \u05D1-Chatwoot",
-      example: "\u05D3\u05D5\u05D2\u05DE\u05D4",
-      systemFields: "\u05E9\u05D3\u05D5\u05EA \u05DE\u05E2\u05E8\u05DB\u05EA",
-      customFields: "\u05E9\u05D3\u05D5\u05EA \u05DE\u05D5\u05EA\u05D0\u05DE\u05D9\u05DD",
-      createNewField: "\u05E6\u05D5\u05E8 \u05E9\u05D3\u05D4 \u05DE\u05D5\u05EA\u05D0\u05DD \u05D7\u05D3\u05E9\u2026",
-      newFieldName: "\u05E9\u05DD \u05D4\u05E9\u05D3\u05D4 \u05D4\u05D7\u05D3\u05E9",
-      confirmTitle: "\u05D0\u05E9\u05E8",
-      cancel: "\u05D1\u05D9\u05D8\u05D5\u05DC",
-      change: "\u05E9\u05E0\u05D4",
-      // customSelect
-      search: "\u05D7\u05D9\u05E4\u05D5\u05E9\u2026",
-      noResults: "\u05D0\u05D9\u05DF \u05EA\u05D5\u05E6\u05D0\u05D5\u05EA",
-      // step 3 — label
-      labelStepTitle: "\u05EA\u05D5\u05D5\u05D9\u05EA",
-      labelStepDesc: "\u05EA\u05D5\u05E7\u05E6\u05D4 \u05DC\u05DB\u05DC \u05D0\u05E0\u05E9\u05D9 \u05D4\u05E7\u05E9\u05E8 \u05D4\u05DE\u05D9\u05D5\u05D1\u05D0\u05D9\u05DD (\u05DC\u05D0 \u05EA\u05DE\u05D7\u05E7 \u05EA\u05D5\u05D5\u05D9\u05D5\u05EA \u05E7\u05D9\u05D9\u05DE\u05D5\u05EA)",
-      noLabel: "\u2014 \u05DC\u05DC\u05D0 \u05EA\u05D5\u05D5\u05D9\u05EA \u2014",
-      newLabelPlaceholder: "\u05D0\u05D5 \u05E6\u05E8\u05D5 \u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4",
-      selectLabel: "\u05D1\u05D7\u05E8 \u05EA\u05D5\u05D5\u05D9\u05EA:",
-      newLabelField: "\u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D3\u05E9\u05D4:",
-      labelNameInvalid: "\u05E9\u05DD \u05D4\u05EA\u05D5\u05D5\u05D9\u05EA \u05D7\u05D9\u05D9\u05D1 \u05DC\u05D4\u05EA\u05D7\u05D9\u05DC \u05D1\u05D0\u05D5\u05EA \u05D0\u05D5 \u05DE\u05E1\u05E4\u05E8 \u05D5\u05DC\u05DB\u05DC\u05D5\u05DC \u05DC\u05E4\u05D7\u05D5\u05EA \u05E9\u05E0\u05D9 \u05EA\u05D5\u05D5\u05D9\u05DD.",
-      labelCreateFailed: "\u05D9\u05E6\u05D9\u05E8\u05EA \u05D4\u05EA\u05D5\u05D5\u05D9\u05EA \u05E0\u05DB\u05E9\u05DC\u05D4. \u05D7\u05D6\u05E8\u05D5 \u05D5\u05D1\u05D3\u05E7\u05D5 \u05D0\u05EA \u05E9\u05DD \u05D4\u05EA\u05D5\u05D5\u05D9\u05EA.",
-      // step 4 — preview
-      previewTitle: "\u05D1\u05D3\u05D9\u05E7\u05D4 \u05DC\u05E4\u05E0\u05D9 \u05D9\u05D9\u05D1\u05D5\u05D0",
-      checkingDupes: "\u05D1\u05D5\u05D3\u05E7 \u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA\u2026",
-      readyToImport: "\u05DE\u05D5\u05DB\u05DF \u05DC\u05D9\u05D9\u05D1\u05D5\u05D0:",
-      newWord: "\u05D7\u05D3\u05E9\u05D9\u05DD",
-      existingWillUpdate: "\u05E7\u05D9\u05D9\u05DE\u05D9\u05DD (\u05D9\u05E2\u05D5\u05D3\u05DB\u05E0\u05D5)",
-      importVerb: "\u05D9\u05D9\u05D1\u05D0",
-      contactsWord: "\u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8",
-      // אזהרת טלפונים חסרים — אלה נכנסים בהצלחה אבל אף קמפיין וואטסאפ לא יגיע אליהם
-      noPhoneTitle: (n) => `${n} \u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8 \u05DC\u05DC\u05D0 \u05DE\u05E1\u05E4\u05E8 \u05D8\u05DC\u05E4\u05D5\u05DF \u05EA\u05E7\u05D9\u05DF \u2014 \u05DC\u05D0 \u05D9\u05E7\u05D1\u05DC\u05D5 \u05D4\u05D5\u05D3\u05E2\u05D5\u05EA \u05D5\u05D5\u05D0\u05D8\u05E1\u05D0\u05E4`,
-      noPhoneEmpty: (n) => `${n} \u05DC\u05DC\u05D0 \u05DE\u05E1\u05E4\u05E8 \u05D1\u05E7\u05D5\u05D1\u05E5`,
-      noPhoneInvalid: (n, sample) => `${n} \u05E2\u05DD \u05DE\u05E1\u05E4\u05E8 \u05E9\u05D0\u05D9 \u05D0\u05E4\u05E9\u05E8 \u05DC\u05E7\u05E8\u05D5\u05D0 (\u05DC\u05DE\u05E9\u05DC "${sample}")`,
-      noPhoneHint: '\u05D4\u05DD \u05D9\u05D9\u05D5\u05D5\u05E6\u05E8\u05D5 \u05D5\u05D9\u05EA\u05D5\u05D9\u05D2\u05D5 \u05DB\u05E8\u05D2\u05D9\u05DC. \u05D0\u05DD \u05E7\u05D9\u05D9\u05DE\u05EA \u05D1\u05E7\u05D5\u05D1\u05E5 \u05E2\u05DE\u05D5\u05D3\u05EA \u05D8\u05DC\u05E4\u05D5\u05DF \u05E0\u05D5\u05E1\u05E4\u05EA, \u05D0\u05E4\u05E9\u05E8 \u05DC\u05D7\u05D6\u05D5\u05E8 \u05DC\u05DE\u05D9\u05E4\u05D5\u05D9 \u05D5\u05DC\u05E9\u05D9\u05D9\u05DA \u05D0\u05D5\u05EA\u05D4 \u05DB"\u05D8\u05DC\u05E4\u05D5\u05DF \u05E0\u05D5\u05E1\u05E3 (\u05D2\u05D9\u05D1\u05D5\u05D9)".',
-      // step 5 — run / done
-      importing: "\u05DE\u05D9\u05D9\u05D1\u05D0\u2026",
-      importDone: "\u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D4\u05D5\u05E9\u05DC\u05DD",
-      createdWord: "\u05E0\u05D5\u05E6\u05E8\u05D5",
-      updatedWord: "\u05E2\u05D5\u05D3\u05DB\u05E0\u05D5",
-      skippedWord: "\u05D3\u05D5\u05DC\u05D2\u05D5",
-      failedWord: "\u05E0\u05DB\u05E9\u05DC\u05D5",
-      downloadReport: "\u05D4\u05D5\u05E8\u05D3 \u05D3\u05D5\u05D7 CSV",
-      close: "\u05E1\u05D2\u05D5\u05E8",
-      // background pill
-      bgImporting: "\u05DE\u05D9\u05D9\u05D1\u05D0 \u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8 \u05D1\u05E8\u05E7\u05E2\u2026",
-      bgCancelling: "\u05E2\u05D5\u05E6\u05E8\u2026",
-      bgCancelled: "\u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05D4\u05D5\u05E4\u05E1\u05E7",
-      bgError: "\u05D4\u05D9\u05D9\u05D1\u05D5\u05D0 \u05E0\u05E2\u05E6\u05E8 \u05E2\u05E7\u05D1 \u05E9\u05D2\u05D9\u05D0\u05D4",
-      stopImport: "\u05E2\u05E6\u05D9\u05E8\u05EA \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0",
-      bgHint: "\u05D0\u05E4\u05E9\u05E8 \u05DC\u05D4\u05DE\u05E9\u05D9\u05DA \u05DC\u05E2\u05D1\u05D5\u05D3 \u05D1\u05D9\u05E0\u05EA\u05D9\u05D9\u05DD \u2014 \u05E8\u05E7 \u05D0\u05DC \u05EA\u05E1\u05D2\u05E8\u05D5 \u05D0\u05EA \u05D4\u05D8\u05D0\u05D1 \u05E2\u05D3 \u05DC\u05E1\u05D9\u05D5\u05DD",
-      bgHintServer: (m) => m ? `\u05D0\u05E4\u05E9\u05E8 \u05DC\u05E1\u05D2\u05D5\u05E8 \u05D0\u05EA \u05D4\u05D8\u05D0\u05D1 \u2014 \u05E1\u05D9\u05DB\u05D5\u05DD \u05D9\u05D9\u05E9\u05DC\u05D7 \u05DC\u05BE${m}` : "\u05D0\u05E4\u05E9\u05E8 \u05DC\u05E1\u05D2\u05D5\u05E8 \u05D0\u05EA \u05D4\u05D8\u05D0\u05D1 \u2014 \u05E1\u05D9\u05DB\u05D5\u05DD \u05D9\u05D9\u05E9\u05DC\u05D7 \u05DC\u05DE\u05D9\u05D9\u05DC \u05D1\u05E1\u05D9\u05D5\u05DD",
-      dupInFile: "\u05DB\u05E4\u05D5\u05DC\u05D9\u05DD \u05D1\u05E7\u05D5\u05D1\u05E5 (\u05D9\u05DE\u05D5\u05D6\u05D2\u05D5)",
-      headerEchoSkipped: (rows) => `\u05E9\u05D5\u05E8\u05D5\u05EA \u05DB\u05D5\u05EA\u05E8\u05EA \u05D1\u05EA\u05D5\u05DA \u05D4\u05E7\u05D5\u05D1\u05E5 \u05D6\u05D5\u05D4\u05D5 \u05D5\u05D3\u05D5\u05DC\u05D2\u05D5 (\u05E9\u05D5\u05E8\u05D5\u05EA: ${rows}) \u2014 \u05E0\u05E8\u05D0\u05D4 \u05E9\u05D4\u05E7\u05D5\u05D1\u05E5 \u05DE\u05D5\u05E8\u05DB\u05D1 \u05DE\u05DB\u05DE\u05D4 \u05E8\u05E9\u05D9\u05DE\u05D5\u05EA \u05E9\u05D4\u05D5\u05D3\u05D1\u05E7\u05D5 \u05D9\u05D7\u05D3. \u05D4\u05DF \u05DC\u05D0 \u05D9\u05D9\u05D5\u05D1\u05D0\u05D5 \u05DB\u05D0\u05E0\u05E9\u05D9 \u05E7\u05E9\u05E8.`,
-      // mapping sanity blocker — {header} column mapped to {field} but values don't fit
-      badMapping: (header2, fieldLabel, bad, total) => `\u05D4\u05E2\u05DE\u05D5\u05D3\u05D4 "${header2}" \u05DE\u05DE\u05D5\u05E4\u05D4 \u05DC\u05E9\u05D3\u05D4 "${fieldLabel}", \u05D0\u05D1\u05DC ${bad} \u05DE\u05EA\u05D5\u05DA ${total} \u05DE\u05D4\u05E2\u05E8\u05DB\u05D9\u05DD \u05D1\u05D4 \u05D0\u05D9\u05E0\u05DD \u05DE\u05EA\u05D0\u05D9\u05DE\u05D9\u05DD \u05DC\u05E9\u05D3\u05D4 \u05D4\u05D6\u05D4. \u05D7\u05D6\u05E8\u05D5 \u05DC\u05E9\u05DC\u05D1 \u05D4\u05DE\u05D9\u05E4\u05D5\u05D9 \u05D5\u05D1\u05D7\u05E8\u05D5 \u05E9\u05D3\u05D4 \u05D0\u05D7\u05E8 (\u05D0\u05D5 "\u05D4\u05EA\u05E2\u05DC\u05DD").`,
-      topError: "\u05D4\u05E1\u05D9\u05D1\u05D4 \u05D4\u05E0\u05E4\u05D5\u05E6\u05D4",
-      alreadyRunning: "\u05D9\u05D9\u05D1\u05D5\u05D0 \u05E7\u05D5\u05D3\u05DD \u05E2\u05D3\u05D9\u05D9\u05DF \u05E8\u05E5 \u05D1\u05E8\u05E7\u05E2 \u2014 \u05D4\u05DE\u05EA\u05D9\u05E0\u05D5 \u05DC\u05E1\u05D9\u05D5\u05DE\u05D5",
-      dedupFailed: "\u05D1\u05D3\u05D9\u05E7\u05EA \u05D4\u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA \u05E0\u05DB\u05E9\u05DC\u05D4 \u2014 \u05D4\u05DB\u05E4\u05D9\u05DC\u05D5\u05D9\u05D5\u05EA \u05D9\u05D9\u05D1\u05D3\u05E7\u05D5 \u05E9\u05D5\u05D1 \u05D1\u05DE\u05D4\u05DC\u05DA \u05D4\u05D9\u05D9\u05D1\u05D5\u05D0",
-      // footer
-      back: "\u05D7\u05D6\u05E8\u05D4",
-      continue: "\u05D4\u05DE\u05E9\u05DA",
-      // preview table headers
-      thName: "\u05E9\u05DD",
-      thPhone: "\u05D8\u05DC\u05E4\u05D5\u05DF",
-      thEmail: "\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC",
-      thCompany: "\u05D7\u05D1\u05E8\u05D4"
-    },
-    en: {
-      ignore: "\u2014 Ignore \u2014",
-      fName: "Full name",
-      fFirstName: "First name",
-      fLastName: "Last name",
-      fPhone: "Phone",
-      fPhoneAlt: "Additional phone (fallback)",
-      fEmail: "Email",
-      fIdentifier: "Identifier",
-      fCompany: "Company",
-      fCity: "City",
-      fCountry: "Country",
-      uploadTitle: "Import contacts",
-      uploadDesc: "Drag a CSV or Excel file here, or click to choose. ",
-      sampleLink: "Download a sample file",
-      sampleFileName: "sample-contacts.csv",
-      dropText: "Choose a file or drag it here",
-      csvOrExcel: "CSV or Excel",
-      replace: "Replace",
-      remove: "Remove",
-      emptyFile: "The file is empty or has no headers",
-      mappingTitle: "Map columns",
-      mappingDesc: "Match each column to a Chatwoot field. We detected these automatically \u2014 adjust as needed.",
-      colInFile: "Column in file",
-      fieldInChatwoot: "Chatwoot field",
-      example: "Example",
-      systemFields: "System fields",
-      customFields: "Custom fields",
-      createNewField: "Create a new custom field\u2026",
-      newFieldName: "New field name",
-      confirmTitle: "Confirm",
-      cancel: "Cancel",
-      change: "Change",
-      search: "Search\u2026",
-      noResults: "No results",
-      labelStepTitle: "Label",
-      labelStepDesc: "Applied to all imported contacts (existing labels are kept)",
-      noLabel: "\u2014 No label \u2014",
-      newLabelPlaceholder: "Or create a new label",
-      selectLabel: "Select a label:",
-      newLabelField: "New label:",
-      labelNameInvalid: "The label must start with a letter or number and contain at least two characters.",
-      labelCreateFailed: "The label could not be created. Go back and check the label name.",
-      previewTitle: "Review before import",
-      checkingDupes: "Checking for duplicates\u2026",
-      readyToImport: "Ready to import:",
-      newWord: "new",
-      existingWillUpdate: "existing (will be updated)",
-      importVerb: "Import",
-      contactsWord: "contacts",
-      noPhoneTitle: (n) => `${n} contacts have no usable phone number \u2014 they will not receive WhatsApp messages`,
-      noPhoneEmpty: (n) => `${n} with no number in the file`,
-      noPhoneInvalid: (n, sample) => `${n} with an unusable number (e.g. "${sample}")`,
-      noPhoneHint: 'They will still be created and labelled. If the file has a second phone column, go back to the mapping step and assign it as "Additional phone (fallback)".',
-      importing: "Importing\u2026",
-      importDone: "Import complete",
-      createdWord: "Created",
-      updatedWord: "Updated",
-      skippedWord: "Skipped",
-      failedWord: "Failed",
-      downloadReport: "Download CSV report",
-      close: "Close",
-      bgImporting: "Importing contacts in the background\u2026",
-      bgCancelling: "Stopping\u2026",
-      bgCancelled: "Import stopped",
-      bgError: "Import stopped due to an error",
-      stopImport: "Stop import",
-      bgHint: "You can keep working \u2014 just don't close this tab until it finishes",
-      bgHintServer: (m) => m ? `You can close this tab \u2014 a summary will be emailed to ${m}` : "You can close this tab \u2014 a summary will be emailed when it finishes",
-      dupInFile: "duplicates in file (will be merged)",
-      headerEchoSkipped: (rows) => `Header rows inside the file were detected and skipped (rows: ${rows}) \u2014 the file looks like several lists pasted together. They will not be imported as contacts.`,
-      badMapping: (header2, fieldLabel, bad, total) => `The "${header2}" column is mapped to "${fieldLabel}", but ${bad} of ${total} of its values don't fit that field. Go back to the mapping step and pick another field (or "Ignore").`,
-      topError: "Most common error",
-      alreadyRunning: "A previous import is still running in the background \u2014 wait for it to finish",
-      dedupFailed: "Duplicate check failed \u2014 duplicates will be re-checked during the import",
-      back: "Back",
-      continue: "Continue",
-      thName: "Name",
-      thPhone: "Phone",
-      thEmail: "Email",
-      thCompany: "Company"
+  function h(tag, props = {}, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+      if (v == null || v === false) continue;
+      if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else if (typeof v === "boolean") el[k] = v;
+      else el.setAttribute(k === "className" ? "class" : k, v);
     }
-  };
-  function t(k) {
-    return (I18N[DRIP_LOCALE] || I18N.en)[k] || I18N.en[k] || k;
+    el.append(...kids.flat().filter((kid) => kid != null && kid !== false));
+    return el;
   }
-  function fieldLabels() {
-    return {
-      "": t("ignore"),
-      name: t("fName"),
-      first_name: t("fFirstName"),
-      last_name: t("fLastName"),
-      phone_number: t("fPhone"),
-      phone_number_alt: t("fPhoneAlt"),
-      email: t("fEmail"),
-      identifier: t("fIdentifier"),
-      company_name: t("fCompany"),
-      city: t("fCity"),
-      country: t("fCountry")
-    };
+  function fire(el, type) {
+    const e = new Event(type, { bubbles: true });
+    e[OWN] = true;
+    el.dispatchEvent(e);
   }
-  var XLSX_LOADING = null;
+  function setFiles(input, file) {
+    try {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+    } catch {
+      Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    }
+  }
+  function passThrough(input, file) {
+    if (!input.isConnected) return;
+    setFiles(input, file);
+    fire(input, "change");
+  }
+  var xlsxLoading = null;
   function loadXlsx(assetBase) {
     if (window.XLSX) return Promise.resolve(window.XLSX);
-    if (!XLSX_LOADING) {
-      XLSX_LOADING = new Promise((resolve, reject) => {
+    if (!xlsxLoading) {
+      xlsxLoading = new Promise((resolve, reject) => {
         const s = document.createElement("script");
         s.src = vendorUrl(assetBase);
-        function failed() {
+        const failed = () => {
           s.remove();
-          XLSX_LOADING = null;
+          xlsxLoading = null;
           reject(new Error("SheetJS load failed"));
-        }
+        };
         s.onload = () => window.XLSX ? resolve(window.XLSX) : failed();
         s.onerror = failed;
         document.head.appendChild(s);
       });
     }
-    return XLSX_LOADING;
-  }
-  function openWizard({ accountId, authHeaders, assetBase }) {
-    const existingDialog = document.querySelector("dialog.cwi-dlg[open]");
-    if (existingDialog) {
-      existingDialog.focus();
-      return;
-    }
-    DRIP_LOCALE = pageLocale();
-    const FIELD_LABELS = fieldLabels();
-    injectStyles();
-    const api = createApiClient(accountId, authHeaders);
-    const state = { table: null, mapping: [], customMap: [], labelTitle: "", labelNeedsCreation: false, waInboxId: null, serverMode: false };
-    const mappingTouched = /* @__PURE__ */ new Set();
-    let openPanelCloser = null, stepVersion = 0, closed = false;
-    const returnFocus = document.activeElement;
-    api.listInboxes().then((r) => {
-      const list = r?.payload || r || [];
-      const wa = list.find((i) => /whatsapp/i.test(i?.channel_type || ""));
-      state.waInboxId = wa?.id || null;
-    }).catch(() => {
-    });
-    var dlg = document.createElement("dialog");
-    dlg.className = "cwi-dlg";
-    dlg.setAttribute("aria-labelledby", "cwi-dialog-title");
-    const pageIsDark = document.documentElement.classList.contains("dark") || document.body.classList.contains("dark");
-    if (pageIsDark) dlg.classList.add("dark");
-    const appDir = (document.querySelector("#app[dir]") || document.documentElement).getAttribute("dir");
-    const pageIsRTL = appDir ? appDir === "rtl" : getComputedStyle(document.body).direction === "rtl";
-    dlg.setAttribute("dir", pageIsRTL ? "rtl" : "ltr");
-    const modal = el("div", "cwi-modal flex flex-col gap-5 p-6 bg-n-alpha-3 backdrop-blur-[100px] shadow-xl rounded-xl rtl:text-right");
-    dlg.appendChild(modal);
-    document.body.appendChild(dlg);
-    dlg.showModal();
-    function close() {
-      closed = true;
-      stepVersion += 1;
-      if (openPanelCloser) openPanelCloser();
-      try {
-        dlg.close();
-      } catch (e) {
-      }
-      dlg.remove();
-      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
-    }
-    function resetStep() {
-      if (openPanelCloser) openPanelCloser();
-      modal.replaceChildren();
-      const version = ++stepVersion;
-      requestAnimationFrame(() => {
-        if (!closed && version === stepVersion) modal.querySelector("h3")?.focus({ preventScroll: true });
-      });
-      return version;
-    }
-    function isCurrentStep(version) {
-      return !closed && version === stepVersion;
-    }
-    dlg.addEventListener("cancel", function(e) {
-      e.preventDefault();
-      close();
-    });
-    dlg.addEventListener("mousedown", function(e) {
-      if (e.target === dlg) close();
-    });
-    stepUpload();
-    function stepUpload() {
-      resetStep();
-      const desc = el("p", "mb-0 text-sm text-n-slate-11");
-      desc.append(t("uploadDesc"));
-      const sample = el("a", "text-n-blue-11");
-      sample.textContent = t("sampleLink");
-      sample.setAttribute("download", t("sampleFileName"));
-      sample.setAttribute("href", sampleCsvHref());
-      desc.appendChild(sample);
-      modal.appendChild(header(t("uploadTitle"), desc));
-      const input = el("input");
-      input.type = "file";
-      input.accept = ".csv,.xlsx,.xls";
-      input.style.display = "none";
-      input.addEventListener("change", () => input.files[0] && handleFile(input.files[0], drop, body));
-      const drop = el(
-        "div",
-        "flex flex-col items-center justify-center gap-2 p-6 rounded-lg outline-dashed outline-1 outline-n-weak bg-n-alpha-1 cursor-pointer hover:bg-n-alpha-2 transition-colors"
-      );
-      drop.tabIndex = 0;
-      drop.setAttribute("role", "button");
-      drop.setAttribute("aria-label", t("dropText"));
-      const body = el("div", "flex flex-col items-center justify-center gap-2");
-      body.append(
-        icon("upload", "size-6 text-n-slate-11"),
-        elWithText("span", "text-sm text-n-slate-12", t("dropText")),
-        elWithText("span", "text-xs text-n-slate-11", t("csvOrExcel"))
-      );
-      drop.appendChild(body);
-      drop.addEventListener("click", () => input.click());
-      drop.addEventListener("keydown", (e) => {
-        if (e.target === drop && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          input.click();
-        }
-      });
-      drop.addEventListener("dragover", (e) => {
-        e.preventDefault();
-      });
-      drop.addEventListener("drop", (e) => {
-        e.preventDefault();
-        if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0], drop, body);
-      });
-      modal.append(drop, input, footer({ onCancel: close }));
-    }
-    function showPickedFile(file, body) {
-      body.parentElement.setAttribute("role", "group");
-      body.parentElement.removeAttribute("tabindex");
-      body.replaceChildren();
-      body.className = "flex items-center gap-2 w-full";
-      body.addEventListener("click", (e) => e.stopPropagation());
-      const left = el("div", "flex items-center min-w-0 gap-2 flex-1");
-      left.append(
-        icon("file-text", "size-4 text-n-slate-11 shrink-0"),
-        elWithText("span", "text-sm text-n-slate-12 truncate", processFileName(file.name))
-      );
-      const right = el("div", "flex items-center gap-2 shrink-0");
-      const replaceBtn = btn("ghost");
-      replaceBtn.textContent = t("replace");
-      replaceBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        stepUpload();
-      });
-      const sep = el("div", "w-px h-3 bg-n-strong");
-      const trashBtn = el(
-        "button",
-        BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 cursor-pointer"
-      );
-      trashBtn.appendChild(icon("trash", "size-4"));
-      trashBtn.title = t("remove");
-      trashBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        stepUpload();
-      });
-      right.append(replaceBtn, sep, trashBtn);
-      body.append(left, right);
-    }
-    async function handleFile(file, drop, body) {
-      const version = ++stepVersion;
-      if (drop && body) showPickedFile(file, body);
-      try {
-        const table = await readFileToTable(file, { loadXlsx: () => loadXlsx(assetBase) });
-        if (!isCurrentStep(version)) return;
-        if (!table.headers.length) throw new Error(t("emptyFile"));
-        state.table = table;
-        state.customMap = [];
-        mappingTouched.clear();
-        state.mapping = detectColumns(table.headers, table.rows.slice(0, 20)).map((d) => ({ index: d.index, field: d.field }));
-        stepMapping();
-      } catch (e) {
-        if (isCurrentStep(version)) showError(e.message);
-      }
-    }
-    async function stepMapping() {
-      const version = resetStep();
-      modal.appendChild(header(t("mappingTitle"), t("mappingDesc")));
-      let customDefs = [];
-      try {
-        customDefs = await api.listCustomAttributes();
-      } catch {
-      }
-      if (!isCurrentStep(version)) return;
-      const tbl = el("table", "w-full text-sm border-collapse");
-      const thead = el("tr");
-      [t("colInFile"), t("fieldInChatwoot"), t("example")].forEach((h) => {
-        const th = el("th", "text-start font-medium text-n-slate-11 px-3 py-2 cwi-tbl-cell border-n-weak");
-        th.textContent = h;
-        thead.appendChild(th);
-      });
-      tbl.appendChild(thead);
-      const colCount = state.table.headers.length;
-      state.customMap = state.customMap.filter((c) => c.index < colCount);
-      state.table.headers.forEach((colHeader, i) => {
-        const sample = (state.table.rows.find((r) => (r[i] || "").trim()) || [])[i] || "";
-        const options = [];
-        options.push({ value: "", label: t("ignore") });
-        SYSTEM_FIELDS.forEach((fld) => {
-          options.push({ value: fld, label: FIELD_LABELS[fld] || fld, group: t("systemFields") });
-        });
-        if (customDefs.length) {
-          customDefs.forEach((d) => {
-            options.push({ value: "custom:" + d.attribute_key, label: d.attribute_display_name, group: t("customFields") });
-          });
-        }
-        options.push({ value: "__new__", label: t("createNewField"), icon: "plus" });
-        const custom = state.customMap.find((c) => c.index === i);
-        const ownField = custom || mappingTouched.has(i) ? null : matchCustomField(colHeader, customDefs);
-        if (ownField) updateMapping(i, "custom:" + ownField);
-        const initial = custom ? custom.create ? "__new__" : "custom:" + custom.attribute_key : ownField ? "custom:" + ownField : state.mapping[i]?.field && SYSTEM_FIELDS.includes(state.mapping[i].field) ? state.mapping[i].field : "";
-        const row = el("tr");
-        const tdHeader = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
-        tdHeader.textContent = colHeader;
-        const tdSel = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
-        const cs = customSelect({
-          options,
-          value: initial,
-          placeholder: t("ignore"),
-          onSelect: (v) => {
-            if (v === "__new__") {
-              showInlineNewField(i, colHeader, tdSel, cs);
-            } else {
-              updateMapping(i, v);
-            }
-          }
-        });
-        cs.el.querySelector("button").setAttribute("aria-label", t("fieldInChatwoot") + ": " + colHeader);
-        tdSel.appendChild(cs.el);
-        if (custom?.create) showCommittedNewField(i, custom.create.display, tdSel, cs);
-        const tdSample = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
-        tdSample.textContent = sample;
-        row.append(tdHeader, tdSel, tdSample);
-        tbl.appendChild(row);
-      });
-      modal.append(tableScroller(tbl), footer({ onBack: stepUpload, onNext: stepLabel, nextLabel: t("continue") }));
-    }
-    function showInlineNewField(i, colHeader, tdSel, origCs) {
-      mappingTouched.add(i);
-      state.mapping[i] = { index: i, field: null };
-      state.customMap = state.customMap.filter((c) => c.index !== i);
-      const wrap = el("div", "flex items-center gap-1");
-      const inp = el(
-        "input",
-        "h-8 px-3 rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand text-sm w-full border-0 outline-offset-[-1px]"
-      );
-      inp.value = colHeader;
-      inp.placeholder = t("newFieldName");
-      const confirmBtn = el(
-        "button",
-        BTN_BASE + " bg-n-brand text-white hover:brightness-110 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer"
-      );
-      confirmBtn.appendChild(icon("check", "size-4"));
-      confirmBtn.title = t("confirmTitle");
-      const cancelBtn = el(
-        "button",
-        BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer"
-      );
-      cancelBtn.appendChild(icon("x", "size-4"));
-      cancelBtn.title = t("cancel");
-      function commit() {
-        const name = inp.value.trim() || colHeader;
-        state.customMap.push({ index: i, attribute_key: slugify(name), create: { display: name } });
-        const done = el("div", "flex items-center gap-1");
-        const lbl = el("span", "text-sm text-n-slate-12 flex-1 truncate");
-        lbl.textContent = name;
-        const changeBtn = el(
-          "button",
-          BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer"
-        );
-        changeBtn.appendChild(icon("x", "size-4"));
-        changeBtn.title = t("change");
-        changeBtn.addEventListener("click", revert);
-        done.append(lbl, changeBtn);
-        tdSel.replaceChildren(done);
-      }
-      function revert() {
-        state.mapping[i] = { index: i, field: null };
-        state.customMap = state.customMap.filter((c) => c.index !== i);
-        origCs.setValue("");
-        tdSel.replaceChildren(origCs.el);
-      }
-      confirmBtn.addEventListener("click", commit);
-      cancelBtn.addEventListener("click", revert);
-      inp.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          revert();
-        }
-      });
-      wrap.append(inp, confirmBtn, cancelBtn);
-      tdSel.replaceChildren(wrap);
-      inp.focus();
-    }
-    function showCommittedNewField(i, name, tdSel, origCs) {
-      const done = el("div", "flex items-center gap-1");
-      const lbl = el("span", "text-sm text-n-slate-12 flex-1 truncate");
-      lbl.textContent = name;
-      const changeBtn = el(
-        "button",
-        BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 w-8 p-0 shrink-0 cursor-pointer"
-      );
-      changeBtn.appendChild(icon("x", "size-4"));
-      changeBtn.title = t("change");
-      changeBtn.addEventListener("click", () => {
-        state.mapping[i] = { index: i, field: null };
-        state.customMap = state.customMap.filter((c) => c.index !== i);
-        origCs.setValue("");
-        tdSel.replaceChildren(origCs.el);
-      });
-      done.append(lbl, changeBtn);
-      tdSel.replaceChildren(done);
-    }
-    function updateMapping(i, value) {
-      mappingTouched.add(i);
-      state.mapping[i] = { index: i, field: null };
-      state.customMap = state.customMap.filter((c) => c.index !== i);
-      if (SYSTEM_FIELDS.includes(value)) {
-        state.mapping[i].field = value;
-      } else if (value.startsWith("custom:")) {
-        state.customMap.push({ index: i, attribute_key: value.slice(7) });
-      }
-    }
-    function customSelect({ options, value, onSelect, placeholder, size }) {
-      let currentValue = value == null ? "" : value;
-      const heightCls = size === "field" ? "h-10" : "h-8";
-      const container = el("div", "relative w-full");
-      const trigger = el(
-        "button",
-        "inline-flex items-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline disabled:opacity-50 " + heightCls + " px-3 text-sm text-n-slate-12 font-normal justify-between w-full outline-n-weak hover:outline-n-slate-6 focus:outline-n-brand cursor-pointer"
-      );
-      trigger.type = "button";
-      trigger.setAttribute("aria-haspopup", "listbox");
-      trigger.setAttribute("role", "combobox");
-      trigger.setAttribute("aria-expanded", "false");
-      const labelSpan = el("span", "truncate");
-      const chevron = icon("chevron-down", "size-4 text-n-slate-11 shrink-0");
-      trigger.append(labelSpan, chevron);
-      container.appendChild(trigger);
-      let panel = null;
-      let panelRows = [];
-      let activeNode = null;
-      function visibleRows() {
-        return panelRows.filter((n) => n.style.display !== "none");
-      }
-      function clearActive() {
-        if (activeNode) activeNode.classList.remove("bg-n-alpha-3");
-        activeNode = null;
-        (panel?.querySelector("input") || trigger).removeAttribute("aria-activedescendant");
-      }
-      function setActiveNode(node) {
-        clearActive();
-        activeNode = node;
-        if (node) {
-          node.classList.add("bg-n-alpha-3");
-          node.scrollIntoView({ block: "nearest" });
-        }
-        const focus = panel?.querySelector("input") || trigger;
-        if (node) focus.setAttribute("aria-activedescendant", node.id);
-        else focus.removeAttribute("aria-activedescendant");
-      }
-      function moveActive(delta) {
-        const vis = visibleRows();
-        if (!vis.length) return;
-        const cur = activeNode ? vis.indexOf(activeNode) : -1;
-        let next = cur + delta;
-        if (next < 0) next = vis.length - 1;
-        else if (next >= vis.length) next = 0;
-        setActiveNode(vis[next]);
-      }
-      function labelFor(v) {
-        const opt = options.find((o) => o.value === v);
-        return opt ? opt.label : "";
-      }
-      function renderTriggerLabel() {
-        const txt = labelFor(currentValue);
-        if (txt) {
-          labelSpan.textContent = txt;
-          labelSpan.className = "truncate text-n-slate-12";
-        } else {
-          labelSpan.textContent = placeholder || "";
-          labelSpan.className = "truncate text-n-slate-11";
-        }
-      }
-      renderTriggerLabel();
-      function setChevron(open) {
-        chevron.className = "i-lucide-chevron-" + (open ? "up" : "down") + " size-4 text-n-slate-11 shrink-0";
-      }
-      function setTriggerOpen(open) {
-        trigger.setAttribute("aria-expanded", String(open));
-        trigger.classList.toggle("outline-n-weak", !open);
-        trigger.classList.toggle("hover:outline-n-slate-6", !open);
-        trigger.classList.toggle("outline-n-brand", open);
-        setChevron(open);
-      }
-      function positionPanel() {
-        if (!panel) return;
-        const GAP = 8, MARGIN = 16;
-        const r = trigger.getBoundingClientRect();
-        const vw = window.innerWidth, vh = window.innerHeight;
-        const list = panel.querySelector("ul");
-        if (list) list.style.maxHeight = "";
-        const dh = panel.offsetHeight || 240;
-        panel.style.position = "fixed";
-        const width = Math.min(r.width, Math.max(0, vw - MARGIN * 2));
-        panel.style.width = width + "px";
-        const spaceBelow = vh - r.bottom, spaceAbove = r.top;
-        const placeAbove = spaceBelow < dh + MARGIN && (spaceAbove >= dh + MARGIN || spaceAbove > spaceBelow);
-        if (placeAbove) {
-          panel.style.top = "auto";
-          panel.style.bottom = vh - r.top + GAP + "px";
-        } else {
-          panel.style.bottom = "auto";
-          panel.style.top = r.bottom + GAP + "px";
-        }
-        const chromeHeight = list ? Math.max(0, panel.offsetHeight - list.offsetHeight) : 0;
-        if (list) list.style.maxHeight = Math.max(0, Math.min(240, (placeAbove ? spaceAbove : spaceBelow) - GAP - MARGIN - chromeHeight)) + "px";
-        let left = r.left;
-        if (left + width > vw - MARGIN) left = vw - MARGIN - width;
-        if (left < MARGIN) left = MARGIN;
-        panel.style.left = left + "px";
-      }
-      function closePanel() {
-        if (!panel) return;
-        document.removeEventListener("mousedown", onOutside, true);
-        document.removeEventListener("keydown", onKey, true);
-        window.removeEventListener("resize", positionPanel, true);
-        modal.removeEventListener("scroll", positionPanel, true);
-        panel.remove();
-        panel = null;
-        panelRows = [];
-        activeNode = null;
-        openPanelCloser = null;
-        setTriggerOpen(false);
-        trigger.removeAttribute("aria-activedescendant");
-        trigger.removeAttribute("aria-controls");
-      }
-      function onOutside(e) {
-        if (panel && !panel.contains(e.target) && !trigger.contains(e.target)) closePanel();
-      }
-      function onKey(e) {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          closePanel();
-          trigger.focus({ preventScroll: true });
-          return;
-        }
-        if (e.key === "Tab") {
-          closePanel();
-          trigger.focus({ preventScroll: true });
-          return;
-        }
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          moveActive(1);
-          return;
-        }
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          moveActive(-1);
-          return;
-        }
-        if (e.key === "Enter" && activeNode) {
-          e.preventDefault();
-          activeNode.click();
-        }
-      }
-      function buildRow(opt) {
-        const isSel = opt.value === currentValue;
-        const row = el(
-          "li",
-          "flex items-center justify-between w-full gap-2 px-3 py-2 text-sm transition-colors duration-150 cursor-pointer hover:bg-n-alpha-2" + (isSel ? " bg-n-alpha-2" : "")
-        );
-        row.setAttribute("role", "option");
-        row.id = "cwi-option-" + ++controlId;
-        row.setAttribute("aria-selected", String(isSel));
-        const lead = el("span", "flex items-center min-w-0 gap-2");
-        if (opt.icon) lead.appendChild(icon(opt.icon, "size-4 text-n-slate-11 shrink-0"));
-        const txt = el("span", "truncate text-n-slate-12" + (isSel ? " font-medium" : ""));
-        txt.textContent = opt.label;
-        lead.appendChild(txt);
-        row.appendChild(lead);
-        if (isSel) row.appendChild(icon("check", "flex-shrink-0 size-4 text-n-slate-11"));
-        row.addEventListener("click", () => {
-          currentValue = opt.value;
-          renderTriggerLabel();
-          closePanel();
-          trigger.focus({ preventScroll: true });
-          onSelect(opt.value);
-        });
-        return row;
-      }
-      function openPanel() {
-        if (openPanelCloser) openPanelCloser();
-        panel = el(
-          "div",
-          "cwi-cs-panel z-50 transition-opacity duration-200 border rounded-md shadow-lg bg-n-solid-1 border-n-strong"
-        );
-        if (pageIsDark) panel.classList.add("dark");
-        panel.style.position = "fixed";
-        panel.style.top = "0";
-        panel.style.left = "0";
-        panel.style.opacity = "0";
-        const withSearch = options.length > 7;
-        let searchInput = null;
-        if (withSearch) {
-          const searchWrap = el("div", "relative border-b border-n-strong");
-          searchWrap.appendChild(icon("search", "absolute top-2.5 size-4 text-n-slate-11 " + (pageIsRTL ? "right-3" : "left-3")));
-          searchInput = el(
-            "input",
-            "reset-base w-full py-2 text-sm focus:outline-none border-none rounded-t-md bg-n-solid-1 text-n-slate-12 " + (pageIsRTL ? "pr-10 pl-2 text-right" : "pl-10 pr-2")
-          );
-          searchInput.type = "search";
-          searchInput.placeholder = t("search");
-          searchInput.setAttribute("aria-label", t("search"));
-          searchInput.setAttribute("role", "combobox");
-          searchInput.setAttribute("aria-expanded", "true");
-          searchWrap.appendChild(searchInput);
-          panel.appendChild(searchWrap);
-        }
-        const list = el("ul", "py-1 mb-0 overflow-auto max-h-60");
-        list.setAttribute("role", "listbox");
-        list.id = "cwi-listbox-" + ++controlId;
-        trigger.setAttribute("aria-controls", list.id);
-        if (searchInput) searchInput.setAttribute("aria-controls", list.id);
-        const groupNodes = [];
-        const rowNodes = [];
-        let lastGroup;
-        options.forEach((opt) => {
-          if (opt.group && opt.group !== lastGroup) {
-            lastGroup = opt.group;
-            const gl = el("li", "px-3 py-1.5 text-xs font-medium text-n-slate-11");
-            gl.textContent = opt.group;
-            list.appendChild(gl);
-            groupNodes.push({ node: gl, group: opt.group });
-          }
-          if (!opt.group) lastGroup = void 0;
-          const rowNode = buildRow(opt);
-          rowNodes.push({ node: rowNode, group: opt.group, label: opt.label });
-          list.appendChild(rowNode);
-        });
-        const empty = el("li", "px-3 py-2 text-sm text-n-slate-11");
-        empty.textContent = t("noResults");
-        empty.style.display = "none";
-        list.appendChild(empty);
-        panel.appendChild(list);
-        panelRows = rowNodes.map((r) => r.node);
-        function applyFilter(q) {
-          const needle = q.trim().toLowerCase();
-          let anyVisible = false;
-          const groupHasVisible = {};
-          rowNodes.forEach((r) => {
-            const match = !needle || r.label.toLowerCase().indexOf(needle) !== -1;
-            r.node.style.display = match ? "" : "none";
-            if (match) {
-              anyVisible = true;
-              if (r.group) groupHasVisible[r.group] = true;
-            }
-          });
-          groupNodes.forEach((g) => {
-            g.node.style.display = groupHasVisible[g.group] ? "" : "none";
-          });
-          empty.style.display = anyVisible ? "none" : "";
-          if (activeNode && activeNode.style.display === "none") clearActive();
-        }
-        if (searchInput) {
-          searchInput.addEventListener("input", () => applyFilter(searchInput.value));
-        }
-        dlg.appendChild(panel);
-        positionPanel();
-        setTriggerOpen(true);
-        requestAnimationFrame(() => {
-          if (panel) panel.style.opacity = "1";
-        });
-        if (searchInput) searchInput.focus({ preventScroll: true });
-        document.addEventListener("mousedown", onOutside, true);
-        document.addEventListener("keydown", onKey, true);
-        window.addEventListener("resize", positionPanel, true);
-        modal.addEventListener("scroll", positionPanel, true);
-        openPanelCloser = closePanel;
-      }
-      trigger.addEventListener("click", (e) => {
-        e.preventDefault();
-        if (panel) closePanel();
-        else openPanel();
-      });
-      return {
-        el: container,
-        setValue(v) {
-          currentValue = v == null ? "" : v;
-          renderTriggerLabel();
-        }
-      };
-    }
-    async function stepLabel() {
-      const version = resetStep();
-      modal.appendChild(header(t("labelStepTitle"), t("labelStepDesc")));
-      let labels = [];
-      try {
-        labels = await api.listLabels().then((r) => r.payload || r);
-      } catch {
-      }
-      if (!isCurrentStep(version)) return;
-      const options = [{ value: "", label: t("noLabel") }];
-      (labels || []).forEach((l) => options.push({ value: l.title, label: l.title }));
-      const existingLabelTitles = new Set((labels || []).map((l) => String(l.title).toLowerCase()));
-      const prior = state.labelTitle || "";
-      const priorIsExisting = prior && existingLabelTitles.has(prior.toLowerCase());
-      let selValue = priorIsExisting ? prior : "";
-      const newInput = el(
-        "input",
-        "h-8 w-full px-3 py-2 text-sm rounded-lg bg-n-alpha-black2 text-n-slate-12 outline outline-1 outline-n-weak focus:outline-n-brand border-0 outline-offset-[-1px]"
-      );
-      newInput.placeholder = t("newLabelPlaceholder");
-      if (prior && !priorIsExisting) newInput.value = prior;
-      const labelError = el("div", "min-h-5 text-sm text-n-ruby-11");
-      labelError.setAttribute("role", "alert");
-      newInput.addEventListener("input", () => {
-        labelError.textContent = "";
-      });
-      newInput.addEventListener("blur", () => {
-        const normalized = normalizeLabelTitle(newInput.value);
-        if (normalized) newInput.value = normalized;
-      });
-      const cs = customSelect({
-        options,
-        value: selValue,
-        placeholder: t("noLabel"),
-        size: "field",
-        // roomier single-select field for the label step
-        onSelect: (v) => {
-          selValue = v;
-          if (v) newInput.value = "";
-          labelError.textContent = "";
-        }
-      });
-      modal.append(
-        formRow(t("selectLabel"), cs.el),
-        formRow(t("newLabelField"), newInput),
-        labelError,
-        footer({
-          onBack: stepMapping,
-          onNext: () => {
-            const rawTitle = newInput.value.trim();
-            const enteredTitle = normalizeLabelTitle(rawTitle);
-            if (rawTitle && !isValidLabelTitle(enteredTitle)) {
-              labelError.textContent = t("labelNameInvalid");
-              newInput.focus({ preventScroll: true });
-              return;
-            }
-            if (enteredTitle) newInput.value = enteredTitle;
-            state.labelTitle = enteredTitle || selValue;
-            state.labelNeedsCreation = Boolean(enteredTitle) && !existingLabelTitles.has(enteredTitle.toLowerCase());
-            stepPreview();
-          },
-          nextLabel: t("continue")
-        })
-      );
-    }
-    async function stepPreview() {
-      const version = resetStep();
-      modal.appendChild(header(t("previewTitle"), ""));
-      const badMaps = validateMapping(state.table.headers, state.table.rows, state.mapping);
-      if (badMaps.length) {
-        for (const b of badMaps) {
-          const e = el("div", "text-sm text-n-ruby-11");
-          e.textContent = t("badMapping")(b.header, FIELD_LABELS[b.field] || b.field, b.total - b.valid, b.total);
-          modal.appendChild(e);
-        }
-        modal.appendChild(footer({ onBack: stepMapping }));
-        return;
-      }
-      const status = el("div", "text-sm text-n-slate-11");
-      status.textContent = t("checkingDupes");
-      modal.appendChild(status);
-      await ensureCustomAttributes();
-      if (!isCurrentStep(version)) return;
-      try {
-        await ensureLabel();
-      } catch {
-        status.textContent = t("labelCreateFailed");
-        modal.appendChild(footer({ onBack: stepLabel }));
-        return;
-      }
-      if (!isCurrentStep(version)) return;
-      const headerEchoRows = [];
-      const contacts = state.table.rows.map((row, idx) => ({
-        ...buildContactPayload(row, state.mapping, state.customMap),
-        __row: idx + 2
-      })).filter((c, idx) => {
-        if (!isHeaderEchoRow(state.table.rows[idx], state.mapping)) return true;
-        headerEchoRows.push(c.__row);
-        return false;
-      });
-      state.contacts = contacts;
-      const N = contacts.length;
-      let dedupOk = true;
-      state.serverMode = false;
-      let serverCounts = null;
-      try {
-        serverCounts = await api.smartImportPreview(contacts.map(wireRow));
-        state.serverMode = true;
-      } catch {
-      }
-      if (!isCurrentStep(version)) return;
-      if (!state.serverMode) {
-        try {
-          await batchDedup(contacts, api, (d, tot) => {
-            status.textContent = `${t("checkingDupes")} ${d}/${tot}`;
-          });
-        } catch {
-          dedupOk = false;
-          contacts.forEach((c) => {
-            delete c.__match;
-            delete c.__dupTail;
-          });
-        }
-      }
-      if (!isCurrentStep(version)) return;
-      const dupes = state.serverMode ? serverCounts.dup_in_file || 0 : contacts.filter((c) => c.__dupTail).length;
-      const existing = state.serverMode ? serverCounts.existing : contacts.filter((c) => c.__match).length;
-      const created = N - existing - dupes;
-      status.textContent = dedupOk ? `${t("readyToImport")} ${N} \xB7 ${created} ${t("newWord")} \xB7 ${existing} ${t("existingWillUpdate")}` + (dupes ? ` \xB7 ${dupes} ${t("dupInFile")}` : "") : t("dedupFailed");
-      modal.append(headerEchoNotice(headerEchoRows));
-      modal.append(phoneWarning(contacts));
-      modal.append(
-        tableScroller(previewTable(contacts.slice(0, 10))),
-        footer({ onBack: stepLabel, onNext: stepRun, nextLabel: `${t("importVerb")} ${N} ${t("contactsWord")}` })
-      );
-    }
-    function headerEchoNotice(rows) {
-      if (!rows.length) return document.createDocumentFragment();
-      const box = el("div", "mt-3 rounded-lg border border-n-amber-6 bg-n-amber-2 px-3 py-2");
-      const title = el("div", "text-sm font-medium text-n-amber-11");
-      title.textContent = t("headerEchoSkipped")(rows.join(", "));
-      box.appendChild(title);
-      return box;
-    }
-    function phoneWarning(contacts) {
-      const noPhone = contacts.filter((c) => !c.phone_number);
-      if (!noPhone.length) return document.createDocumentFragment();
-      const unusable = noPhone.filter((c) => c.__phoneRaw);
-      const box = el("div", "mt-3 rounded-lg border border-n-amber-6 bg-n-amber-2 px-3 py-2");
-      const title = el("div", "text-sm font-medium text-n-amber-11");
-      title.textContent = t("noPhoneTitle")(noPhone.length);
-      box.appendChild(title);
-      const parts = [];
-      if (noPhone.length - unusable.length > 0) parts.push(t("noPhoneEmpty")(noPhone.length - unusable.length));
-      if (unusable.length) parts.push(t("noPhoneInvalid")(unusable.length, unusable[0].__phoneRaw));
-      if (parts.length) {
-        const detail = el("div", "mt-0.5 text-xs text-n-amber-11");
-        detail.textContent = parts.join(" \xB7 ");
-        box.appendChild(detail);
-      }
-      if (!state.mapping.some((m) => m.field === "phone_number_alt")) {
-        const hint = el("div", "mt-1 text-xs text-n-slate-11");
-        hint.textContent = t("noPhoneHint");
-        box.appendChild(hint);
-      }
-      return box;
-    }
-    async function ensureCustomAttributes() {
-      for (const c of state.customMap.filter((x) => x.create)) {
-        try {
-          await api.createCustomAttribute({
-            attribute_display_name: c.create.display,
-            attribute_key: c.attribute_key,
-            attribute_display_type: "text",
-            attribute_model: "contact_attribute"
-          });
-        } catch {
-        }
-      }
-    }
-    async function ensureLabel() {
-      if (!state.labelTitle || !state.labelNeedsCreation) return;
-      const created = await api.createLabel(state.labelTitle);
-      state.labelTitle = created?.title || state.labelTitle;
-      state.labelNeedsCreation = false;
-    }
-    let startingImport = false;
-    async function stepRun() {
-      if (startingImport) return;
-      if (window.__cwImportJob && ["running", "cancelling"].includes(window.__cwImportJob.progress.state)) {
-        showError(t("alreadyRunning"));
-        return;
-      }
-      startingImport = true;
-      try {
-        if (state.serverMode) {
-          try {
-            const res = await api.smartImportStart({
-              contacts: state.contacts.map(wireRow),
-              label_title: state.labelTitle,
-              wa_inbox_id: state.waInboxId,
-              locale: DRIP_LOCALE
-            });
-            const job2 = createServerJob({
-              api,
-              jobId: res.job_id,
-              total: state.contacts.length,
-              email: res.email,
-              labelTitle: state.labelTitle
-            });
-            window.__cwImportJob = job2;
-            mountPill(job2, { dark: pageIsDark, rtl: pageIsRTL });
-            close();
-            return;
-          } catch {
-          }
-          try {
-            await batchDedup(state.contacts, api);
-          } catch {
-            state.contacts.forEach((c) => {
-              delete c.__match;
-              delete c.__dupTail;
-            });
-          }
-        }
-        const job = createImportJob({ contacts: state.contacts, api, labelTitle: state.labelTitle, waInboxId: state.waInboxId });
-        window.__cwImportJob = job;
-        mountPill(job, { dark: pageIsDark, rtl: pageIsRTL });
-        close();
-      } finally {
-        startingImport = false;
-      }
-    }
-    function showError(msg) {
-      const e = el("div", "text-sm text-n-ruby-11");
-      e.setAttribute("role", "alert");
-      e.textContent = msg;
-      modal.appendChild(e);
-    }
-    function previewTable(contacts) {
-      const tbl = el("table", "w-full text-sm border-collapse");
-      const thead = el("tr");
-      [t("thName"), t("thPhone"), t("thEmail"), t("thCompany")].forEach((h) => {
-        const th = el("th", "text-start font-medium text-n-slate-11 px-3 py-2 cwi-tbl-cell border-n-weak");
-        th.textContent = h;
-        thead.appendChild(th);
-      });
-      tbl.appendChild(thead);
-      contacts.forEach((c) => {
-        const row = el("tr");
-        [c.name || "", c.phone_number || "", c.email || "", (c.additional_attributes || {}).company_name || ""].forEach((v) => {
-          const td = el("td", "px-3 py-2 cwi-tbl-cell border-n-weak text-n-slate-12");
-          td.textContent = v;
-          row.appendChild(td);
-        });
-        tbl.appendChild(row);
-      });
-      return tbl;
-    }
-    function footer({ onBack, onNext, onCancel, nextLabel }) {
-      const bar = el("div", "flex items-center justify-between w-full gap-3");
-      if (onBack) {
-        const b = btn("faded");
-        b.className += " w-full";
-        b.textContent = t("back");
-        b.onclick = onBack;
-        bar.appendChild(b);
-      }
-      if (onCancel) {
-        const b = btn("ghost");
-        b.className += " w-full";
-        b.textContent = t("cancel");
-        b.onclick = onCancel;
-        bar.appendChild(b);
-      }
-      if (onNext) {
-        const b = btn("primary");
-        b.className += " w-full";
-        b.textContent = nextLabel || t("continue");
-        b.onclick = onNext;
-        bar.appendChild(b);
-      }
-      return bar;
-    }
-    function formRow(labelText, control) {
-      const wrap = el("div", "flex flex-col gap-1");
-      const lbl = el("label", "text-sm text-n-slate-12 mb-1");
-      lbl.textContent = labelText;
-      const input = control.matches("input,button,select") ? control : control.querySelector("input,button,select");
-      if (input) {
-        input.id ||= "cwi-control-" + ++controlId;
-        lbl.htmlFor = input.id;
-      }
-      wrap.append(lbl, control);
-      return wrap;
-    }
-    function tableScroller(table) {
-      const wrap = el("div", "cwi-table-scroll");
-      wrap.appendChild(table);
-      return wrap;
-    }
+    return xlsxLoading;
   }
   function injectStyles() {
     if (document.getElementById("cwi-styles")) return;
-    const s = document.createElement("style");
-    s.id = "cwi-styles";
-    s.textContent = STYLES;
-    document.head.appendChild(s);
+    document.head.appendChild(h("style", { id: "cwi-styles" }, STYLES));
   }
-  var controlId = 0;
-  function mountPill(job, { dark, rtl }) {
-    injectStyles();
-    document.getElementById("cwi-pill")?.remove();
-    const pill = el("div", "cwi-pill flex flex-col gap-2 p-4 rounded-xl shadow-lg border border-n-strong bg-n-solid-1");
-    pill.id = "cwi-pill";
-    if (dark) pill.classList.add("dark");
-    pill.setAttribute("dir", rtl ? "rtl" : "ltr");
-    const head = el("div", "flex items-center justify-between gap-3");
-    const title = el("span", "text-sm font-medium text-n-slate-12");
-    title.setAttribute("role", "status");
-    const xBtn = el("button", BTN_BASE + " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-6 w-6 p-0 shrink-0 cursor-pointer");
-    xBtn.appendChild(icon("x", "size-4"));
-    head.append(title, xBtn);
-    const track = el("div", "h-1.5 w-full rounded-full bg-n-alpha-2 overflow-hidden");
-    const fill = el("div", "cwi-prog-fill bg-n-brand");
-    fill.style.transform = "scaleX(0)";
-    track.appendChild(fill);
-    const detail = el("div", "text-xs text-n-slate-11");
-    const hint = elWithText(
-      "div",
-      "text-xs text-n-slate-11",
-      job.serverMode ? t("bgHintServer")(job.emailTo) : t("bgHint")
-    );
-    const actions = el("div", "flex items-center gap-2");
-    actions.style.display = "none";
-    pill.append(head, track, detail, hint, actions);
-    document.body.appendChild(pill);
-    function warnUnload(e) {
-      e.preventDefault();
-      e.returnValue = "";
-    }
-    if (!job.serverMode) window.addEventListener("beforeunload", warnUnload);
-    function dismiss() {
-      off();
-      window.removeEventListener("beforeunload", warnUnload);
-      pill.remove();
-      if (window.__cwImportJob === job) window.__cwImportJob = null;
-    }
-    xBtn.addEventListener("click", () => {
-      const st = job.progress.state;
-      if (st === "running") job.cancel();
-      else if (st !== "cancelling") dismiss();
-    });
-    function render(p) {
-      fill.style.transform = "scaleX(" + (p.total ? Math.min(1, Math.max(0, p.done / p.total)) : 1) + ")";
-      const counts = `${t("createdWord")} ${p.created} \xB7 ${t("updatedWord")} ${p.updated}` + (p.skipped ? ` \xB7 ${t("skippedWord")} ${p.skipped}` : "") + (p.failed ? ` \xB7 ${t("failedWord")} ${p.failed}` : "");
-      if (p.state === "running" || p.state === "cancelling") {
-        title.textContent = p.state === "running" ? t("bgImporting") : t("bgCancelling");
-        xBtn.title = t("stopImport");
-        xBtn.setAttribute("aria-label", t("stopImport"));
-        detail.textContent = `${p.done}/${p.total} \xB7 ${counts}`;
-        if (job.serverMode) hint.textContent = t("bgHintServer")(job.emailTo);
+  var asList = (r) => Array.isArray(r) ? r : r?.payload || [];
+  var labelTitles = (r) => asList(r).map((l) => l?.title).filter(Boolean);
+  var slugify = (s) => String(s).toLowerCase().trim().replace(/[^a-z0-9֐-׿]+/g, "_").replace(/^_|_$/g, "") || "field";
+  var isolate = (s) => `\u2066${s}\u2069`;
+  function formatBytes(bytes) {
+    if (!bytes) return "0 Bytes";
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${parseFloat((bytes / 1024 ** i).toFixed(2))} ${["Bytes", "KB", "MB", "GB"][i]}`;
+  }
+  async function digest(text) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  async function take(input, file, ctx) {
+    const my = ++token;
+    drop();
+    try {
+      if (!file || !file.size || file.size > MAX_BYTES || !/\.(csv|xlsx|xls)$/i.test(file.name || "")) {
+        passThrough(input, file);
         return;
       }
-      window.removeEventListener("beforeunload", warnUnload);
-      xBtn.title = t("close");
-      xBtn.setAttribute("aria-label", t("close"));
-      hint.remove();
-      title.textContent = p.state === "done" ? t("importDone") : p.state === "cancelled" ? `${t("bgCancelled")} (${p.done}/${p.total})` : t("bgError");
-      detail.textContent = counts;
-      const top = p.failed ? job.log?.topError() : null;
-      if (top) detail.textContent += ` \xB7 ${t("topError")}: ${top.reason} (\xD7${top.count})`;
-      if (job.log && !actions.childElementCount) {
-        actions.style.display = "";
-        const dl = btn("ghost");
-        dl.textContent = t("downloadReport");
-        dl.addEventListener("click", () => downloadCsv(job.log.toCsv(), "import-log.csv"));
-        actions.appendChild(dl);
+      const api = createApiClient(ctx.accountId, ctx.authHeaders);
+      const [table, defs, labels] = await Promise.all([
+        readFileToTable(file, { loadXlsx: () => loadXlsx(ctx.assetBase) }),
+        api.listCustomAttributes().then(asList).catch(() => []),
+        api.listLabels().then(labelTitles).catch(() => [])
+      ]);
+      if (my !== token) return;
+      const { headers, rows } = table;
+      if (!headers.some((x) => String(x).trim()) || !rows.length || headers.includes("__chatwoot_csv_format")) {
+        passThrough(input, file);
+        return;
+      }
+      mount(input, file, api, { headers, rows, defs, labels });
+    } catch {
+      if (my !== token) return;
+      drop();
+      passThrough(input, file);
+    }
+  }
+  function submit(form) {
+    const s = cur;
+    if (!s || s.bypass || !form.contains(s.input)) return false;
+    if (!s.busy) run(s, form);
+    return true;
+  }
+  function drop() {
+    const s = cur;
+    if (!s) return;
+    cur = null;
+    clearTimeout(s.preTimer);
+    s.observer.disconnect();
+    s.box.remove();
+  }
+  function mount(input, file, api, { headers, rows, defs, labels }) {
+    injectStyles();
+    const loc = locale();
+    const T = I18N[loc];
+    const detected = detectColumns(headers, rows.slice(0, 50));
+    const values = detected.map((d) => {
+      const key = matchCustomField(d.header, defs);
+      return key ? `custom:${key}` : d.field || "";
+    });
+    const month = new Intl.DateTimeFormat(loc, { month: "long" }).format(/* @__PURE__ */ new Date());
+    const monthLabel = normalizeLabelTitle(T.monthLabel(month));
+    const existing = labels.find((t) => t.toLowerCase() === monthLabel.toLowerCase());
+    const s = {
+      input,
+      file,
+      api,
+      T,
+      locale: loc,
+      headers,
+      rows,
+      defs,
+      labels,
+      values,
+      detected: values.map(Boolean),
+      zone: input.parentElement,
+      label: existing ? `label:${existing}` : `new:${monthLabel}`,
+      // Only a label that already exists rides in the first CSV: if Import ever reached Chatwoot
+      // without run(), a label created later would fail every row as "Unknown labels".
+      monthLabel,
+      labelTitle: existing || "",
+      selects: [],
+      busy: false,
+      bypass: false,
+      mounted: false,
+      pre: null,
+      preToken: 0,
+      preTimer: null
+    };
+    cur = s;
+    s.box = render(s);
+    s.zone.after(s.box);
+    s.observer = new MutationObserver(() => watch(s));
+    s.observer.observe(input.form || document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
+    feed(s);
+    setTimeout(() => {
+      s.mounted = cur === s && patchFileRow(s);
+    });
+    precheck(s);
+  }
+  function watch(s) {
+    if (cur !== s || !s.mounted) return;
+    if (!s.zone.isConnected || !s.zone.querySelector("span.truncate")) {
+      drop();
+      return;
+    }
+    syncDisabled(s);
+    patchFileRow(s);
+  }
+  function syncDisabled(s) {
+    const disabled = s.busy || s.input.disabled;
+    if (s.fieldset.disabled !== disabled) s.fieldset.disabled = disabled;
+  }
+  function patchFileRow(s) {
+    const name = s.zone.querySelector("span.truncate");
+    if (!name) return false;
+    if (name.textContent !== s.file.name) name.textContent = s.file.name;
+    const size = name.nextElementSibling;
+    const text = `${s.T.rows(s.rows.length)} \xB7 ${isolate(formatBytes(s.file.size))}`;
+    if (size && size.textContent !== text) size.textContent = text;
+    return true;
+  }
+  function plan(s) {
+    const mapping = [];
+    const customMap = [];
+    let labelsAt = -1;
+    s.values.forEach((v, index) => {
+      if (!v) return;
+      if (v === "labels") labelsAt = index;
+      else if (v.startsWith("custom:")) customMap.push({ index, attribute_key: v.slice(7) });
+      else if (v.startsWith("new:")) customMap.push({ index, attribute_key: slugify(v.slice(4)) });
+      else mapping.push({ index, field: v });
+    });
+    return { mapping, customMap, labelsAt };
+  }
+  function buildContacts(s) {
+    const { mapping, customMap, labelsAt } = plan(s);
+    const contacts = [];
+    const echo = [];
+    let empty = 0;
+    s.rows.forEach((row, idx) => {
+      if (isHeaderEchoRow(row, mapping)) {
+        echo.push(idx + 2);
+        return;
+      }
+      const c = buildContactPayload(row, mapping, customMap);
+      if (!(c.name || c.email || c.identifier || c.phone_number)) {
+        empty += 1;
+        return;
+      }
+      const tags = labelsAt < 0 ? "" : String(row[labelsAt] ?? "").trim();
+      if (tags) c.__labels = tags;
+      c.__row = idx + 2;
+      contacts.push(c);
+    });
+    return { contacts, echo, empty };
+  }
+  function feed(s) {
+    s.built = buildContacts(s);
+    const csv = toNativeCsv(s.built.contacts, s.labelTitle);
+    const name = `${s.file.name.replace(/\.[^.]+$/, "") || "contacts"}.csv`;
+    setFiles(s.input, new File([csv], name, { type: "text/csv" }));
+    fire(s.input, "change");
+    setTimeout(() => cur === s && patchFileRow(s));
+    return csv;
+  }
+  function render(s) {
+    const T = s.T;
+    const title = (text, attrs = {}) => h("h4", { class: "cwi-h text-heading-3 text-n-slate-12", ...attrs }, text);
+    const hint = (text) => h("p", { class: "cwi-hint text-label-small text-n-slate-11" }, text);
+    const sample = (i) => (s.rows.find((r) => String(r[i] ?? "").trim()) || [])[i] || "";
+    const table = h(
+      "table",
+      { class: "cwi-map" },
+      h("thead", {}, h(
+        "tr",
+        {},
+        h("th", {}, T.colFile),
+        h("th", { class: "cwi-sm-hide" }, T.colSample),
+        h("th", {}, T.colField)
+      )),
+      h("tbody", {}, s.headers.map((header, i) => h(
+        "tr",
+        {},
+        h(
+          "td",
+          {},
+          h("span", { class: "cwi-col" }, String(header).trim() || `#${i + 1}`),
+          s.detected[i] && h("span", { class: "cwi-auto" }, T.detected)
+        ),
+        h("td", { class: "cwi-sample cwi-sm-hide" }, String(sample(i)).trim()),
+        h("td", {}, s.selects[i] = fieldSelect(s, i))
+      )))
+    );
+    s.labelSelect = labelSelect(s);
+    s.statsEl = h("div", { class: "cwi-stats" });
+    s.notesEl = h("p", { class: "cwi-hint text-label-small text-n-slate-11" });
+    s.email = h("input", {
+      type: "checkbox",
+      checked: true,
+      class: "peer absolute inset-0 z-10 h-4 w-4 disabled:opacity-50 appearance-none rounded border border-n-slate-6 ring-transparent transition-all duration-200 checked:border-n-brand checked:bg-n-brand dark:border-gray-600 dark:checked:border-n-brand hover:enabled:bg-n-blue-border cursor-pointer"
+    });
+    const tick = h("span", { class: "relative w-4 h-4 shrink-0" }, s.email);
+    tick.insertAdjacentHTML("beforeend", '<svg viewBox="0 0 14 14" fill="none" aria-hidden="true" class="pointer-events-none absolute w-3.5 h-3.5 z-20 stroke-white opacity-0 peer-checked:opacity-100 transition-opacity duration-200 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"><path d="M3 8L6 11L11 3.5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+    s.status = h("p", { role: "status", class: "cwi-hint text-body-main text-n-slate-11", hidden: true });
+    s.error = h("div", { role: "alert", class: "cwi-err", hidden: true });
+    s.fieldset = h(
+      "fieldset",
+      { class: "cwi-fs" },
+      h("div", { class: "cwi-sec" }, h("div", {}, title(T.mapTitle), hint(T.mapHint)), h("div", { class: "cwi-scroll" }, table)),
+      h("div", { class: "cwi-sec cwi-tight" }, title(T.labelTitle, { id: "cwi-label-title" }), s.labelSelect, hint(T.labelHint)),
+      h(
+        "div",
+        { class: "cwi-sec" },
+        title(T.checkTitle),
+        s.statsEl,
+        s.notesEl,
+        h("label", { class: "cwi-cb inline-flex cursor-pointer items-center gap-2 text-body-main text-n-slate-12" }, tick, T.emailSummary)
+      ),
+      s.status,
+      s.error
+    );
+    renderCheck(s);
+    return h("div", { class: "cwi-box" }, s.fieldset);
+  }
+  function fieldSelect(s, i) {
+    const T = s.T;
+    const v = s.values[i];
+    const header = String(s.headers[i]).trim();
+    const sel = h(
+      "select",
+      { "aria-label": T.selectFieldFor(header || `#${i + 1}`), onchange: () => onField(s, i, sel) },
+      h("option", { value: "" }, T.ignore),
+      h("optgroup", { label: T.systemFields }, FIELD_ORDER.map((f) => h("option", { value: f }, T.fields[f]))),
+      h(
+        "optgroup",
+        { label: T.customFields },
+        s.defs.map((d) => h("option", { value: `custom:${d.attribute_key}` }, d.attribute_display_name || d.attribute_key)),
+        header && !matchCustomField(header, s.defs) && h("option", { value: `new:${header}` }, T.newFieldOpt(header)),
+        v.startsWith("new:") && v !== `new:${header}` && h("option", { value: v }, T.newFieldOpt(v.slice(4))),
+        h("option", { value: "__create" }, T.createField)
+      )
+    );
+    sel.value = v;
+    return sel;
+  }
+  function onField(s, i, sel) {
+    if (sel.value !== "__create") {
+      setField(s, i, sel.value);
+      return;
+    }
+    sel.value = s.values[i];
+    inlineEdit(s, sel, s.T.newFieldName, (name) => {
+      if (!name) return s.T.fieldNameMissing;
+      const def = s.defs.find((d) => matchCustomField(name, [d]));
+      setField(s, i, def ? `custom:${def.attribute_key}` : `new:${name}`);
+      return "";
+    }, () => replaceSelect(s, i));
+  }
+  function setField(s, i, v) {
+    s.values[i] = v;
+    if (v && v !== "phone_number_alt") {
+      s.values.forEach((x, j) => {
+        if (j !== i && x === v) {
+          s.values[j] = "";
+          s.selects[j].value = "";
+        }
+      });
+    }
+    showError(s, "");
+    clearTimeout(s.preTimer);
+    s.preTimer = setTimeout(() => precheck(s), 250);
+  }
+  function replaceSelect(s, i) {
+    const next = fieldSelect(s, i);
+    s.selects[i].replaceWith(next);
+    s.selects[i] = next;
+    return next;
+  }
+  function inlineEdit(s, sel, placeholder, done, restore) {
+    const T = s.T;
+    const input = h("input", { type: "text", maxlength: "80", placeholder, "aria-label": placeholder });
+    const finish = (save) => {
+      if (save) {
+        const problem = done(input.value.trim());
+        if (problem) {
+          showError(s, problem);
+          input.focus();
+          return;
+        }
+      }
+      showError(s, "");
+      editor.replaceWith(sel);
+      restore().focus();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        finish(true);
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false);
+      }
+    });
+    const editor = h(
+      "div",
+      { class: "cwi-edit" },
+      input,
+      h("button", { type: "button", class: "cwi-btn cwi-primary", onclick: () => finish(true) }, T.add),
+      h("button", { type: "button", class: "cwi-btn", onclick: () => finish(false) }, T.cancel)
+    );
+    sel.replaceWith(editor);
+    input.focus();
+  }
+  function labelSelect(s) {
+    const T = s.T;
+    const has = (t) => s.labels.some((x) => x.toLowerCase() === t.toLowerCase());
+    const sel = h(
+      "select",
+      { "aria-labelledby": "cwi-label-title", onchange: () => onLabel(s, sel) },
+      h("option", { value: "" }, T.noLabel),
+      !has(s.monthLabel) && h("option", { value: `new:${s.monthLabel}` }, T.newLabelOpt(s.monthLabel)),
+      s.label.startsWith("new:") && s.label !== `new:${s.monthLabel}` && h("option", { value: s.label }, T.newLabelOpt(s.label.slice(4))),
+      s.labels.map((t) => h("option", { value: `label:${t}` }, t)),
+      h("option", { value: "__other" }, T.otherLabel)
+    );
+    sel.value = s.label;
+    return sel;
+  }
+  function onLabel(s, sel) {
+    if (sel.value !== "__other") {
+      s.label = sel.value;
+      showError(s, "");
+      return;
+    }
+    sel.value = s.label;
+    inlineEdit(s, sel, s.T.newLabelName, (typed) => {
+      const title = normalizeLabelTitle(typed);
+      if (!isValidLabelTitle(title)) return s.T.labelNameInvalid;
+      const hit = s.labels.find((t) => t.toLowerCase() === title.toLowerCase());
+      s.label = hit ? `label:${hit}` : `new:${title}`;
+      return "";
+    }, () => replaceLabelSelect(s));
+  }
+  function replaceLabelSelect(s) {
+    const next = labelSelect(s);
+    s.labelSelect.replaceWith(next);
+    s.labelSelect = next;
+    return next;
+  }
+  async function precheck(s) {
+    const my = ++s.preToken;
+    s.built = buildContacts(s);
+    const { contacts } = s.built;
+    if (contacts.length > PRECHECK_MAX) s.pre = "big";
+    else if (!contacts.length) s.pre = { new: 0, existing: 0, dup_in_file: 0 };
+    else s.pre = null;
+    renderCheck(s);
+    if (s.pre !== null) return;
+    try {
+      const keys = contacts.map((c) => ({ identifier: c.identifier, email: c.email?.toLowerCase(), phone_number: c.phone_number }));
+      const result = await s.api.smartImportPreview(keys);
+      if (my === s.preToken && cur === s) s.pre = result;
+    } catch {
+      if (my === s.preToken && cur === s) s.pre = "error";
+    }
+    if (my === s.preToken && cur === s) renderCheck(s);
+  }
+  function phoneSample(s) {
+    const cols = s.values.flatMap((v, i) => v === "phone_number" || v === "phone_number_alt" ? [i] : []);
+    for (const row of s.rows.slice(0, 200)) {
+      for (const i of cols) {
+        const raw = String(row[i] ?? "").trim();
+        const e164 = raw && normalizePhone(raw);
+        if (e164 && e164 !== raw) return raw;
       }
     }
-    const off = job.onUpdate(render);
-    render(job.progress);
+    return "";
   }
-  function el(tag, cls) {
-    const e = document.createElement(tag);
-    if (cls) e.className = cls;
-    return e;
+  function renderCheck(s) {
+    const T = s.T;
+    const p = s.pre;
+    const ok = p && typeof p === "object";
+    const { contacts, echo, empty } = s.built || buildContacts(s);
+    const n = (k) => ok ? Number(p[k] || 0).toLocaleString(s.locale) : p === null ? "\u2026" : "\u2014";
+    const noPhone = contacts.filter((c) => !c.phone_number).length;
+    const stat = (num, label) => h("div", { class: "cwi-stat" }, h("b", {}, num), h("span", {}, label));
+    s.statsEl.replaceChildren(
+      stat(n("new"), T.statNew),
+      stat(n("existing"), T.statExisting),
+      stat(n("dup_in_file"), T.statDup),
+      stat(noPhone.toLocaleString(s.locale), T.statNoPhone)
+    );
+    const sample = phoneSample(s);
+    const notes = [
+      p === null && T.checking,
+      sample && T.phoneFormat(isolate(sample)),
+      ok && p.whatsapp && contacts.some((c) => c.phone_number) && T.waLinked,
+      noPhone > 0 && T.noPhoneNote(noPhone),
+      echo.length > 0 && T.headerEcho(echo.slice(0, 10).join(", ") + (echo.length > 10 ? "\u2026" : "")),
+      empty > 0 && T.emptyRows(empty),
+      p === "error" && T.precheckFailed,
+      p === "big" && T.precheckTooBig(PRECHECK_MAX.toLocaleString(s.locale))
+    ].filter(Boolean);
+    s.notesEl.textContent = notes.join(" ");
+    s.notesEl.hidden = !notes.length;
   }
-  function icon(name, extra) {
-    return el("span", "i-lucide-" + name + (extra ? " " + extra : ""));
+  function showError(s, message) {
+    s.error.textContent = message;
+    s.error.hidden = !message;
   }
-  function header(title, subtitle) {
-    const wrap = el("div", "flex flex-col gap-2");
-    const h = el("h3", "text-base font-medium leading-6 text-n-slate-12 m-0");
-    h.textContent = title;
-    h.id = "cwi-dialog-title";
-    h.tabIndex = -1;
-    wrap.appendChild(h);
-    if (subtitle != null && subtitle !== "") {
-      if (typeof subtitle === "string") {
-        const p = el("p", "mb-0 text-sm text-n-slate-11");
-        p.textContent = subtitle;
-        wrap.appendChild(p);
-      } else {
-        wrap.appendChild(subtitle);
+  function setBusy(s, busy) {
+    s.busy = busy;
+    syncDisabled(s);
+    s.status.textContent = busy ? s.T.preparing : "";
+    s.status.hidden = !busy;
+  }
+  function problemOf(s) {
+    const T = s.T;
+    const { mapping } = plan(s);
+    if (!mapping.some((m) => IDENTITY.has(m.field))) return T.needIdentity;
+    const [bad] = validateMapping(s.headers, s.rows, mapping);
+    if (bad) return T.badMapping(bad.header, bad.total - bad.valid, bad.total, T.fields[bad.field]);
+    if (s.label.startsWith("new:") && !isValidLabelTitle(s.label.slice(4))) return T.labelNameInvalid;
+    if (!buildContacts(s).contacts.length) return T.needIdentity;
+    return "";
+  }
+  async function ensureFields(s) {
+    for (let i = 0; i < s.values.length; i += 1) {
+      if (!s.values[i].startsWith("new:")) continue;
+      const name = s.values[i].slice(4).trim();
+      const key = slugify(name);
+      const find = () => s.defs.find((d) => d.attribute_key === key || matchCustomField(name, [d]));
+      let def = find();
+      if (!def) {
+        try {
+          def = await s.api.createCustomAttribute({
+            attribute_display_name: name,
+            attribute_key: key,
+            attribute_display_type: "text",
+            attribute_model: "contact_attribute"
+          });
+          s.defs.push(def);
+        } catch {
+          s.defs = await s.api.listCustomAttributes().then(asList).catch(() => s.defs);
+          def = find();
+          if (!def) throw new Notice(s.T.fieldCreateFailed(name));
+        }
       }
+      s.values[i] = `custom:${def.attribute_key}`;
+      replaceSelect(s, i);
     }
-    return wrap;
   }
-  var BTN_BASE = "inline-flex items-center justify-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline disabled:opacity-50 active:enabled:scale-[0.97] text-sm font-medium";
-  function btn(variant) {
-    const b = el("button", BTN_BASE + " cursor-pointer");
-    if (variant === "primary") {
-      b.className += " bg-n-brand text-white hover:brightness-110 outline-transparent h-10 px-4";
-    } else if (variant === "faded") {
-      b.className += " bg-n-slate-9/10 text-n-slate-12 hover:bg-n-slate-9/20 outline-transparent h-10 px-4";
-    } else {
-      b.className += " text-n-slate-12 hover:bg-n-alpha-2 outline-transparent h-8 px-3";
+  async function ensureLabel(s) {
+    s.labelTitle = "";
+    if (s.label.startsWith("label:")) s.labelTitle = s.label.slice(6);
+    if (!s.label.startsWith("new:")) return;
+    const title = s.label.slice(4);
+    try {
+      s.labelTitle = (await s.api.createLabel(title))?.title || title;
+    } catch {
+      const hit = (await s.api.listLabels().then(labelTitles).catch(() => [])).find((t) => t.toLowerCase() === title.toLowerCase());
+      if (!hit) throw new Notice(s.T.labelCreateFailed);
+      s.labelTitle = hit;
     }
-    return b;
+    s.labels = [.../* @__PURE__ */ new Set([...s.labels, s.labelTitle])];
+    s.label = `label:${s.labelTitle}`;
+    replaceLabelSelect(s);
   }
-  function elWithText(tag, cls, text) {
-    const e = el(tag, cls);
-    e.textContent = text;
-    return e;
-  }
-  function processFileName(name) {
-    const MAX = 24;
-    if (!name || name.length <= MAX) return name || "";
-    const dot = name.lastIndexOf(".");
-    const ext = dot > 0 ? name.slice(dot) : "";
-    const stem = dot > 0 ? name.slice(0, dot) : name;
-    const keep = MAX - ext.length - 1;
-    if (keep <= 1) return name.slice(0, MAX - 1) + "\u2026";
-    const head = Math.ceil(keep / 2);
-    const tail = Math.floor(keep / 2);
-    return stem.slice(0, head) + "\u2026" + stem.slice(stem.length - tail) + ext;
-  }
-  function sampleCsvHref() {
-    const rows = DRIP_LOCALE === "he" ? [
-      "\u05E9\u05DD \u05E4\u05E8\u05D8\u05D9,\u05E9\u05DD \u05DE\u05E9\u05E4\u05D7\u05D4,\u05D8\u05DC\u05E4\u05D5\u05DF,\u05D0\u05D9\u05DE\u05D9\u05D9\u05DC,\u05D7\u05D1\u05E8\u05D4",
-      '\u05D9\u05E9\u05E8\u05D0\u05DC,\u05D9\u05E9\u05E8\u05D0\u05DC\u05D9,0501234567,israel@example.com,\u05D7\u05D1\u05E8\u05D4 \u05D1\u05E2"\u05DE',
-      "\u05D3\u05E0\u05D4,\u05DB\u05D4\u05DF,0527654321,dana@example.com,\u05E1\u05D8\u05D0\u05E8\u05D8\u05D0\u05E4"
-    ] : [
-      "First name,Last name,Phone,Email,Company",
-      "John,Doe,+15551234567,john@example.com,Acme Inc.",
-      "Jane,Smith,+15557654321,jane@example.com,Startup LLC"
-    ];
-    const BOM = "\uFEFF";
-    return "data:text/csv;charset=utf-8," + encodeURIComponent(BOM + rows.join("\r\n"));
-  }
-  function slugify(s) {
-    return String(s).toLowerCase().trim().replace(/[^a-z0-9֐-׿]+/g, "_").replace(/^_|_$/g, "") || "field";
-  }
-  function downloadCsv(content, name) {
-    const blob = new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    a.click();
-    URL.revokeObjectURL(a.href);
+  async function run(s, form) {
+    const problem = problemOf(s);
+    if (problem) {
+      showError(s, problem);
+      return;
+    }
+    clearTimeout(s.preTimer);
+    showError(s, "");
+    setBusy(s, true);
+    try {
+      await ensureFields(s);
+      await ensureLabel(s);
+      if (cur !== s) return;
+      const csv = feed(s);
+      const sha256 = await digest(csv);
+      await s.api.smartImportArm({ sha256, whatsapp: true, email_summary: s.email.checked, label: s.labelTitle, locale: s.locale }).catch(() => {
+        throw new Notice(s.T.armFailed);
+      });
+      if (cur !== s) return;
+      s.bypass = true;
+      try {
+        form.requestSubmit();
+      } finally {
+        s.bypass = false;
+      }
+    } catch (e) {
+      if (cur === s) showError(s, e instanceof Notice ? e.message : s.T.armFailed);
+    } finally {
+      if (cur === s) setBusy(s, false);
+    }
   }
   return __toCommonJS(entry_exports);
 })();

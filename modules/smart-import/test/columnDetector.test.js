@@ -201,3 +201,16 @@ test('no false positives', () => {
   assert.equal(matchCustomField('חברה', []), null);
   assert.equal(matchCustomField('חברה', undefined), null);
 });
+
+test("Chatwoot's own sample CSV maps column for column", () => {
+  const headers = ['id', 'name', 'email', 'identifier', 'phone_number', 'labels', 'ip_address', 'company_name', 'custom_attribute_1'];
+  const rows = [['1', 'Clarice Uzzell', 'c@mozilla.org', 'bb4e11cd', '+498963648018', '', '70.61.11.201', 'Acme Inc', 'x']];
+  assert.deepEqual(detectColumns(headers, rows).map((r) => r.field),
+    [null, 'name', 'email', 'identifier', 'phone_number', 'labels', null, 'company_name', null]);
+});
+
+test('Hebrew gershayim and typographic quotes in a header read like a plain quote', () => {
+  for (const [header, field] of [['דוא״ל', 'email'], ['ת״ז', 'identifier'], ['דוא”ל', 'email'], ['ת׳׳ז', 'identifier']]) {
+    assert.equal(detectColumns([header], [['']])[0].field, field, header);
+  }
+});

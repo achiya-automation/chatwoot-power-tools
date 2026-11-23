@@ -32,7 +32,7 @@ lib/                            — installer building blocks, sourced by instal
 docker-compose.addons.yml       — the cwpt-engine service definition (loaded as an extra
                                   -f file alongside Chatwoot's own docker-compose.yml)
 modules/
-  smart-import/                 — CSV/Excel contact-import wizard (lib/, ui/, inject/)
+  smart-import/                 — CSV/Excel contact import inside Chatwoot's import dialog (lib/, ui/, inject/)
   sequences/
     engine/                     — the cwpt-engine Node service (src/, migrations/)
     webapp/                     — the sequences management UI (React, pre-built dist/)

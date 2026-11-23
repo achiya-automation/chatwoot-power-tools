@@ -1,28 +1,31 @@
-// import-button — injects a "Smart import" button into the Chatwoot contacts page header
-// action row, which lazy-loads the smart-import bundle (built from the smart-import module's
-// UI sources) and opens its wizard modal. Idempotent + try/catch — fails silently if the DOM
-// shape changes; a MutationObserver retries.
+// import-button: the smart import inside Chatwoot's own New import dialog (Settings › Data ›
+// New import). It names the CSV source for Excel too, takes over the file the user picks or
+// drops, and lazy-loads the smart-import bundle (built from modules/smart-import/ui), which
+// opens the mapping / label / pre-check box and hands Chatwoot a CSV in its own format.
+// Chatwoot keeps the upload, the progress and the history. Whatever fails here, the original
+// file still reaches Chatwoot untouched, so the native dialog never stops working.
 (function () {
   if (window.__cwImportNav) return;
   window.__cwImportNav = true;
   var ADDONS_BASE = window.__CW_ADDONS_BASE || '/chatwoot-addons';
   var ASSET_VER = '__CWI_VER__'; // replaced by deploy with the bundle content hash (cache-bust)
-
-  // i18n: Hebrew for RTL (he) users, English otherwise — same #app[dir] signal the
-  // import wizard uses. he→Hebrew, ltr→English.
-  // ⚠️ חייב להיות עצל. DASHBOARD_SCRIPTS רץ בתחתית <body> — לפני ש-Vue מרנדר, ולכן לפני
-  // ש-#app[dir]="rtl" בכלל קיים (יש שני #app: העוטף של Vue, בלי dir, והשורש המרונדר, איתו).
-  // חישוב חד-פעמי כאן ננעל על 'en' לנצח, וממשק עברי מקבל כפתור באנגלית. קוראים בזמן רינדור,
-  // כמו sequences-nav.
-  function dripLocale() {
-    var a = document.querySelector('#app[dir]');
-    return ((a || document.documentElement).getAttribute('dir') === 'rtl') ? 'he' : 'en';
-  }
-  var I18N = {
-    he: { smartImport: 'ייבוא חכם', authError: 'שגיאת הזדהות — רענן את העמוד ונסה שוב', loadFailed: 'טעינת הכלי נכשלה: ' },
-    en: { smartImport: 'Smart import', authError: 'Authentication error — refresh the page and try again', loadFailed: 'Failed to load the tool: ' },
+  var INPUT_ID = 'contact-csv-file'; // NewImportDialog.vue
+  var OWN = '__cwiOwn'; // events the bundle dispatches itself; every other one is the user's
+  var ACCEPT = '.csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
+  var MESSAGES = {
+    he: { DATA_IMPORTS: { CSV: {
+      SOURCE: 'קובץ CSV או Excel',
+      FILE: 'קובץ CSV או Excel של אנשי קשר',
+      FILE_LIMIT: 'CSV או Excel · עד 50 MiB',
+      INVALID_FILE: 'בחרו קובץ CSV או Excel שאינו ריק, עד 50 MiB.',
+    } } },
+    en: { DATA_IMPORTS: { CSV: {
+      SOURCE: 'CSV or Excel file',
+      FILE: 'Contact CSV or Excel file',
+      FILE_LIMIT: 'CSV or Excel · up to 50 MiB',
+      INVALID_FILE: 'Choose a nonempty CSV or Excel file of 50 MiB or smaller.',
+    } } },
   };
-  function t(k) { return (I18N[dripLocale()] || I18N.en)[k] || I18N.en[k] || k; }
 
   function accountId() { var m = location.pathname.match(/\/accounts\/(\d+)/); return m ? m[1] : ''; }
 
@@ -40,15 +43,14 @@
   }
 
   var bundle = null;
-  var opening = false;
   function loadBundle() {
-    if (window.__cwImport) return Promise.resolve(window.__cwImport);
+    if (window.__cwImport && window.__cwImport.take) return Promise.resolve(window.__cwImport);
     if (!bundle) {
       bundle = new Promise(function (res, rej) {
         var s = document.createElement('script');
         s.src = ADDONS_BASE + '/smart-import/import-tool.js?v=' + ASSET_VER;
         function failed() { s.remove(); bundle = null; rej(new Error('import-tool load failed')); }
-        s.onload = function () { if (window.__cwImport && window.__cwImport.openWizard) res(window.__cwImport); else failed(); };
+        s.onload = function () { if (window.__cwImport && window.__cwImport.take) res(window.__cwImport); else failed(); };
         s.onerror = failed;
         document.head.appendChild(s);
       });
@@ -56,81 +58,95 @@
     return bundle;
   }
 
-  function openImport() {
-    if (opening) return;
-    var acc = accountId();
-    if (!acc) return;
-    var headers = authHeaders();
-    if (!headers) { alert(t('authError')); return; }
-    opening = true;
-    var btn = document.getElementById('cwi-open-btn');
-    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
-    loadBundle().then(function (mod) {
-      if (accountId() !== acc || !/\/contacts(\/|$)/.test(location.pathname)) return;
-      // assetBase is the raw addons base; the wizard derives its own vendor asset path from
-      // it (see cw-import-tool/lib/basepath.js).
-      mod.openWizard({ accountId: acc, authHeaders: headers, assetBase: ADDONS_BASE });
-    }).catch(function (e) { alert(t('loadFailed') + e.message); }).finally(function () {
-      opening = false;
-      if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
-    });
+  function fire(el, type) {
+    var e = new Event(type, { bubbles: true });
+    e[OWN] = true;
+    el.dispatchEvent(e);
   }
 
-  // Inject "Smart import" into the stable Chatwoot contacts header action row. Idempotent +
-  // try/catch — fails silently if the DOM shape changes; the MutationObserver retries.
-  function inject() {
+  // The file goes to Chatwoot exactly as the user picked it.
+  function passThrough(input, file) {
+    if (!input.isConnected) return;
     try {
-      if (!/\/contacts(\/|$|\?)/.test(location.pathname)) return;
-      var host = findActionBar();
-      if (!host) return; // MutationObserver will retry — no floating fallback
-      var btn = document.getElementById('cwi-open-btn');
-      if (!btn) {
-        btn = document.createElement('button');
-        btn.id = 'cwi-open-btn';
-        btn.type = 'button';
-        btn.className = 'cwi-open inline-flex items-center justify-center min-w-0 gap-2 transition-all duration-100 ease-out border-0 rounded-lg outline-1 outline disabled:opacity-50 h-8 px-3 text-sm bg-n-brand text-white hover:enabled:brightness-110 focus-visible:brightness-110 outline-transparent active:enabled:scale-[0.97]';
-        btn.addEventListener('click', function (e) { e.preventDefault(); openImport(); });
-        host.insertBefore(btn, host.firstChild); // first child = sits with the native header actions
-      }
-      // ⚠️ התווית נכתבת מחדש כשהשפה משתנה — לא נקבעת פעם אחת ביצירה.
-      // Chatwoot קובע #app[dir]="rtl" רק אחרי שנתוני החשבון נטענים, כלומר יש חלון שבו הממשק
-      // עדיין נראה LTR. כפתור שנוצר בחלון הזה עם תווית קפואה נשאר "Smart import" בממשק עברי
-      // לנצח. עצלות ב-dripLocale() לבדה לא מספיקה — צריך גם לרנדר שוב.
-      var loc = dripLocale();
-      if (btn.__cwiLocale !== loc) {
-        btn.__cwiLocale = loc;
-        btn.innerHTML = '<span class="i-lucide-upload size-4 flex-shrink-0"></span><span class="min-w-0 truncate">' + t('smartImport') + '</span>';
-      }
+      var dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+    } catch (e) {
+      Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    }
+    fire(input, 'change');
+  }
+
+  function take(input, file) {
+    var acc = accountId();
+    var headers = authHeaders();
+    if (!acc || !headers) { passThrough(input, file); return; }
+    loadBundle().then(function (mod) {
+      return mod.take(input, file, { accountId: acc, authHeaders: headers, assetBase: ADDONS_BASE });
+    }).catch(function () { passThrough(input, file); });
+  }
+
+  // Capture on document runs before Vue's own listeners on the input, the drop zone and the form.
+  document.addEventListener('change', function (e) {
+    var input = e.target;
+    if (e[OWN] || !input || input.id !== INPUT_ID || !input.files || !input.files[0]) return;
+    e.stopImmediatePropagation();
+    take(input, input.files[0]);
+  }, true);
+
+  document.addEventListener('drop', function (e) {
+    if (e[OWN]) return;
+    var input = document.getElementById(INPUT_ID);
+    var zone = input && input.parentElement;
+    var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!zone || !file || input.disabled || !zone.contains(e.target)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    fire(zone, 'drop'); // a drop without files: useDropZone clears its highlight and its file
+    take(input, file);
+  }, true);
+
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form || !form.querySelector || !form.querySelector('#' + INPUT_ID)) return;
+    if (window.__cwImport && window.__cwImport.submit && window.__cwImport.submit(form)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+
+  function findI18n() {
+    var apps = document.querySelectorAll('#app');
+    for (var i = 0; i < apps.length; i++) {
+      var app = apps[i].__vue_app__;
+      var sym = app && app.__VUE_I18N_SYMBOL__;
+      var inst = sym && app._context && app._context.provides && app._context.provides[sym];
+      if (inst && inst.global && typeof inst.global.mergeLocaleMessage === 'function') return inst.global;
+    }
+    return null;
+  }
+
+  // Excel in the picker, and the CSV card named for Excel. Re-checked on every DOM change (cheap:
+  // one lookup and two reads), so the wording comes back if native-i18n-he.js merges its stock
+  // "CSV file" after this one, and is in place before the dialog paints.
+  var merged = {};
+  function sync() {
+    try {
+      var input = document.getElementById(INPUT_ID);
+      if (input && input.accept !== ACCEPT) input.accept = ACCEPT;
+      var g = findI18n();
+      if (!g) return;
+      ['he', 'en'].forEach(function (loc) {
+        var have = typeof g.getLocaleMessage === 'function' ? g.getLocaleMessage(loc) : null;
+        var csv = have && have.DATA_IMPORTS && have.DATA_IMPORTS.CSV;
+        // Without a readable locale, merge once: a re-merge on every render would loop.
+        if (csv ? csv.SOURCE === MESSAGES[loc].DATA_IMPORTS.CSV.SOURCE : merged[loc]) return;
+        merged[loc] = true;
+        g.mergeLocaleMessage(loc, MESSAGES[loc]);
+      });
     } catch (e) { /* never break Chatwoot */ }
   }
-
-  // עוגן: שורת הפעולות בכותרת אנשי הקשר.
-  //
-  // ⚠️ ההורה הישיר של כפתור הסינון הוא <div class="relative"> — עטיפה שמחזיקה רק אותו
-  // ואת חלונית הסינון שנפתחת ממנו (ContactHeader.vue:64). הזרקה לשם הדביקה את הכפתור
-  // שלנו לכפתור הסינון בלי הרווח הטבעי, והכניסה אלמנט זר לעטיפה שאמורה לעגן את
-  // החלונית. שורת הפעולות האמיתית, עם gap-2 של המקור, היא רמה אחת מעל (:63).
-  //
-  // ⚠️ ועוד: לכפתור הסינון יש v-if — במסכי תווית/סגמנט הוא לא קיים כלל, ולכן הכפתור
-  // שלנו פשוט לא הופיע שם. לכן נופלים לשורת הפעולות של הכותרת גם בלעדיו.
-  function findActionBar() {
-    var fb = document.getElementById('toggleContactsFilterButton');
-    if (fb && fb.parentElement && fb.parentElement.parentElement) {
-      return fb.parentElement.parentElement;
-    }
-    // אין כפתור סינון (מסך תווית/סגמנט): מאתרים את שורת הפעולות לפי הכפתור שכן קיים בה.
-    var anyAction = document.querySelector('.flex.items-center.gap-2 > button, .flex.items-center.gap-2 > a');
-    return anyAction ? anyAction.parentElement : null;
-  }
-
-  // ⚠️ לא לקרוא למשתנה הזה t — t() היא פונקציית התרגום למעלה. השמה כאן דורסת אותה במזהה
-  // הטיימר, ואז t('smartImport') זורק TypeError שנבלע ב-catch של inject() → הכפתור נעלם בשקט.
-  var timer;
-  function schedule() { clearTimeout(timer); timer = setTimeout(inject, 200); }
-  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
-  // dir מתחלף על #app כשפרטי החשבון נטענים (ובהחלפת שפה) — שינוי ATTRIBUTE, שה-observer
-  // למעלה לא רואה (childList בלבד). בלי זה התווית לא תתעדכן לעולם.
-  new MutationObserver(schedule)
-    .observe(document.documentElement, { attributes: true, attributeFilter: ['dir'], subtree: true });
-  setTimeout(inject, 600);
+  new MutationObserver(sync)
+    .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  sync();
 })();

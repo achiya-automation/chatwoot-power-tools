@@ -22,10 +22,13 @@ const SYNONYMS = {
   company_name: ['חברה', 'עסק', 'ארגון', 'שם חברה', 'company', 'company name', 'organization', 'organisation', 'business'],
   city: ['עיר', 'יישוב', 'ישוב', 'city', 'town'],
   country: ['מדינה', 'ארץ', 'country'],
+  // Chatwoot's own CSV column: comma-separated label titles that already exist.
+  labels: ['labels', 'label', 'tags', 'tag', 'תוויות', 'תווית', 'תגיות'],
 };
 
 function normHeader(h) {
-  return String(h || '').toLowerCase().replace(/["'.\-_/\\]/g, '').replace(/\s+/g, ' ').trim();
+  // Hebrew geresh/gershayim (ת״ז) and typographic quotes (דוא”ל) go the way of a plain quote.
+  return String(h || '').toLowerCase().replace(/["'׳״“”„‘’.\-_/\\]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 // Filler words that CRM/insurance exports append to every header ("שם פרטי לקוח",
@@ -52,12 +55,16 @@ function headerField(header) {
   return best;
 }
 
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+
 function contentField(values) {
   const nonEmpty = values.filter((v) => v && v.trim());
   if (!nonEmpty.length) return null;
   const emailish = nonEmpty.filter((v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.trim())).length;
   if (emailish / nonEmpty.length >= 0.6) return 'email';
-  const phoneish = nonEmpty.filter((v) => normalizePhone(v) !== null).length;
+  // An IPv4 address ("70.61.11.201", a column of Chatwoot's sample file) is 9-12 digits once
+  // the dots go, which normalizePhone reads as a phone.
+  const phoneish = nonEmpty.filter((v) => !IPV4.test(v.trim()) && normalizePhone(v) !== null).length;
   if (phoneish / nonEmpty.length >= 0.6) return 'phone_number';
   return null;
 }
@@ -127,9 +134,19 @@ export function matchCustomField(header, customDefs) {
   return null;
 }
 
+// A header that IS a field's own key ("identifier", "phone_number", "company_name": the
+// columns of Chatwoot's sample CSV) claims that field before any synonym does. Otherwise the
+// sample's leading "id" column takes identifier and pushes the real identifier column out.
+function ownField(header) {
+  const n = stripFiller(normHeader(header));
+  return Object.keys(SYNONYMS).find((field) => normHeader(field) === n) || null;
+}
+
 export function detectColumns(headers, sampleRows) {
-  const taken = new Set();
+  const own = headers.map(ownField).map((field, i, all) => (field && all.indexOf(field) === i ? field : null));
+  const taken = new Set(own.filter(Boolean));
   return headers.map((header, index) => {
+    if (own[index]) return { header, index, field: own[index], confidence: 0.9 };
     const col = sampleRows.map((r) => r[index]);
     let field = headerField(header);
     let confidence = field ? 0.9 : 0;
