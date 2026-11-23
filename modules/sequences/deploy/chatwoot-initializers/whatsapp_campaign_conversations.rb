@@ -484,6 +484,29 @@ Rails.application.config.after_initialize do
           end
         rescue StandardError => e
           Rails.logger.error "Campaign #{campaign.id}: Conversation creation failed for contact #{contact.id}: #{e.class}"
+          notify_campaign_recording_failure(e)
+        end
+
+        # One alert per campaign run when a message reached the customer but was not recorded
+        # in a conversation. On 7.9.26 this failure went unnoticed for a whole campaign run.
+        # The operator's webhook comes from the environment only; unset = no alert.
+        def notify_campaign_recording_failure(error)
+          return if @campaign_recording_alerted
+
+          @campaign_recording_alerted = true
+          url = ENV.fetch('CAMPAIGN_ALERT_WEBHOOK_URL', '').to_s
+          return if url.empty?
+
+          delivered = campaign.campaign_recipients.where(status: %i[sent delivered read]).count
+          HTTParty.post(
+            url, timeout: 5,
+            headers: { 'Content-Type' => 'application/json' },
+            body: { account: campaign.account_id, campaign: campaign.display_id, campaign_pk: campaign.id,
+                    inbox: campaign.inbox_id, failed_count: delivered,
+                    error: "#{error.class}: #{error.message}"[0, 300] }.to_json
+          )
+        rescue StandardError => e
+          Rails.logger.error "campaign alert webhook failed: #{e.class}"
         end
 
         CAMPAIGN_PLACEHOLDER_NAME = /\A[a-z]+-[a-z]+-\d+\z/
