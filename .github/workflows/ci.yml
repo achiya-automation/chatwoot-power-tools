@@ -99,7 +99,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.4.4'
+          ruby-version: '3.4'
       # כל קובצי הבדיקה, לא רק presence: עד 4.9.26 רצה כאן בדיקה אחת מתוך תשע, ושמונה
       # סוויטות ירוקות מקומית לא נבדקו בשום שער. לולאה ולא רשימה — קובץ חדש מצטרף לבד.
       - name: Run every initializer test
