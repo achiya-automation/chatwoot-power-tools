@@ -1031,8 +1031,10 @@ CWPT_REMOTE_PATCH
 # ‏container_name ובלי ההגדרות שלו — הקונטיינר קם בשם אחר ומת מיד (4.9.26).
 engine_build_is_pinned() {
   local server="$1" container="$2" answer
-  answer="$(ssh -n "$server" "cd /opt/chatwoot && sudo docker compose -p chatwoot config --format json 2>/dev/null \
-    | python3 -c \"import json,sys; print('build' in (json.load(sys.stdin)['services'].get('$container') or {}))\"" \
+  # One root python runs compose itself and prints only True/False. sudo's I/O log on these
+  # servers records a command's stdout even through a pipe, and `config --format json`
+  # carries every resolved env value.
+  answer="$(ssh -n "$server" "cd /opt/chatwoot && sudo python3 -c \"import json,subprocess; r=subprocess.run(['docker','compose','-p','chatwoot','config','--format','json'],capture_output=True,text=True); print('build' in (json.loads(r.stdout)['services'].get('$container') or {}))\" 2>/dev/null" \
     2>/dev/null | tr -d '[:space:]')"
   # רק תשובה מפורשת False מוכיחה קיבוע. בדיקה שלא החזירה כלום (ssh נכשל, compose ישן,
   # python חסר) חייבת ליפול חזרה למסלול הרגיל — אחרת כל סביבה שלא עונה נשלחת לבנייה
