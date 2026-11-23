@@ -940,6 +940,14 @@ deploy_dashboard_script() {
   ok "dashboard script injected (base $base)"
 }
 
+# Syntax-checks one uploaded initializer inside the real Rails image before it can break boot.
+# The bytes go in on stdin: Rails runs as root with every capability dropped, so a file that
+# docker cp copies in keeps the deploy user's uid and mode 0600, and Ruby cannot open it (23.11.26).
+rails_syntax_check() {
+  local server="$1" file="$2"
+  ssh -n "$server" "docker exec -i chatwoot-rails-1 ruby -c < '$file' >/dev/null"
+}
+
 deploy_patch() {
   local server="$1"
   local base dest
@@ -965,9 +973,7 @@ deploy_patch() {
       || die "$base is absent from pinned commit $DEPLOY_COMMIT — nothing installed"
     scp -q "$LOCAL_DEPLOY_TMP" "$server:$REMOTE_DEPLOY_TMP/$base" \
       || die "$server: upload failed for $base"
-    # Syntax-check inside the real Rails image before it can break boot.
-    ssh -n "$server" "docker cp '$REMOTE_DEPLOY_TMP/$base' 'chatwoot-rails-1:/tmp/cwpt-patch-$DEPLOY_ID.rb' >/dev/null \
-      && docker exec chatwoot-rails-1 ruby -c '/tmp/cwpt-patch-$DEPLOY_ID.rb' >/dev/null" \
+    rails_syntax_check "$server" "$REMOTE_DEPLOY_TMP/$base" \
       || die "Ruby syntax check failed on $server ($base) — nothing installed"
     # Copy in place (not install/mv) so an existing Docker single-file bind mount keeps
     # seeing the new bytes even before containers are recreated. The pre-change file is

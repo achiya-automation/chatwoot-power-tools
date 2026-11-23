@@ -65,6 +65,17 @@ make_full_flat_payload() {
   grep -q "up -d --build --no-deps cwpt-engine" "$capture"
 }
 
+@test "initializer syntax check feeds Ruby on stdin instead of copying a file into Rails" {
+  capture="$BATS_TEST_TMPDIR/ssh-command"
+  ssh() { printf '%s\n' "$*" > "$capture"; }
+
+  rails_syntax_check second-server /tmp/cwpt-sync.abc123/patch.rb
+
+  grep -qF "docker exec -i chatwoot-rails-1 ruby -c < '/tmp/cwpt-sync.abc123/patch.rb'" "$capture"
+  run grep -q "docker cp" "$capture"
+  [ "$status" -ne 0 ]
+}
+
 @test "pinned-build probe keeps the resolved compose config out of sudo's output log" {
   capture="$BATS_TEST_TMPDIR/ssh-command"
   ssh() { printf '%s\n' "$*" > "$capture"; }
