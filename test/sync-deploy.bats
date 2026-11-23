@@ -65,6 +65,17 @@ make_full_flat_payload() {
   grep -q "up -d --build --no-deps cwpt-engine" "$capture"
 }
 
+@test "pinned-build probe keeps the resolved compose config out of sudo's output log" {
+  capture="$BATS_TEST_TMPDIR/ssh-command"
+  ssh() { printf '%s\n' "$*" > "$capture"; }
+
+  engine_build_is_pinned second-server cwpt-engine || true
+
+  grep -q "sudo python3" "$capture"
+  run grep -q "sudo docker compose -p chatwoot config --format json" "$capture"
+  [ "$status" -ne 0 ]
+}
+
 @test "sync accepts the complete managed module selection" {
   ssh() { printf '%s\n' 'sequences,enhancements,import'; }
   ok() { :; }
