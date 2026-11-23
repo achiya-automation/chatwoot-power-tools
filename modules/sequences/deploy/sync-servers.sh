@@ -782,17 +782,22 @@ deploy_engine() {
 # with the Chatwoot database owner after the committed migration files are copied but before
 # an initializer is published or an engine image is rebuilt. Older engines ran some of these
 # grants outside schema_migrations, so reapplying the idempotent SQL is the verified backfill.
+# The whole script runs under one `sudo bash -s`, and nothing inside calls sudo again. On the
+# servers that record sudo I/O (log_input), an inner sudo reads the rest of this heredoc as its
+# own stdin: bash then reaches EOF right after that line and exits 0 having applied nothing.
+# That is how 056 stayed unapplied on chatwoot while this step printed ✓, and the rebuilt
+# engine refused to boot (23.11.26). The closing marker proves the script ran to its end.
 apply_owner_migrations_remote() {
   local server="$1" layout="$2" migrations_dir
   migrations_dir="$(remote_engine_migrations "$layout")"
-  if ! ssh "$server" bash -s -- "$migrations_dir" <<'CWPT_OWNER_MIGRATIONS'
+  if ! ssh "$server" "sudo bash -s -- '$migrations_dir'" <<'CWPT_OWNER_MIGRATIONS' | grep -qx CWPT_OWNER_MIGRATIONS_DONE
 set -euo pipefail
 migrations_dir="$1"
-pg_container="$(sudo docker ps -q --filter label=com.docker.compose.service=postgres | head -n 1)"
+pg_container="$(docker ps -q --filter label=com.docker.compose.service=postgres | head -n 1)"
 [[ -n "$pg_container" ]] || { echo "postgres container not found" >&2; exit 1; }
 
 export LC_ALL=C
-enabled_modules="$(sudo sed -n 's/^CWPT_ENABLED_MODULES=//p' /opt/chatwoot/.env 2>/dev/null | tail -n 1)"
+enabled_modules="$( (sed -n 's/^CWPT_ENABLED_MODULES=//p' /opt/chatwoot/.env 2>/dev/null || true) | tail -n 1)"
 enabled_modules="${enabled_modules:-import,sequences,enhancements}"
 IFS=',' read -r -a enabled_parts <<< "$enabled_modules"
 [[ "${#enabled_parts[@]}" -gt 0 ]] || { echo "empty CWPT_ENABLED_MODULES" >&2; exit 1; }
@@ -816,10 +821,10 @@ for migration in "$migrations_dir"/*_role_grants.sql; do
   selected=1
   {
     printf 'BEGIN;\n'
-    sudo cat "$migration"
+    cat "$migration"
     printf "\nINSERT INTO drip.schema_migrations(version, applied_at) VALUES ('%s', now()) ON CONFLICT (version) DO UPDATE SET applied_at=EXCLUDED.applied_at;\n" "$filename"
     printf 'COMMIT;\n'
-  } | sudo docker exec -i "$pg_container" sh -c \
+  } | docker exec -i "$pg_container" sh -c \
       'exec psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-chatwoot}"' \
       >/dev/null
 done
@@ -827,9 +832,10 @@ done
   echo "no owner migrations selected" >&2
   exit 1
 }
+echo CWPT_OWNER_MIGRATIONS_DONE
 CWPT_OWNER_MIGRATIONS
   then
-    die "$server: owner migrations failed — engine was not rebuilt"
+    die "$server: owner migrations failed or stopped before their end — engine was not rebuilt"
   fi
   ok "owner migrations applied + ledgered before rebuild ($layout)"
 }
