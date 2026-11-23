@@ -65,6 +65,53 @@ make_full_flat_payload() {
   grep -q "up -d --build --no-deps cwpt-engine" "$capture"
 }
 
+# chatwoot and chatwoot_admon record sudo I/O (log_input), so sudo reads all of its stdin
+# before the command runs. These fakes reproduce that: a heredoc whose body calls sudo again
+# loses every line after that call, and bash exits 0 having done nothing (23.11.26).
+fake_sudo_io_host() {
+  local bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin" "$BATS_TEST_TMPDIR/migrations"
+  cat > "$bin/sudo" <<'FAKE'
+#!/bin/bash
+input="$(mktemp)"; cat > "$input"; exec "$@" < "$input"
+FAKE
+  cat > "$bin/docker" <<'FAKE'
+#!/bin/bash
+case "$1" in
+  ps) echo pg-container ;;
+  exec) cat >> "$PSQL_INPUT" ;;
+esac
+FAKE
+  chmod +x "$bin/sudo" "$bin/docker"
+  export PATH="$bin:$PATH" PSQL_INPUT="$BATS_TEST_TMPDIR/psql-input"
+  : > "$PSQL_INPUT"
+  echo 'SELECT 51;' > "$BATS_TEST_TMPDIR/migrations/051_campaign_recipients_role_grants.sql"
+  echo 'SELECT 56;' > "$BATS_TEST_TMPDIR/migrations/056_journey_webhook_drop_role_grants.sql"
+  remote_engine_migrations() { echo "$BATS_TEST_TMPDIR/migrations"; }
+  ssh() { shift; bash -c "$*"; }
+}
+
+@test "owner migrations reach psql and the ledger on a host whose sudo records stdin" {
+  fake_sudo_io_host
+
+  run apply_owner_migrations_remote chatwoot flat
+
+  [ "$status" -eq 0 ]
+  grep -qF 'SELECT 56;' "$PSQL_INPUT"
+  grep -qF "VALUES ('051_campaign_recipients_role_grants.sql'" "$PSQL_INPUT"
+  grep -qF "VALUES ('056_journey_webhook_drop_role_grants.sql'" "$PSQL_INPUT"
+}
+
+@test "owner migrations fail when the remote script stops before its end" {
+  fake_sudo_io_host
+  ssh() { cat > /dev/null; }
+
+  run apply_owner_migrations_remote chatwoot flat
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"stopped before"* ]]
+}
+
 @test "initializer syntax check feeds Ruby on stdin instead of copying a file into Rails" {
   capture="$BATS_TEST_TMPDIR/ssh-command"
   ssh() { printf '%s\n' "$*" > "$capture"; }
@@ -236,7 +283,7 @@ make_full_flat_payload() {
   grep -q 'INSERT INTO drip.schema_migrations' "$script"
   grep -q "printf 'COMMIT;" "$script"
   grep -q 'psql -v ON_ERROR_STOP=1' "$script"
-  grep -q 'owner migrations failed — engine was not rebuilt' "$script"
+  grep -q 'owner migrations failed or stopped before their end — engine was not rebuilt' "$script"
 }
 
 @test "dashboard script drift is content-aware: a part whose bytes changed is named even when the part list matches" {
