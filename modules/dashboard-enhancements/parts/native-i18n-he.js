@@ -137,6 +137,161 @@
         "UNTITLED_FILE": "קובץ ללא שם",
         "JUMP_TO_MESSAGE": "מעבר להודעה"
       }
+    },
+    // Chatwoot 4.20's Data screen (Settings → Data: imports from CSV/Intercom/Freshdesk, contact exports) shipped with
+    // these keys missing from he or left in English (23.11.2026).
+    "SIDEBAR": {
+      "DATA": "נתונים"
+    },
+    "DATA_IMPORTS": {
+      "HEADER": "נתונים",
+      "DEFAULT_IMPORT_NAME": "ייבוא מ-Intercom",
+      "DEFAULT_IMPORT_NAMES": {
+        "CSV": "ייבוא אנשי קשר - {date}"
+      },
+      "DRAWER": {
+        "TITLE": "ייבוא חדש",
+        "SOURCE": "מקור",
+        "NAME": "שם הייבוא",
+        "NAME_PLACEHOLDER": "העברת התמיכה של יולי",
+        "ACCESS_KEY": "מפתח גישה של Intercom",
+        "ACCESS_KEY_PLACEHOLDER": "הדביקו את מפתח הגישה של Intercom",
+        "INTERCOM_ACCESS_KEY": "מפתח גישה של Intercom",
+        "INTERCOM_ACCESS_KEY_PLACEHOLDER": "הדביקו את מפתח הגישה של Intercom",
+        "FRESHDESK_API_KEY": "מפתח API של Freshdesk",
+        "FRESHDESK_API_KEY_PLACEHOLDER": "הדביקו את מפתח ה-API של Freshdesk",
+        "FRESHDESK_DOMAIN": "הדומיין של Freshdesk",
+        "DATA_TYPES": "מה לייבא",
+        "VALIDATING": "בודקים את מפתח הגישה...",
+        "VALID_KEY": "מפתח הגישה אומת.",
+        "INVALID_KEY": "לא הצלחנו לאמת את מפתח הגישה."
+      },
+      "TABLE": {
+        "TITLE": "ייבואים אחרונים",
+        "EMPTY": "עדיין אין ייבואים",
+        "COUNT": "{count} ייבואים",
+        "UNNAMED": "ייבוא בלי שם",
+        "IMPORTED_COUNT": "{count} יובאו",
+        "VIEW": "צפייה בייבוא",
+        "IMPORTED": "יובאו",
+        "ABANDON": "ביטול",
+        "RESUME": "המשך"
+      },
+      "DETAIL": {
+        "ERRORS": "שגיאות",
+        "SKIP_LOGS": "רשומות שדולגו",
+        "SOURCE": "מקור",
+        "IMPORT_TYPES": "סוגי ייבוא",
+        "INITIATED_BY": "הופעל על ידי",
+        "PROGRESS": "התקדמות הייבוא",
+        "PROGRESS_WITH_TOTAL": "{imported} מתוך {total} יובאו",
+        "PROGRESS_WITHOUT_TOTAL": "{imported} יובאו",
+        "PROGRESS_OF_TOTAL": "מתוך {total} יובאו",
+        "PROGRESS_IMPORTED": "יובאו",
+        "LAST_UPDATED_TOOLTIP": "עודכן לאחרונה {time}",
+        "NO_SKIP_LOGS": "לא נרשמו רשומות שדולגו או נכשלו.",
+        "DOWNLOAD_SKIP_LOGS": "הורדת CSV",
+        "DOWNLOAD_ERROR_LOGS": "הורדת CSV",
+        "KIND": "סוג",
+        "NO_ERRORS": "לא נרשמו שגיאות.",
+        "ERROR_CODE": "קוד",
+        "SOURCE_OBJECT": "הרשומה במקור"
+      },
+      "MONITOR": {
+        "LIVE": "מתעדכן כל {seconds} שניות",
+        "LAST_UPDATED": "עודכן לאחרונה {time}",
+        "REFRESHING": "מרענן",
+        "STAGES": {
+          "unknown": "ממתין לעדכון",
+          "queued": "בתור",
+          "preparing": "בודקים ומכינים את קובץ ה-CSV",
+          "contacts": "מייבאים אנשי קשר",
+          "conversations": "מייבאים שיחות",
+          "finalizing": "מסיימים את הייבוא",
+          "completed_with_errors": "הושלם עם שגיאות",
+          "abandoned": "בוטל"
+        }
+      },
+      "ALERTS": {
+        "IMPORT_STARTED": "הייבוא התחיל.",
+        "IMPORT_RETRIED": "הייבוא נכנס לתור וימשיך.",
+        "IMPORT_RETRY_FAILED": "לא הצלחנו לנסות שוב את הייבוא.",
+        "IMPORT_ABANDONED": "הייבוא בוטל.",
+        "IMPORT_FAILED": "לא הצלחנו להתחיל את הייבוא.",
+        "LOAD_FAILED": "לא הצלחנו לרענן את הייבואים והייצואים. נסו שוב."
+      },
+      "STATUS": {
+        "PENDING": "בתור",
+        "PROCESSING": "בתהליך",
+        "COMPLETED": "הושלם",
+        "COMPLETED_WITH_ERRORS": "הושלם עם שגיאות",
+        "FAILED": "נכשל",
+        "ABANDONED": "בוטל"
+      },
+      "CSV": {
+        "ROW_ERRORS": "שגיאות בשורות",
+        "SOURCE": "קובץ CSV",
+        "FILE": "קובץ CSV של אנשי קשר",
+        "HELP": "השתמשו בשמות העמודות שבקובץ הדוגמה ובתוויות שכבר קיימות. עד 250,000 שורות ועד 1 MiB לשדה.",
+        "SILENT_UPDATES": "אנשי קשר שכבר קיימים מתעדכנים. ייבוא לא מפעיל אוטומציות או webhooks של אנשי קשר.",
+        "INVALID_FILE": "בחרו קובץ CSV שאינו ריק, עד 50 MiB.",
+        "SAMPLE": "הורדת קובץ CSV לדוגמה",
+        "UPLOADING": "מעלים {percent}%. העיבוד מתחיל כשההעלאה מסתיימת.",
+        "OUTCOMES": "{created} נוצרו · {updated} עודכנו · {failed} נכשלו",
+        "PROCESSED": "מתוך {total} עובדו",
+        "REJECTED_HELP": "הורידו את השורות שנדחו, תקנו אותן והעלו אותן כייבוא חדש. הקבצים זמינים 30 יום.",
+        "DOWNLOAD_REJECTED": "הורדת השורות שנדחו",
+        "EXPIRED": "הקובץ המקורי וקובץ השורות שנדחו כבר לא זמינים. כדי לייבא שוב את אנשי הקשר האלה, העלו קובץ חדש.",
+        "FILE_REMOVED": "הקובץ הוסר אחרי 30 יום.",
+        "CHOOSE_FILE": "לחצו כדי להעלות, או גררו לכאן קובץ",
+        "FILE_LIMIT": "רק CSV · עד 50 MiB",
+        "REMOVE_FILE": "הסרת הקובץ",
+        "PREVIEW_TITLE": "תצוגה מקדימה של הקובץ",
+        "PREVIEW_DESCRIPTION": "מוצגות עד {count} שורות. הקובץ יועלה כשתתחילו את הייבוא.",
+        "PREVIEW_LOADING": "קוראים את הקובץ...",
+        "PREVIEW_ERROR": "לא הצלחנו להציג את הקובץ. אפשר בכל זאת להתחיל את הייבוא כדי לבדוק אותו.",
+        "PREVIEW_EMPTY": "לא נמצאו שורות נתונים בקובץ.",
+        "REJECTED_TITLE": "יש שורות שצריך לתקן",
+        "CREATED": "נוצרו",
+        "UPDATED": "עודכנו",
+        "FAILED": "נכשלו"
+      }
+    },
+    "DATA_EXPORTS": {
+      "INITIATOR": "הופעל על ידי {name} ב-{date}",
+      "TITLE": "ייצוא אנשי קשר",
+      "NEW": "ייצוא אנשי קשר",
+      "START": "התחלת הייצוא",
+      "EMPTY": "עדיין אין ייצואים",
+      "ALL_CONTACTS": "כל אנשי הקשר",
+      "FILTERED_CONTACTS": "אנשי הקשר שמתאימים לסינון הנוכחי",
+      "SCOPE": "אנשי קשר לייצוא: {scope}",
+      "DESCRIPTION": "ייצוא אנשי הקשר שנבחרו לקובץ CSV. הנתונים נלקחים ברגע שהייצוא רץ.",
+      "PROCESSED": "{count} אנשי קשר יוצאו",
+      "ESTIMATE": "סך הכל משוער: {count}. המספר יכול להשתנות כשאנשי קשר מתעדכנים.",
+      "DOWNLOAD": "הורדת CSV",
+      "RERUN": "הרצה מחדש",
+      "STALLED": "הייצוא הזה הפסיק לדווח על התקדמות. הריצו אותו שוב כדי ליצור ייצוא חדש.",
+      "EXPIRED": "תוקף ההורדה פג. הריצו את הייצוא שוב כדי ליצור קובץ חדש.",
+      "RETENTION": "קובצי הייצוא זמינים 30 יום אחרי שהם מוכנים.",
+      "ERROR": "לא הצלחנו לטעון או להתחיל את הייצוא. נסו שוב.",
+      "LOAD_ERROR": "לא הצלחנו לטעון את הייצוא. נסו שוב.",
+      "RETRY": "ניסיון חוזר",
+      "LOAD_OLDER": "טעינת ייצואים ישנים יותר",
+      "LOAD_OLDER_ERROR": "לא הצלחנו לטעון ייצואים ישנים יותר. נסו שוב.",
+      "DOWNLOAD_ERROR": "הקובץ כבר לא זמין. רעננו את הדף כדי לראות את המצב שלו עכשיו.",
+      "DRAFT_UNAVAILABLE": "הבחירה לייצוא לא זמינה או שפג תוקפה. חזרו לאנשי הקשר ובחרו שוב ייצוא. שום ייצוא לא התחיל.",
+      "EMPTY_DESCRIPTION": "ייצוא אנשי הקשר לקובץ CSV. היסטוריית הייצואים וההורדות תופיע כאן.",
+      "NOTIFICATION": "נשלח לכם מייל כשקובץ ה-CSV יהיה מוכן. אפשר גם לעקוב כאן אחרי ההתקדמות ולהוריד אותו.",
+      "FILE_FORMAT": "קובץ CSV",
+      "SELECTION": "אנשי קשר",
+      "PROGRESS": "התקדמות הייצוא",
+      "FILE_READY": "הייצוא מוכן",
+      "IN_PROGRESS": "מכינים את קובץ ה-CSV. אפשר לצאת מהדף בזמן שהייצוא רץ.",
+      "TABLE": {
+        "EXPORTED": "יוצאו",
+        "COUNT": "מוצג ייצוא אחד | מוצגים {count} ייצואים"
+      }
     }
   };
   function findI18n() {
