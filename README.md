@@ -50,7 +50,7 @@ curl -fsSL https://github.com/achiya-automation/chatwoot-power-tools/archive/ref
 
 ## Highlights
 
-- **📥 Smart contact import** — a CSV/Excel wizard that looks native, detects columns bilingually (Hebrew + English), de-dupes before import, and maps onto custom attributes
+- **📥 Smart contact import** — inside Chatwoot's own import dialog: Excel as well as CSV, columns detected bilingually (Hebrew + English), a check for new, existing and duplicate contacts before import, custom attributes, one label for the whole import, and an email summary
 - **🔁 WhatsApp drip sequences** — automated template-message sequences, managed from inside Chatwoot, with automatic skipping of quiet hours, Shabbat, and Jewish holidays
 - **🔀 Visual flow builder** — a drag-and-drop conversation builder: trigger, message, template, question, buttons, condition, delay, action, webhook and handoff nodes
 - **🛡️ WhatsApp compliance guardrails** — consent records, opt-out detection in the customer's own words, live quality monitoring, and an automatic halt before Meta disables your number
@@ -76,12 +76,14 @@ The entire dashboard localizes to each agent's own Chatwoot language — **Engli
 ## Features
 
 ### 📥 Smart Contact Import
-A CSV/Excel import wizard, styled to match Chatwoot's own UI. Detects columns bilingually (Hebrew and English headers), flags duplicates before import, maps columns onto Chatwoot custom attributes, and applies tags — all from inside the dashboard.
+Built into Chatwoot's own import dialog (Settings › Data › New import), so the upload, the progress, the history and the rejected-rows file stay Chatwoot's. Pick a CSV or Excel file and a box opens under it:
 
-<table>
-<tr><td width="50%" align="center"><b>🇬🇧 English</b></td><td width="50%" align="center"><b>🇮🇱 עברית</b></td></tr>
-<tr><td><img src="docs/screenshots/smart-import-en.png" alt="Column mapping — English"></td><td><img src="docs/screenshots/smart-import-he.png" alt="Column mapping — Hebrew"></td></tr>
-</table>
+- **Column mapping** — detected by header name (Hebrew and English) or by content, with custom attributes, including a new one created on the spot
+- **Phone numbers** — Israeli numbers saved in international format, with an additional phone column as a fallback
+- **One label** for every contact in the import, added next to the labels they already have
+- **A check before importing** — how many contacts are new, already exist, repeat in the file, or have no valid number
+- **WhatsApp** — imported contacts are linked to the account's WhatsApp Cloud inbox, when it has one
+- **An email summary** when the import finishes, with a report of every row
 
 ### 🔁 WhatsApp Drip Sequences
 Automated WhatsApp Cloud API template-message sequences, managed entirely from inside Chatwoot. A lead is enrolled by setting a conversation attribute; messages then send at the intervals you configure per step, with automatic skipping of quiet hours, Shabbat, and Jewish holidays.
@@ -181,7 +183,7 @@ sudo bash install.sh             # install for real
 
 | Module | `--modules=` flag | What it adds |
 |---|---|---|
-| Smart Contact Import | `import` | CSV/Excel import wizard in the dashboard |
+| Smart Contact Import | `import` | CSV/Excel import inside Chatwoot's own import dialog |
 | WhatsApp Sequences | `sequences` | The sidecar engine and its full dashboard: sequences, flow builder, template studio, compliance, campaign analytics, contacts — plus the sidebar entry |
 | Dashboard Enhancements | `dashboard` | Campaign modal upgrade, reusable template media, native Hebrew fixes, campaign analytics and narrow native UI fixes |
 

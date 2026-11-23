@@ -95,20 +95,50 @@ function mountVueRoot(doc, innerHtml) {
   doc.querySelector('#app').innerHTML = innerHtml;
 }
 
-test('artifact: כפתור "ייבוא חכם" נוצר בעמוד אנשי הקשר אחרי שה-DOM משתנה', async () => {
+// A stand-in for vue-i18n's global composer: deep merge, like mergeLocaleMessage.
+function fakeI18n() {
+  const messages = { he: {}, en: {} };
+  const merge = (into, from) => {
+    for (const [k, v] of Object.entries(from)) into[k] = v && typeof v === 'object' ? merge(into[k] || {}, v) : v;
+    return into;
+  };
+  const sym = Symbol('i18n');
+  const app = { __VUE_I18N_SYMBOL__: sym, _context: { provides: { [sym]: { global: {
+    getLocaleMessage: (locale) => messages[locale] || {},
+    mergeLocaleMessage: (locale, msg) => { messages[locale] = merge(messages[locale] || {}, msg); },
+  } } } } };
+  return { app, messages };
+}
+
+test('artifact: the smart import lives in Chatwoot\'s own import dialog, not in a button of its own', async () => {
   const { dom, errors } = makeDom('/app/accounts/1/contacts');
   const w = await runDashboardScript(dom, (doc) =>
     mountVueRoot(doc, '<div><button id="toggleContactsFilterButton">סינון</button></div>')
   );
+  assert.equal(w.document.getElementById('cwi-open-btn'), null, 'no separate smart-import button');
+  assert.deepEqual(errors, [], 'the dashboard script must not throw');
+});
 
-  const btn = w.document.getElementById('cwi-open-btn');
-  assert.ok(btn, 'כפתור הייבוא חייב להופיע — היעדרו הוא הבאג של התנגשות t/setTimeout');
-  assert.match(
-    btn.textContent,
-    /ייבוא חכם/,
-    'הכפתור חייב להיות בעברית: הממשק RTL. תווית באנגלית = השפה חושבה בזמן טעינה, לפני ש-Vue רינדר'
-  );
-  assert.deepEqual(errors, [], 'אסור שתיזרק שגיאה מתוך סקריפט הדשבורד');
+test('artifact: Settings › Data import dialog takes Excel and names the CSV card for it, after the stock Hebrew merge', async () => {
+  const { dom, errors } = makeDom('/app/accounts/1/settings/data');
+  const i18n = fakeI18n();
+  const w = await runDashboardScript(dom, (doc) => {
+    mountVueRoot(doc, '<main><h1>נתונים</h1></main>');
+    doc.querySelector('#app').__vue_app__ = i18n.app;
+  });
+  // By now native-i18n-he.js has merged its stock "קובץ CSV"; the user opens New import.
+  w.document.querySelector('main').insertAdjacentHTML('beforeend', `
+    <dialog open><form>
+      <label><input type="radio" name="import-source" value="csv" checked><span>CSV</span></label>
+      <div><input id="contact-csv-file" type="file" accept=".csv,text/csv" class="sr-only"></div>
+    </form></dialog>`);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.match(w.document.getElementById('contact-csv-file').accept, /\.xlsx/);
+  assert.equal(i18n.messages.he.DATA_IMPORTS.CSV.SOURCE, 'קובץ CSV או Excel');
+  assert.equal(i18n.messages.he.DATA_IMPORTS.CSV.FILE_LIMIT, 'CSV או Excel · עד 50 MiB');
+  assert.equal(i18n.messages.en.DATA_IMPORTS.CSV.SOURCE, 'CSV or Excel file');
+  assert.equal(i18n.messages.he.DATA_IMPORTS.DRAWER.TITLE, 'ייבוא חדש', 'the stock Hebrew strings stay');
+  assert.deepEqual(errors, [], 'the dashboard script must not throw');
 });
 
 test('artifact: עמוד הקמפיינים נשאר המסך המקורי של Chatwoot, בלי סטטיסטיקה מוזרקת', async () => {

@@ -1,2 +1,1 @@
-import { openWizard } from './wizard.js';
-export { openWizard };
+export { take, submit } from './enhancer.js';

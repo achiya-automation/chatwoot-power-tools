@@ -1,39 +1,36 @@
-// Minimal scoped styles — only what Chatwoot Tailwind cannot express inline.
-// Design tokens (bg-n-brand, text-n-slate-12, etc.) are compiled globally in
-// the Chatwoot page and auto-adapt to dark mode, so no body.dark overrides here.
+// The box inside Chatwoot's New import dialog. Colors are Chatwoot's own variables
+// (_next-colors.scss), so light and dark follow the dashboard; selects and inputs keep
+// Chatwoot's global field look (_base.scss) and only lose its form margins and height.
 export const STYLES = `
-dialog.cwi-dlg{padding:0;border:0;background:transparent;width:calc(100% - 32px);max-width:42rem;max-height:90vh;overflow:visible;color:inherit}
-/* הרקע מאחורי החלון — זהה ל-Dialog.vue של Chatwoot (bg-n-alpha-black1 + blur 4px).
-   ‎--black-alpha-1 הוא 12% במצב בהיר ו-30% בכהה; קודם היה כאן 50% קבוע, כלומר כהה
-   פי ארבעה מהמקור וללא התאמה לערכת הנושא. */
-dialog.cwi-dlg::backdrop{background:rgba(0,0,0,.12);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
-/* wizard.js מוסיף את המחלקה dark על ה-dialog עצמו (ראה שם: הוא ב-top layer ולא
-   יורש מהדף), ולכן הסלקטור חייב להיות על אותו אלמנט ולא על אב. */
-dialog.cwi-dlg.dark::backdrop{background:rgba(0,0,0,.3)}
-dialog.cwi-dlg::backdrop{animation:cwiBackdrop .2s ease-out}
-@keyframes cwiBackdrop{from{opacity:0}to{opacity:1}}
-/* Animate the inner card, NOT the <dialog>: a transform on the dialog would make it
-   the containing block for the fixed dropdown panel (panel is a child of the dialog),
-   breaking viewport-relative positioning. The modal is a sibling of the panel, so its
-   transform can't affect the panel. */
-.cwi-modal{max-height:90vh;overflow:auto;animation:cwiIn .2s ease-out}
-.cwi-table-scroll{overflow-x:auto;min-width:0;max-width:100%}
-.cwi-table-scroll table{min-width:32rem}
-.cwi-dlg :is(button,[role="button"]):focus-visible{outline:2px solid rgb(var(--blue-9));outline-offset:2px}
-.cwi-dlg h3:focus{outline:none}
-@media(prefers-reduced-motion:reduce){.cwi-modal,.cwi-pill,dialog.cwi-dlg::backdrop{animation:none}.cwi-cs-panel,.cwi-prog-fill{transition:none}}
-@keyframes cwiIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
-/* הרקע מגיע ממחלקת bg-n-brand של Chatwoot (הכחול הרשמי) — לא ממשתנה:
-   --color-n-brand לא קיים ב-CSS המקומפל וה-fallback צבע את הפס באינדיגו זר. */
-.cwi-prog-fill{height:100%;transform-origin:left;transition:transform .2s}
-.cwi-pill[dir="rtl"] .cwi-prog-fill{transform-origin:right}
-/* ⚠️ border-bottom בלי צבע = currentColor לפי מפרט CSS, וכיוון שהגיליון הזה מוזרק
-   ל-head בזמן ריצה הוא בא *אחרי* הגיליון של Chatwoot ומנצח את border-n-weak שעל התא.
-   התוצאה הייתה קווי טבלה בצבע הטקסט — כהים בהרבה מכל טבלה אחרת בדשבורד. */
-.cwi-tbl-cell{border-bottom:1px solid rgb(var(--border-weak))}
-.cwi-cs-panel{transition:opacity .2s ease-out}
-/* Background-import pill — fixed to the bottom start corner (dir-aware via
-   inset-inline-start; the pill carries its own dir attribute). Below the browser
-   top layer, so any open Chatwoot <dialog> still covers it. */
-.cwi-pill{position:fixed;bottom:16px;inset-inline-start:16px;z-index:2147483000;width:320px;max-width:calc(100vw - 32px);animation:cwiIn .2s ease-out}
+.cwi-box{border:1px solid rgb(var(--border-weak));border-radius:.75rem;padding:.875rem;min-width:0}
+/* Chatwoot's CSV preview shows the converted file; the mapping table replaces it. */
+.cwi-box ~ section{display:none!important}
+.cwi-fs{display:flex;flex-direction:column;gap:1.125rem;min-width:0;margin:0;padding:0;border:0}
+.cwi-sec{display:flex;flex-direction:column;gap:.75rem;min-width:0}
+.cwi-sec.cwi-tight{gap:.375rem}
+.cwi-h,.cwi-hint{margin:0}
+.cwi-scroll{overflow-x:auto;min-width:0}
+.cwi-map{width:100%;border:1px solid rgb(var(--border-weak));border-radius:.625rem;border-collapse:separate;border-spacing:0;overflow:hidden;font-size:.8125rem;color:rgb(var(--slate-12))}
+.cwi-map th,.cwi-map td{padding:.5rem .75rem;text-align:start;vertical-align:middle;border-bottom:1px solid rgb(var(--border-weak))}
+.cwi-map tbody tr:last-child td{border-bottom:0}
+.cwi-map th{background:rgb(var(--slate-2));font-weight:500;color:rgb(var(--slate-11))}
+.cwi-map td:last-child{width:45%;min-width:9rem}
+.cwi-col{overflow-wrap:anywhere}
+.cwi-auto{display:block;font-size:.6875rem;color:rgb(var(--teal-11))}
+.cwi-sample{color:rgb(var(--slate-11));max-width:9.5rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cwi-box select,.cwi-box input[type=text]{margin:0!important;height:2rem;padding-top:0;padding-bottom:0;font-size:.8125rem}
+.cwi-edit{display:flex;gap:.375rem;align-items:center}
+.cwi-edit input{flex:1;min-width:0}
+.cwi-btn{flex:none;height:2rem;padding:0 .75rem;border-radius:.5rem;font-size:.8125rem;font-weight:500;color:rgb(var(--slate-12));background:transparent;outline:1px solid rgb(var(--border-strong));outline-offset:-1px}
+.cwi-btn.cwi-primary{color:#fff;background:rgb(var(--blue-9));outline:0}
+.cwi-btn:focus-visible{outline:2px solid rgb(var(--blue-9));outline-offset:2px}
+.cwi-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.5rem}
+.cwi-stat{border:1px solid rgb(var(--border-weak));border-radius:.625rem;padding:.5rem .625rem;background:rgb(var(--solid-1));min-width:0}
+.cwi-stat b{display:block;font-size:1.0625rem;font-weight:600;color:rgb(var(--slate-12))}
+.cwi-stat span{display:block;font-size:.75rem;line-height:1.3;color:rgb(var(--slate-11))}
+.cwi-err{border-radius:.625rem;padding:.625rem .75rem;font-size:.8125rem;background:rgb(var(--ruby-3));color:rgb(var(--ruby-11))}
+.cwi-err[hidden],.cwi-box [hidden]{display:none}
+@media (max-width:760px){.cwi-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cwi-sm-hide{display:none}.cwi-map th,.cwi-map td{padding:.5rem}.cwi-map td:last-child{width:58%}}
+/* Phones: a row per column, the field picker under its name, so no option is cut off. */
+@media (max-width:480px){.cwi-map,.cwi-map tbody{display:block}.cwi-map thead{display:none}.cwi-map tr{display:flex;flex-direction:column;gap:.375rem;padding:.625rem .75rem;border-bottom:1px solid rgb(var(--border-weak))}.cwi-map tbody tr:last-child{border-bottom:0}.cwi-map td:not(.cwi-sm-hide){display:block;width:auto;min-width:0;padding:0;border:0}.cwi-auto{display:inline;margin-inline-start:.5rem}}
 `;

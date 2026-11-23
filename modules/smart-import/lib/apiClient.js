@@ -2,25 +2,6 @@ export class ApiError extends Error {
   constructor(status, body) { super(`API ${status}: ${body}`); this.status = status; this.body = body; }
 }
 
-// Reads Chatwoot's non-httpOnly session cookie and returns the 5 devise-token-auth
-// headers. js-cookie sometimes double-encodes the JSON as a string — handle both.
-export function getAuthHeaders(documentCookie) {
-  const raw = (documentCookie.match(/(?:^|;\s*)cw_d_session_info=([^;]+)/) || [])[1];
-  if (!raw) return null;
-  try {
-    let d = JSON.parse(decodeURIComponent(raw));
-    if (typeof d === 'string') d = JSON.parse(d);
-    if (!d || !d['access-token']) return null;
-    return {
-      'access-token': d['access-token'],
-      'token-type': d['token-type'],
-      client: d.client,
-      expiry: String(d.expiry),
-      uid: d.uid,
-    };
-  } catch { return null; }
-}
-
 export function createApiClient(accountId, headers, fetchImpl = fetch) {
   const base = `/api/v1/accounts/${accountId}`;
   async function req(method, path, body) {
@@ -34,32 +15,15 @@ export function createApiClient(accountId, headers, fetchImpl = fetch) {
     return r.status === 204 ? null : r.json();
   }
   return {
-    // page: contacts/filter is paginated at 15 results/page (RESULTS_PER_PAGE) —
-    // batchDedup walks the pages of each chunked OR query.
-    filterContacts: (payload, page) => req('POST', '/contacts/filter' + (page ? `?page=${page}` : ''), payload),
-    createContact: (c) => req('POST', '/contacts', c),
-    updateContact: (id, c) => req('PUT', `/contacts/${id}`, c),
-    listInboxes: () => req('GET', '/inboxes'),
-    // Links a contact to a channel inbox at import time. Chatwoot resolves an
-    // inbound/outbound WhatsApp message through contact_inboxes.source_id — never
-    // through phone_number — so an imported contact without this row is invisible to
-    // the channel: Chatwoot opens the conversation on a nameless auto-created twin
-    // ("aged-glitter-248") and the real name never reaches the conversation or the bot.
-    createContactInbox: (contactId, body) => req('POST', `/contacts/${contactId}/contact_inboxes`, body),
-    getContactLabels: (id) => req('GET', `/contacts/${id}/labels`),
-    assignLabels: (id, labels) => req('POST', `/contacts/${id}/labels`, { labels }),
     listLabels: () => req('GET', '/labels'),
     // Chatwoot's LabelsController requires the attributes under `label`:
     // params.require(:label).permit(:title, ...).
     createLabel: (title) => req('POST', '/labels', { label: { title } }),
     listCustomAttributes: () => req('GET', '/custom_attribute_definitions?attribute_model=contact_attribute'),
     createCustomAttribute: (def) => req('POST', '/custom_attribute_definitions', { custom_attribute_definition: def }),
-    // Server-side import (custom smart_import_server.rb initializer). A 404 from any of
-    // these means the initializer is not live on this server — callers fall back to the
-    // legacy in-browser runner.
+    // smart_import_server.rb: counts against the account's contacts, no writes.
     smartImportPreview: (contacts) => req('POST', '/smart_import/preview', { contacts }),
-    smartImportStart: (body) => req('POST', '/smart_import', body),
-    smartImportStatus: (jobId) => req('GET', `/smart_import/${jobId}`),
-    smartImportCancel: (jobId) => req('DELETE', `/smart_import/${jobId}`),
+    // smart_import_server.rb: the options Chatwoot's import of this exact file picks up.
+    smartImportArm: (body) => req('POST', '/smart_import/arm', body),
   };
 }

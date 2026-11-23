@@ -33,3 +33,15 @@ test('ignores trailing empty line', () => {
   const { rows } = parseCsv('a,b\n1,2\n');
   assert.equal(rows.length, 1);
 });
+
+test('a quote inside a field is text, as Hebrew writes דוא"ל and בע"מ', () => {
+  const { headers, rows } = parseCsv('שם,דוא"ל,חברה\nרינה,r@x.com,רינה בע"מ\nדנה,"d@x.com","סטודיו ""דנה"""\n');
+  assert.deepEqual(headers, ['שם', 'דוא"ל', 'חברה']);
+  assert.deepEqual(rows, [['רינה', 'r@x.com', 'רינה בע"מ'], ['דנה', 'd@x.com', 'סטודיו "דנה"']]);
+});
+
+test('a quote inside a header does not hide the delimiter', () => {
+  const { headers, rows } = parseCsv('דוא"ל;שם;טלפון\nd@x.com;דנה;050');
+  assert.deepEqual(headers, ['דוא"ל', 'שם', 'טלפון']);
+  assert.deepEqual(rows, [['d@x.com', 'דנה', '050']]);
+});
