@@ -80,5 +80,38 @@ make_container_tree() {
   grep -Fq '! -L \"\$state\"' "$REPO/modules/sequences/deploy/sync-servers.sh"
   grep -Fq 'stat -c %u:%g:%a' "$REPO/modules/sequences/deploy/sync-servers.sh"
   grep -Fq 'install -d -o root -g root -m 700' "$REPO/modules/sequences/deploy/sync-servers.sh"
-  grep -Fq 'install -o root -g root -m 600 /dev/stdin' "$REPO/modules/sequences/deploy/sync-servers.sh"
+}
+
+@test "an existing marker is replaced where install cannot copy a pipe over a file" {
+  # uutils coreutils 0.10.0 (Ubuntu 26.04, every server since 23.11.26): `install /dev/stdin
+  # dst` fails with "No such file or directory" when dst exists and keeps the old file, so
+  # every deploy after the first one could never record its marker.
+  STATE="$BATS_TEST_TMPDIR/state"
+  FAKEBIN="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$STATE" "$FAKEBIN"
+  printf 'commit=old\n' > "$STATE/deployment"
+  cat > "$FAKEBIN/install" <<'SH'
+#!/usr/bin/env bash
+last="${!#}"
+[ "$1" = -d ] && exit 0
+for arg in "$@"; do
+  [ "$arg" = /dev/stdin ] && [ -e "$last" ] && { echo 'install: No such file or directory' >&2; exit 1; }
+done
+cat "${@: -2:1}" > "$last"
+SH
+  printf '#!/bin/sh\necho 0:0:700\n' > "$FAKEBIN/stat"
+  chmod +x "$FAKEBIN/install" "$FAKEBIN/stat"
+  DEPLOY_COMMIT=0123456789abcdef0123456789abcdef01234567
+  ssh() {
+    [ "$1" = fixture.invalid ] || return 91
+    local script="${2#sudo bash -c }"
+    eval "PATH='$FAKEBIN':\"\$PATH\" bash -c ${script//\/opt\/chatwoot\/.cwpt-state/$STATE}"
+  }
+
+  run write_deployment_marker fixture.invalid flat $'aaaa\tengine/src/index.js'
+
+  [ "$status" -eq 0 ]
+  grep -Fxq "commit=$DEPLOY_COMMIT" "$STATE/deployment"
+  [ "$(ls -l "$STATE/deployment" | cut -c1-10)" = -rw------- ]
+  [ -z "$(find "$STATE" -name '.deployment.*')" ]
 }

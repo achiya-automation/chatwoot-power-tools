@@ -410,7 +410,13 @@ write_deployment_marker() {
       [ ! -L \"\$state\" ]
       install -d -o root -g root -m 700 \"\$state\"
       [ \"\$(stat -c %u:%g:%a \"\$state\")\" = 0:0:700 ]
-      install -o root -g root -m 600 /dev/stdin \"\$state/deployment\"
+      # Not install(1) from /dev/stdin: uutils install (Ubuntu 26.04) cannot copy a pipe over
+      # an existing file and keeps the old marker. Root + umask 077 give the 0:0:600 the
+      # reader requires, and the rename replaces the marker atomically.
+      umask 077
+      tmp=\"\$state/.deployment.\$\$\"
+      cat > \"\$tmp\"
+      mv -f \"\$tmp\" \"\$state/deployment\"
     '"
 }
 
