@@ -16,7 +16,7 @@
     return !!document.querySelector('#app[dir="rtl"], [dir="rtl"]');
   }
   function onTargetPage() {
-    return /\/accounts\/\d+\/(settings\/templates|campaigns\/whatsapp)/.test(location.pathname);
+    return /\/accounts\/\d+\/(settings\/templates|settings\/data|campaigns\/whatsapp)/.test(location.pathname);
   }
 
   // Chat-area keys the stock he locale of Chatwoot 4.17 still ships in English (composer
@@ -145,12 +145,17 @@
     },
     "DATA_IMPORTS": {
       "HEADER": "נתונים",
+      "DESCRIPTION": "ייבוא נתוני לקוחות וניהול ייצוא של אנשי קשר.",
+      "LOADING": "טוענים ייבואים וייצואים",
       "DEFAULT_IMPORT_NAME": "ייבוא מ-Intercom",
       "DEFAULT_IMPORT_NAMES": {
-        "CSV": "ייבוא אנשי קשר - {date}"
+        "CSV": "ייבוא אנשי קשר - {date}",
+        "INTERCOM": "ייבוא מ-Intercom - {date}",
+        "FRESHDESK": "ייבוא מ-Freshdesk - {date}"
       },
       "DRAWER": {
         "TITLE": "ייבוא חדש",
+        "ACTIVE_IMPORT": "כבר יש ייבוא פעיל בחשבון הזה. חכו שיסתיים לפני שמתחילים ייבוא נוסף.",
         "SOURCE": "מקור",
         "NAME": "שם הייבוא",
         "NAME_PLACEHOLDER": "העברת התמיכה של יולי",
@@ -169,6 +174,7 @@
       "TABLE": {
         "TITLE": "ייבואים אחרונים",
         "EMPTY": "עדיין אין ייבואים",
+        "EMPTY_DESCRIPTION": "ייבאו אנשי קשר מקובץ CSV, או העבירו היסטוריית לקוחות מכלי תמיכה אחר.",
         "COUNT": "{count} ייבואים",
         "UNNAMED": "ייבוא בלי שם",
         "IMPORTED_COUNT": "{count} יובאו",
@@ -178,6 +184,7 @@
         "RESUME": "המשך"
       },
       "DETAIL": {
+        "BACK": "חזרה לייבואים ולייצואים",
         "ERRORS": "שגיאות",
         "SKIP_LOGS": "רשומות שדולגו",
         "SOURCE": "מקור",
@@ -371,6 +378,8 @@
     [/^Sent on (.+)$/, 'נשלח ב-$1'],
     [/^Code (\S+)$/, 'קוד $1'],
     [/^Last sync attempt on (.+)$/, 'ניסיון סנכרון אחרון: $1'],
+    // settings/data: an import with no known provider shows this label, hardcoded in importSources.js (4.20)
+    [/^File import( · .+)?$/, 'ייבוא מקובץ$1'],
   ];
 
   function translate(txt) {
